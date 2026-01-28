@@ -1,0 +1,53 @@
+@import './styles/variables.css';
+
+:root {
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  max-width: 600px;
+  /* Mobile-first container */
+  margin: 0 auto;
+  min-height: 100vh;
+  background-color: var(--color-bg-primary);
+  position: relative;
+  box-shadow: var(--shadow-xl);
+  /* Add shadow to simulate mobile frame on desktop */
+}
+
+/* Wabi-Sabi Utility Classes */
+.text-serif {
+  font-family: var(--font-serif);
+}
+
+.text-sans {
+  font-family: var(--font-sans);
+}
+
+.text-clay {
+  color: var(--color-accent-clay);
+}
+
+.bg-ash {
+  background-color: var(--color-bg-secondary);
+}

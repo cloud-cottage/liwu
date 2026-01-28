@@ -1,0 +1,7 @@
+/* App specific styles */
+.app-content {
+  padding-bottom: 70px;
+  /* Space for BottomNav */
+  min-height: 100vh;
+  box-sizing: border-box;
+}
