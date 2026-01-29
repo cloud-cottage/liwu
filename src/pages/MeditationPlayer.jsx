@@ -1,53 +1,105 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Play, Pause, SkipForward } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWealth } from '../context/WealthContext';
 
-const STAGES = {
-    INTRO: { label: '清晨唤醒 - 白噪音', duration: 10 * 60 },
-    GUIDED: { label: '引导冥想', duration: 10 * 60 },
-    OUTRO: { label: '尾声 - 白噪音', duration: 10 * 60 },
-};
+const SEGMENT_COUNT = 5;
+const AUDIO_LIBRARY = [
+    '/audio/meditation/sea_wave1.mp3',
+    '/audio/meditation/sea_wave2.mp3',
+    '/audio/meditation/sea_wave_seagull.mp3'
+];
 
 const MeditationPlayer = () => {
     const navigate = useNavigate();
     const { updateMeditationStats } = useWealth();
-    const [currentStage, setCurrentStage] = useState('INTRO');
-    const [timeLeft, setTimeLeft] = useState(STAGES.INTRO.duration);
+    const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
+    const [timeLeft, setTimeLeft] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [isLoaded, setIsLoaded] = useState(false);
 
-    // Audio simulation ref (replace with actual Audio object later)
-    const audioRef = useRef(null);
+    // Randomly select 5 segments from the library for this session
+    const segments = useMemo(() => {
+        const selected = [];
+        for (let i = 0; i < SEGMENT_COUNT; i++) {
+            const randomIndex = Math.floor(Math.random() * AUDIO_LIBRARY.length);
+            selected.push({
+                url: AUDIO_LIBRARY[randomIndex],
+                label: `段落 ${i + 1}`,
+                // Duration will be determined by the audio file itself
+            });
+        }
+        return selected;
+    }, []);
+
+    const audioRef = useRef(new Audio());
 
     useEffect(() => {
-        let interval = null;
-        if (isPlaying && timeLeft > 0) {
-            interval = setInterval(() => {
-                setTimeLeft((prev) => prev - 1);
-            }, 1000);
-        } else if (timeLeft === 0) {
-            handleStageComplete();
-        }
-        return () => clearInterval(interval);
-    }, [isPlaying, timeLeft]);
+        const audio = audioRef.current;
 
-    const handleStageComplete = () => {
-        setIsPlaying(false);
-        if (currentStage === 'INTRO') {
-            setCurrentStage('GUIDED');
-            setTimeLeft(STAGES.GUIDED.duration);
-            setIsPlaying(true); // Auto-play next stage?
-        } else if (currentStage === 'GUIDED') {
-            setCurrentStage('OUTRO');
-            setTimeLeft(STAGES.OUTRO.duration);
-            setIsPlaying(true);
+        const handleCanPlayThrough = () => {
+            setIsLoaded(true);
+            setTimeLeft(Math.floor(audio.duration));
+        };
+
+        const handleEnded = () => {
+            handleSegmentComplete();
+        };
+
+        const handleTimeUpdate = () => {
+            setTimeLeft(Math.floor(audio.duration - audio.currentTime));
+        };
+
+        audio.addEventListener('canplaythrough', handleCanPlayThrough);
+        audio.addEventListener('ended', handleEnded);
+        audio.addEventListener('timeupdate', handleTimeUpdate);
+
+        // Load first segment
+        audio.src = segments[0].url;
+        audio.load();
+
+        return () => {
+            audio.pause();
+            audio.removeEventListener('canplaythrough', handleCanPlayThrough);
+            audio.removeEventListener('ended', handleEnded);
+            audio.removeEventListener('timeupdate', handleTimeUpdate);
+        };
+    }, []); // Run once on mount
+
+    useEffect(() => {
+        if (isPlaying && isLoaded) {
+            audioRef.current.play().catch(err => {
+                console.error("Audio playback failed:", err);
+                setIsPlaying(false);
+            });
         } else {
-            // Finished
-            const totalSessionTime = (STAGES.INTRO.duration + STAGES.GUIDED.duration + STAGES.OUTRO.duration) / 60;
-            updateMeditationStats(totalSessionTime);
-            alert(`冥想完成！获得 50 荣誉点，累计时长增加 ${totalSessionTime} 分钟`);
-            navigate('/');
+            audioRef.current.pause();
         }
+    }, [isPlaying, isLoaded]);
+
+    const handleSegmentComplete = () => {
+        if (currentSegmentIndex < SEGMENT_COUNT - 1) {
+            const nextIndex = currentSegmentIndex + 1;
+            setCurrentSegmentIndex(nextIndex);
+            setIsLoaded(false);
+
+            const audio = audioRef.current;
+            audio.src = segments[nextIndex].url;
+            audio.load();
+            // isPlaying remains true, so it will play once loaded via the other useEffect
+        } else {
+            // Finished all 5 segments
+            finishSession();
+        }
+    };
+
+    const finishSession = () => {
+        setIsPlaying(false);
+        // Calculate total time (roughly, or we could track it)
+        const totalSessionTimeMinutes = 30; // Assuming a fixed total target or calculating from audio duration
+        updateMeditationStats(totalSessionTimeMinutes);
+        alert(`冥想完成！获得 50 荣誉点，累计时长增加 ${totalSessionTimeMinutes} 分钟`);
+        navigate('/');
     };
 
     const togglePlay = () => {
@@ -66,9 +118,8 @@ const MeditationPlayer = () => {
         }
     };
 
-    // Skip for testing purposes (Hidden in production or dev only)
-    const skipStage = () => {
-        setTimeLeft(0);
+    const skipSegment = () => {
+        handleSegmentComplete();
     };
 
     return (
@@ -130,7 +181,7 @@ const MeditationPlayer = () => {
                     fontSize: '28px',
                     marginBottom: '16px'
                 }}>
-                    {STAGES[currentStage].label}
+                    {segments[currentSegmentIndex].label} ({currentSegmentIndex + 1}/{SEGMENT_COUNT})
                 </h2>
 
                 <div style={{
@@ -140,13 +191,12 @@ const MeditationPlayer = () => {
                     color: 'var(--color-accent-ink)',
                     marginBottom: '40px'
                 }}>
-                    {formatTime(timeLeft)}
+                    {!isLoaded ? '加载中...' : formatTime(timeLeft)}
                 </div>
 
                 {/* Controls */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
-                    {/* Skip Button for Demo */}
-                    <button onClick={skipStage} style={{
+                    <button onClick={skipSegment} style={{
                         background: 'none', border: 'none', opacity: 0.3
                     }}>
                         <SkipForward size={24} />
@@ -154,16 +204,17 @@ const MeditationPlayer = () => {
 
                     <button
                         onClick={togglePlay}
+                        disabled={!isLoaded}
                         style={{
                             width: '80px',
                             height: '80px',
                             borderRadius: '50%',
-                            backgroundColor: 'var(--color-accent-clay)',
+                            backgroundColor: isLoaded ? 'var(--color-accent-clay)' : '#ccc',
                             border: 'none',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            cursor: 'pointer',
+                            cursor: isLoaded ? 'pointer' : 'default',
                             color: '#fff',
                             boxShadow: 'var(--shadow-lg)'
                         }}
