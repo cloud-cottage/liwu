@@ -186,16 +186,6 @@ const MeditationPlayer = () => {
             }}>
 
 
-                <div style={{
-                    fontSize: '48px',
-                    fontFamily: 'var(--font-sans)',
-                    fontWeight: '300',
-                    color: 'var(--color-accent-ink)',
-                    marginBottom: '40px'
-                }}>
-                    {!isLoaded ? '加载中...' : formatTime(timeLeft)}
-                </div>
-
                 {/* Controls */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
 
@@ -224,7 +214,9 @@ const MeditationPlayer = () => {
                             width: '100%',
                             height: '100%',
                             backgroundImage: 'url(/logo.png)',
-                            backgroundSize: 'cover',
+                            backgroundSize: 'contain',
+                            backgroundPosition: 'center',
+                            backgroundRepeat: 'no-repeat',
                             borderRadius: '50%',
                             animation: isPlaying ? 'spin 10s linear infinite' : 'none',
                             opacity: 0.9,
@@ -245,14 +237,32 @@ const MeditationPlayer = () => {
                 </div>
             </div>
 
+            {/* Time Display - Moved to bottom area */}
+            <div style={{
+                position: 'absolute',
+                bottom: '100px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                fontSize: '24px',
+                fontFamily: 'var(--font-sans)',
+                fontWeight: '300',
+                color: 'var(--color-accent-ink)',
+                zIndex: 10
+            }}>
+                {!isLoaded ? '加载中...' : formatTime(timeLeft)}
+            </div>
+
             {/* Footer / Quote */}
             <div style={{
-                padding: '40px',
+                padding: '24px',
                 textAlign: 'center',
                 color: 'var(--color-text-secondary)',
                 fontSize: '14px',
                 zIndex: 10,
-                opacity: 0.8
+                opacity: 0.8,
+                position: 'absolute',
+                bottom: '40px',
+                width: '100%'
             }}>
                 "吸气，感受当下；呼气，放下杂念。"
             </div>
