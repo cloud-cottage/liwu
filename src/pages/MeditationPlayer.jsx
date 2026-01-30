@@ -132,24 +132,80 @@ const MeditationPlayer = () => {
             overflow: 'hidden'
         }}>
             {/* Background Animation Placeholder */}
-            {/* Cover Image */}
-            <img
-                src="/images/meditation/cover.jpg"
-                alt="Meditation Cover"
-                style={{
-                    position: 'absolute',
-                    top: '20%',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    width: '300px',
-                    height: '300px',
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    zIndex: 0,
-                    animation: isPlaying ? 'pulse 4s infinite ease-in-out' : 'none',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
-                }}
-            />
+            {/* Main Meditation Visual Container */}
+            <div style={{
+                position: 'absolute',
+                top: '20%',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: '300px',
+                height: '300px',
+                zIndex: 0
+            }}>
+                {/* Cover Image */}
+                <img
+                    src="/images/meditation/cover.jpg"
+                    alt="Meditation Cover"
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        borderRadius: '50%',
+                        objectFit: 'cover',
+                        animation: isPlaying ? 'pulse 4s infinite ease-in-out' : 'none',
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
+                    }}
+                />
+
+                {/* Centered Play Button */}
+                <button
+                    onClick={togglePlay}
+                    disabled={!isLoaded}
+                    style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '80px',
+                        height: '80px',
+                        borderRadius: '50%',
+                        background: 'none',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: isLoaded ? 'pointer' : 'default',
+                        boxShadow: 'var(--shadow-lg)',
+                        zIndex: 20 // Ensure button is above cover
+                    }}
+                >
+                    {/* Rotating Background */}
+                    <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        backgroundImage: 'url(/logo.png)',
+                        backgroundSize: 'contain',
+                        backgroundPosition: 'center',
+                        backgroundRepeat: 'no-repeat',
+                        borderRadius: '50%',
+                        animation: isPlaying ? 'spin 10s linear infinite' : 'none',
+                        opacity: 0.9,
+                        zIndex: 0
+                    }} />
+
+                    {/* Static Icon */}
+                    <div style={{
+                        position: 'relative',
+                        zIndex: 1,
+                        color: '#fff',
+                        filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))'
+                    }}>
+                        {isPlaying ? <Pause size={32} /> : <Play size={32} style={{ marginLeft: '4px' }} />}
+                    </div>
+                </button>
+            </div>
 
             <style>{`
         @keyframes pulse {
@@ -176,66 +232,7 @@ const MeditationPlayer = () => {
             </div>
 
             {/* Content */}
-            <div style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 10
-            }}>
 
-
-                {/* Controls */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-
-                    <button
-                        onClick={togglePlay}
-                        disabled={!isLoaded}
-                        style={{
-                            width: '80px',
-                            height: '80px',
-                            borderRadius: '50%',
-                            background: 'none',
-                            border: 'none',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: isLoaded ? 'pointer' : 'default',
-                            position: 'relative',
-                            boxShadow: 'var(--shadow-lg)'
-                        }}
-                    >
-                        {/* Rotating Background */}
-                        <div style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            width: '100%',
-                            height: '100%',
-                            backgroundImage: 'url(/logo.png)',
-                            backgroundSize: 'contain',
-                            backgroundPosition: 'center',
-                            backgroundRepeat: 'no-repeat',
-                            borderRadius: '50%',
-                            animation: isPlaying ? 'spin 10s linear infinite' : 'none',
-                            opacity: 0.9,
-                            zIndex: 0
-                        }} />
-
-                        {/* Static Icon */}
-                        <div style={{
-                            position: 'relative',
-                            zIndex: 1,
-                            color: '#fff',
-                            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))'
-                        }}>
-                            {isPlaying ? <Pause size={32} /> : <Play size={32} style={{ marginLeft: '4px' }} />}
-                        </div>
-                    </button>
-
-                </div>
-            </div>
 
             {/* Time Display - Moved to bottom area */}
             <div style={{
