@@ -185,7 +185,7 @@ const MeditationPlayer = () => {
                         left: 0,
                         width: '100%',
                         height: '100%',
-                        backgroundImage: 'url(/logo.png)',
+                        backgroundImage: 'url(/logo.svg)',
                         backgroundSize: 'contain',
                         backgroundPosition: 'center',
                         backgroundRepeat: 'no-repeat',
