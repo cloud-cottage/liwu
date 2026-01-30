@@ -180,13 +180,7 @@ const MeditationPlayer = () => {
                 justifyContent: 'center',
                 zIndex: 10
             }}>
-                <h2 style={{
-                    fontFamily: 'var(--font-serif)',
-                    fontSize: '28px',
-                    marginBottom: '16px'
-                }}>
-                    {segments[currentSegmentIndex].label} ({currentSegmentIndex + 1}/{SEGMENT_COUNT})
-                </h2>
+
 
                 <div style={{
                     fontSize: '48px',
