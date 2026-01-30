@@ -154,8 +154,12 @@ const MeditationPlayer = () => {
             <style>{`
         @keyframes pulse {
           0% { transform: translateX(-50%) scale(1); }
-          50% { transform: translateX(-50%) scale(1.1); }
+          50% { transform: translateX(-50%) scale(1.05); }
           100% { transform: translateX(-50%) scale(1); }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
 
@@ -193,12 +197,7 @@ const MeditationPlayer = () => {
                 </div>
 
                 {/* Controls */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
-                    <button onClick={skipSegment} style={{
-                        background: 'none', border: 'none', opacity: 0.3
-                    }}>
-                        <SkipForward size={24} />
-                    </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
 
                     <button
                         onClick={togglePlay}
@@ -207,17 +206,40 @@ const MeditationPlayer = () => {
                             width: '80px',
                             height: '80px',
                             borderRadius: '50%',
-                            backgroundColor: isLoaded ? 'var(--color-accent-clay)' : '#ccc',
+                            background: 'none',
                             border: 'none',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             cursor: isLoaded ? 'pointer' : 'default',
-                            color: '#fff',
+                            position: 'relative',
                             boxShadow: 'var(--shadow-lg)'
                         }}
                     >
-                        {isPlaying ? <Pause size={32} /> : <Play size={32} style={{ marginLeft: '4px' }} />}
+                        {/* Rotating Background */}
+                        <div style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            backgroundImage: 'url(/logo.png)',
+                            backgroundSize: 'cover',
+                            borderRadius: '50%',
+                            animation: isPlaying ? 'spin 10s linear infinite' : 'none',
+                            opacity: 0.9,
+                            zIndex: 0
+                        }} />
+
+                        {/* Static Icon */}
+                        <div style={{
+                            position: 'relative',
+                            zIndex: 1,
+                            color: '#fff',
+                            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))'
+                        }}>
+                            {isPlaying ? <Pause size={32} /> : <Play size={32} style={{ marginLeft: '4px' }} />}
+                        </div>
                     </button>
 
                 </div>
@@ -234,7 +256,7 @@ const MeditationPlayer = () => {
             }}>
                 "吸气，感受当下；呼气，放下杂念。"
             </div>
-        </div>
+        </div >
     );
 };
 
