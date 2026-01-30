@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Wind, PenTool, User } from 'lucide-react';
+import { Home, Wind, Sparkles, User } from 'lucide-react';
 import styles from './BottomNav.module.css';
 
 const BottomNav = () => {
@@ -26,7 +26,7 @@ const BottomNav = () => {
                 to="/record"
                 className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
             >
-                <PenTool size={24} strokeWidth={1.5} />
+                <Sparkles size={24} strokeWidth={1.5} />
                 <span className={styles.label}>记录</span>
             </NavLink>
 
