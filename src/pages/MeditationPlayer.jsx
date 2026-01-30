@@ -132,20 +132,27 @@ const MeditationPlayer = () => {
             overflow: 'hidden'
         }}>
             {/* Background Animation Placeholder */}
+            {/* Cover Image */}
             <div style={{
                 position: 'absolute',
                 top: '20%',
                 left: '50%',
                 transform: 'translateX(-50%)',
-                width: '300px',
-                height: '300px',
-                borderRadius: '50%',
-                backgroundColor: '#E6E6FA', // Light purple tint
-                opacity: 0.3,
-                filter: 'blur(40px)',
                 zIndex: 0,
-                animation: isPlaying ? 'pulse 4s infinite ease-in-out' : 'none'
-            }}></div>
+            }}>
+                <img
+                    src="/images/meditation/cover.jpg"
+                    alt="Meditation Cover"
+                    style={{
+                        width: '300px',
+                        height: '300px',
+                        borderRadius: '50%',
+                        objectFit: 'cover',
+                        animation: isPlaying ? 'pulse 4s infinite ease-in-out' : 'none',
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
+                    }}
+                />
+            </div>
 
             <style>{`
         @keyframes pulse {
