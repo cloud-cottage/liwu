@@ -27,7 +27,7 @@ const BottomNav = () => {
                 className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
             >
                 <Sparkles size={24} strokeWidth={1.5} />
-                <span className={styles.label}>记录</span>
+                <span className={styles.label}>觉察</span>
             </NavLink>
 
             <NavLink

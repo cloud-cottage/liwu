@@ -69,7 +69,7 @@ const Profile = () => {
             </div>
 
             <section>
-                <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>迎来送往 (最近记录)</h3>
+                <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>迎来送往 (最近觉察)</h3>
                 {history.length === 0 ? (
                     <div style={{
                         backgroundColor: '#fff',
@@ -80,7 +80,7 @@ const Profile = () => {
                         color: 'var(--color-text-secondary)',
                         fontSize: '14px'
                     }}>
-                        暂无记录
+                        暂无觉察
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

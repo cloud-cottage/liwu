@@ -30,7 +30,7 @@ export const WealthProvider = ({ children }) => {
         if (saved) return JSON.parse(saved);
         return [
             { id: 1, title: '七日静心', description: '连续7天完成每日冥想', reward: '50 荣誉点', type: 'Meditation', completed: false },
-            { id: 2, title: '断舍离达人', description: '本周记录5件断舍离物品', reward: '100 荣誉点', type: 'Declutter', completed: false },
+            { id: 2, title: '断舍离达人', description: '本周觉察5件断舍离物品', reward: '100 荣誉点', type: 'Declutter', completed: false },
             { id: 3, title: '晨曦守望者', description: '连续3天在早晨8点前开启冥想', reward: '30 荣誉点', type: 'Meditation', completed: false },
         ];
     });
@@ -44,6 +44,11 @@ export const WealthProvider = ({ children }) => {
         };
     });
 
+    const [awarenessRecords, setAwarenessRecords] = useState(() => {
+        const saved = localStorage.getItem('awareness_records');
+        return saved ? JSON.parse(saved) : [];
+    });
+
     useEffect(() => {
         localStorage.setItem('wealth_balance', balance);
         localStorage.setItem('wealth_history', JSON.stringify(history));
@@ -51,7 +56,8 @@ export const WealthProvider = ({ children }) => {
         localStorage.setItem('wealth_inventory', JSON.stringify(inventory));
         localStorage.setItem('wealth_challenges', JSON.stringify(challenges));
         localStorage.setItem('meditation_stats', JSON.stringify(meditationStats));
-    }, [balance, history, dreams, inventory, challenges, meditationStats]);
+        localStorage.setItem('awareness_records', JSON.stringify(awarenessRecords));
+    }, [balance, history, dreams, inventory, challenges, meditationStats, awarenessRecords]);
 
     const addWealth = (amount, description) => {
         setBalance(prev => prev + amount);
@@ -98,14 +104,65 @@ export const WealthProvider = ({ children }) => {
             totalDuration: prev.totalDuration + duration,
             sessionCount: prev.sessionCount + 1,
             // Simple logic for medals: 1 medal per 5 sessions or some other rule
-            medals: Math.max(prev.medals, Math.floor((prev.totalDuration + duration) / 40)) 
+            medals: Math.max(prev.medals, Math.floor((prev.totalDuration + duration) / 40))
         }));
     };
 
     const completeChallenge = (challengeId) => {
-        setChallenges(prev => prev.map(c => 
+        setChallenges(prev => prev.map(c =>
             c.id === challengeId ? { ...c, completed: true } : c
         ));
+    };
+
+    const addAwarenessRecord = (tagContent) => {
+        const newRecord = {
+            id: Date.now(),
+            userId: 'user_1', // In a real app, this would be the actual user ID
+            content: tagContent,
+            timestamp: new Date().toISOString()
+        };
+        setAwarenessRecords(prev => [newRecord, ...prev]);
+    };
+
+    const getUserTags = () => {
+        const userId = 'user_1'; // In a real app, this would be the actual user ID
+        const userRecords = awarenessRecords.filter(r => r.userId === userId);
+
+        // Group by content and count
+        const tagMap = {};
+        userRecords.forEach(record => {
+            if (tagMap[record.content]) {
+                tagMap[record.content].count++;
+            } else {
+                tagMap[record.content] = {
+                    content: record.content,
+                    count: 1
+                };
+            }
+        });
+
+        // Convert to array and sort by count (descending)
+        return Object.values(tagMap).sort((a, b) => b.count - a.count);
+    };
+
+    const getPopularTags = () => {
+        // Group all records by content
+        const tagMap = {};
+        awarenessRecords.forEach(record => {
+            if (tagMap[record.content]) {
+                tagMap[record.content].totalCount++;
+            } else {
+                tagMap[record.content] = {
+                    content: record.content,
+                    totalCount: 1
+                };
+            }
+        });
+
+        // Convert to array, sort by totalCount, and take top 10
+        return Object.values(tagMap)
+            .sort((a, b) => b.totalCount - a.totalCount)
+            .slice(0, 10);
     };
 
     return (
@@ -116,11 +173,15 @@ export const WealthProvider = ({ children }) => {
             inventory,
             challenges,
             meditationStats,
+            awarenessRecords,
             addWealth,
             addDream,
             buyDream,
             updateMeditationStats,
-            completeChallenge
+            completeChallenge,
+            addAwarenessRecord,
+            getUserTags,
+            getPopularTags
         }}>
             {children}
         </WealthContext.Provider>
