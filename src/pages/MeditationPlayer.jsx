@@ -209,9 +209,9 @@ const MeditationPlayer = () => {
 
             <style>{`
         @keyframes pulse {
-          0% { transform: translateX(-50%) scale(1); }
-          50% { transform: translateX(-50%) scale(1.05); }
-          100% { transform: translateX(-50%) scale(1); }
+          0% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); }
         }
         @keyframes spin {
           from { transform: rotate(0deg); }
