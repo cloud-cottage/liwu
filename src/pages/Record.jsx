@@ -1,22 +1,21 @@
 import React, { useState } from 'react';
-import { useWealth } from '../context/WealthContext';
-import { Sparkles, TrendingUp } from 'lucide-react';
+import { useCloudAwareness } from '../context/CloudAwarenessContext';
+import { Sparkles, TrendingUp, RefreshCw } from 'lucide-react';
 
 const Record = () => {
     const {
-        awarenessRecords,
+        userTags,
+        popularTags,
+        loading,
         addAwarenessRecord,
-        getUserTags,
-        getPopularTags
-    } = useWealth();
+        refreshData
+    } = useCloudAwareness();
 
     const [inputValue, setInputValue] = useState('');
     const [error, setError] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
-    const userTags = getUserTags();
-    const popularTags = getPopularTags();
-
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         const trimmed = inputValue.trim();
 
@@ -30,13 +29,22 @@ const Record = () => {
             return;
         }
 
-        addAwarenessRecord(trimmed);
-        setInputValue('');
-        setError('');
+        setSubmitting(true);
+        const result = await addAwarenessRecord(trimmed);
+        setSubmitting(false);
+
+        if (result.success) {
+            setInputValue('');
+            setError('');
+        } else {
+            setError('提交失败,请重试');
+        }
     };
 
-    const handleTagClick = (tagContent) => {
-        addAwarenessRecord(tagContent);
+    const handleTagClick = async (tagContent) => {
+        setSubmitting(true);
+        await addAwarenessRecord(tagContent);
+        setSubmitting(false);
     };
 
     return (
@@ -47,20 +55,41 @@ const Record = () => {
             backgroundColor: 'var(--color-bg-primary)'
         }}>
             {/* Header */}
-            <h1 style={{
-                fontSize: '28px',
-                marginBottom: '8px',
-                fontFamily: 'var(--font-serif)',
-                color: 'var(--color-text-primary)'
-            }}>
-                觉察
-            </h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                <h1 style={{
+                    fontSize: '28px',
+                    fontFamily: 'var(--font-serif)',
+                    color: 'var(--color-text-primary)',
+                    margin: 0
+                }}>
+                    觉察
+                </h1>
+                <button
+                    onClick={refreshData}
+                    disabled={loading}
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: loading ? 'not-allowed' : 'pointer',
+                        padding: '8px',
+                        color: 'var(--color-text-secondary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '12px',
+                        opacity: loading ? 0.5 : 1
+                    }}
+                >
+                    <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+                    刷新
+                </button>
+            </div>
             <p style={{
                 fontSize: '14px',
                 color: 'var(--color-text-secondary)',
                 marginBottom: '32px'
             }}>
-                觉察你此刻的状态
+                觉察你此刻的状态 {loading && '· 加载中...'}
             </p>
 
             {/* Input Section */}
@@ -114,27 +143,29 @@ const Record = () => {
                     </div>
                     <button
                         type="submit"
+                        disabled={submitting}
                         style={{
                             width: '100%',
                             padding: '14px',
-                            backgroundColor: 'var(--color-accent-ink)',
+                            backgroundColor: submitting ? '#ccc' : 'var(--color-accent-ink)',
                             color: '#fff',
                             border: 'none',
                             borderRadius: '12px',
                             fontWeight: '500',
                             fontSize: '16px',
-                            cursor: 'pointer',
+                            cursor: submitting ? 'not-allowed' : 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             gap: '8px',
-                            transition: 'opacity 0.2s'
+                            transition: 'opacity 0.2s',
+                            opacity: submitting ? 0.7 : 1
                         }}
-                        onMouseEnter={(e) => e.target.style.opacity = '0.9'}
-                        onMouseLeave={(e) => e.target.style.opacity = '1'}
+                        onMouseEnter={(e) => !submitting && (e.target.style.opacity = '0.9')}
+                        onMouseLeave={(e) => !submitting && (e.target.style.opacity = '1')}
                     >
                         <Sparkles size={18} />
-                        觉察此刻
+                        {submitting ? '提交中...' : '觉察此刻'}
                     </button>
                 </form>
             </div>
@@ -217,7 +248,7 @@ const Record = () => {
                             color: 'var(--color-text-primary)',
                             margin: 0
                         }}>
-                            社区热门
+                            社群动态
                         </h2>
                     </div>
                     <div style={{
