@@ -10,6 +10,7 @@ import ChallengeDetail from './pages/ChallengeDetail';
 import MeditationHome from './pages/MeditationHome';
 import MeditationPlayer from './pages/MeditationPlayer';
 import { WealthProvider } from './context/WealthContext';
+import { CloudAwarenessProvider } from './context/CloudAwarenessContext';
 import './App.css';
 
 const Layout = () => {
@@ -26,20 +27,22 @@ const Layout = () => {
 function App() {
   return (
     <WealthProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Home />} />
-            <Route path="meditation-tab" element={<MeditationHome />} />
-            <Route path="record" element={<Record />} />
-            <Route path="community" element={<Community />} />
-            <Route path="profile" element={<Profile />} />
-            <Route path="challenges" element={<Challenges />} />
-            <Route path="challenges/:id" element={<ChallengeDetail />} />
-          </Route>
-          <Route path="/meditation" element={<MeditationPlayer />} />
-        </Routes>
-      </Router>
+      <CloudAwarenessProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Home />} />
+              <Route path="meditation-tab" element={<MeditationHome />} />
+              <Route path="record" element={<Record />} />
+              <Route path="community" element={<Community />} />
+              <Route path="profile" element={<Profile />} />
+              <Route path="challenges" element={<Challenges />} />
+              <Route path="challenges/:id" element={<ChallengeDetail />} />
+            </Route>
+            <Route path="/meditation" element={<MeditationPlayer />} />
+          </Routes>
+        </Router>
+      </CloudAwarenessProvider>
     </WealthProvider>
   );
 }
