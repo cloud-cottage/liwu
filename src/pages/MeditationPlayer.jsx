@@ -98,7 +98,7 @@ const MeditationPlayer = () => {
         // Calculate total time (roughly, or we could track it)
         const totalSessionTimeMinutes = 30; // Assuming a fixed total target or calculating from audio duration
         updateMeditationStats(totalSessionTimeMinutes);
-        alert(`冥想完成！获得 50 荣誉点，累计时长增加 ${totalSessionTimeMinutes} 分钟`);
+        alert(`冥想完成！获得 50 福豆，累计时长增加 ${totalSessionTimeMinutes} 分钟`);
         navigate('/');
     };
 

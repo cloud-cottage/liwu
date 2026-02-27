@@ -62,7 +62,7 @@ const Profile = () => {
                 }}>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', color: 'var(--color-text-secondary)' }}>
                         <Award size={18} style={{ marginRight: '8px' }} />
-                        <span style={{ fontSize: '12px', fontWeight: '500' }}>荣誉点</span>
+                        <span style={{ fontSize: '12px', fontWeight: '500' }}>福豆</span>
                     </div>
                     <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{honorPoints}</div>
                 </div>
