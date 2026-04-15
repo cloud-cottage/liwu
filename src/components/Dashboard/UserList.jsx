@@ -6,9 +6,10 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
 
   const filteredUsers = useMemo(() => {
     return users.filter(user => 
-      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.id.toLowerCase().includes(searchTerm.toLowerCase())
+      (user.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.inviteCode || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [users, searchTerm]);
 
@@ -54,20 +55,47 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
               <tr key={user.id} style={{ borderBottom: '1px solid #f5f5f5', '&:hover': { backgroundColor: '#f9f9f9' } }}>
                 <td style={{ padding: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <img 
-                      src={user.avatar} 
-                      alt={user.name}
-                      style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }}
-                    />
+                    {user.avatar ? (
+                      <img 
+                        src={user.avatar} 
+                        alt={user.name}
+                        style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: '#e2e8f0',
+                          color: '#334155',
+                          fontSize: '12px',
+                          fontWeight: 700
+                        }}
+                      >
+                        {(user.name || '用').slice(0, 1)}
+                      </div>
+                    )}
                     <div>
-                      <div style={{ fontSize: '14px', fontWeight: 500 }}>{user.name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 500 }}>{user.name || '未命名用户'}</div>
+                        {user.isStudent && (
+                          <span style={{ fontSize: '11px', color: '#0f766e', backgroundColor: '#ccfbf1', borderRadius: '999px', padding: '2px 8px' }}>
+                            学员
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '12px', color: '#666' }}>用户 ID：{user.id}</div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>邀请码：{user.inviteCode || '未生成'}</div>
                     </div>
                   </div>
                 </td>
                 <td style={{ padding: '12px', fontSize: '14px' }}>
-                  <div style={{ fontSize: '13px' }}>{user.email}</div>
-                  <div style={{ fontSize: '12px', color: '#666' }}>{user.phone}</div>
+                  <div style={{ fontSize: '13px' }}>{user.email || '未填写邮箱'}</div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>{user.phone || '未填写手机号'}</div>
                 </td>
                 <td style={{ padding: '12px' }}>
                   <span style={{ 
@@ -83,7 +111,7 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                 </td>
                 <td style={{ padding: '12px', fontSize: '14px' }}>
                   <div style={{ fontSize: '14px', fontWeight: 500 }}>等级 {user.level}</div>
-                  <div style={{ fontSize: '12px', color: '#666' }}>{user.experience} 经验</div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>{user.experience} 经验 · {user.balance || 0} 福豆</div>
                 </td>
                 <td style={{ padding: '12px' }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -95,8 +123,8 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                           padding: '2px 6px', 
                           borderRadius: '4px', 
                           fontSize: '11px',
-                          backgroundColor: tag.color + '20',
-                          color: tag.color
+                          backgroundColor: `${tag.color || '#666'}20`,
+                          color: tag.color || '#666'
                         }}
                       >
                         {tag.name}

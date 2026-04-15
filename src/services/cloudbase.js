@@ -1,202 +1,728 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { DATABASE_CONFIG } from '../config/database.js';
 
-const { env, region, publishableKey } = DATABASE_CONFIG.cloudbase;
+const { cloudbase: { env, region, publishableKey }, collections } = DATABASE_CONFIG;
+const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
+const REWARD_SETTINGS_KEY = 'meditation_rewards';
+const MAX_WEALTH_HISTORY_ITEMS = 50;
 
 const app = cloudbase.init({
-    env,
-    ...(region ? { region } : {}),
-    ...(publishableKey ? { publishableKey } : {})
+  env,
+  ...(region ? { region } : {}),
+  ...(publishableKey ? { publishableKey } : {})
 });
 
 const db = app.database();
 const auth = app.auth({ persistence: 'local' });
+const _ = db.command;
+
 let loginPromise = null;
+let currentProfilePromise = null;
+let currentProfileCache = null;
 
 const isMissingCollectionResponse = (response) => response?.code === 'DATABASE_COLLECTION_NOT_EXIST';
 
 const getResponseData = (response, collectionName) => {
-    if (Array.isArray(response?.data)) {
-        return response.data;
-    }
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
 
-    if (isMissingCollectionResponse(response)) {
-        return [];
-    }
+  if (response?.data && typeof response.data === 'object') {
+    return [response.data];
+  }
 
-    throw new Error(response?.message || `CloudBase query failed for collection "${collectionName}"`);
+  if (isMissingCollectionResponse(response)) {
+    return [];
+  }
+
+  throw new Error(response?.message || `CloudBase query failed for collection "${collectionName}"`);
 };
+
+const getFirstDocument = (response, collectionName) => getResponseData(response, collectionName)[0] || null;
+
+const getDocumentId = (document) => document?._id || document?.id || '';
 
 const resolveCurrentUser = async () => auth.currentUser || auth.getCurrentUser();
 
+const rememberPendingInviteCode = () => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const inviteCode = new URL(window.location.href).searchParams.get('invite')?.trim();
+  if (inviteCode) {
+    window.localStorage.setItem(PENDING_INVITE_STORAGE_KEY, inviteCode);
+    return inviteCode;
+  }
+
+  return window.localStorage.getItem(PENDING_INVITE_STORAGE_KEY) || '';
+};
+
+const clearPendingInviteCode = () => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
+  }
+};
+
+const buildDefaultUserName = (authUid = '') => `用户${(authUid || '0000').slice(-4)}`;
+
+const generateInviteCode = (authUid = '') =>
+  `LW${(authUid || '000000').slice(-6).toUpperCase()}${Date.now().toString(36).slice(-4).toUpperCase()}`;
+
+const normalizeAccessType = (value) => (value === 'student' ? 'student' : 'public');
+
+const clampInviterRewardRate = (value) => {
+  const nextValue = Number(value);
+  if (!Number.isFinite(nextValue)) {
+    return 0;
+  }
+
+  return Math.min(20, Math.max(0, Math.round(nextValue)));
+};
+
+const normalizeWealthEntry = (entry = {}) => ({
+  id: entry.id || `wealth_${Date.now()}`,
+  amount: Number(entry.amount || 0),
+  description: entry.description || '',
+  date: entry.date || new Date().toISOString(),
+  type: entry.type || 'EARN',
+  source: entry.source || '',
+  rewardKey: entry.rewardKey || '',
+  relatedUserId: entry.relatedUserId || ''
+});
+
+const normalizeWealthHistory = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(normalizeWealthEntry)
+    .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())
+    .slice(0, MAX_WEALTH_HISTORY_ITEMS);
+};
+
+const normalizeRewardClaims = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return value;
+};
+
+const normalizeCurrentUserProfile = (document = {}) => ({
+  id: getDocumentId(document),
+  authUid: document.auth_uid || document.authUid || '',
+  name: document.name || buildDefaultUserName(document.auth_uid || document.authUid || ''),
+  email: document.email || '',
+  phone: document.phone || '',
+  status: document.status || 'active',
+  level: Number(document.level ?? 1),
+  experience: Number(document.experience ?? 0),
+  isStudent: Boolean(document.is_student ?? document.isStudent),
+  inviteCode: document.invite_code || document.inviteCode || '',
+  inviterUserId: document.inviter_user_id || document.inviterUserId || '',
+  balance: Number(document.balance || 0),
+  wealthHistory: normalizeWealthHistory(document.wealth_history || document.wealthHistory),
+  rewardClaims: normalizeRewardClaims(document.reward_claims || document.rewardClaims),
+  joinDate: document.join_date || document.joinDate || '',
+  lastActive: document.last_active || document.lastActive || ''
+});
+
+const getRecordTimestamp = (record = {}) =>
+  record.created_at_client || record.timestamp || record.created_at || record.createdAt || null;
+
+const normalizeAwarenessRecord = (record = {}) => {
+  const content = (record.content || '').trim();
+  const accessType = normalizeAccessType(record.access_type || record.accessType);
+
+  return {
+    id: getDocumentId(record),
+    userId: record.user_id || record.userId || '',
+    authUid: record.auth_uid || record.authUid || '',
+    userName: record.user_name || record.userName || '匿名用户',
+    content,
+    accessType,
+    tagKey: record.tag_key || `${content}::${accessType}`,
+    timestamp: getRecordTimestamp(record)
+  };
+};
+
+const groupAwarenessTags = (records, countField) => {
+  const tagMap = new Map();
+
+  records.forEach((record) => {
+    if (!record.content) {
+      return;
+    }
+
+    const existingTag = tagMap.get(record.tagKey) || {
+      key: record.tagKey,
+      content: record.content,
+      accessType: record.accessType,
+      [countField]: 0,
+      lastUsedAt: record.timestamp
+    };
+
+    existingTag[countField] += 1;
+    existingTag.lastUsedAt =
+      new Date(record.timestamp || 0).getTime() > new Date(existingTag.lastUsedAt || 0).getTime()
+        ? record.timestamp
+        : existingTag.lastUsedAt;
+
+    tagMap.set(record.tagKey, existingTag);
+  });
+
+  return Array.from(tagMap.values()).sort((left, right) => {
+    if (right[countField] !== left[countField]) {
+      return right[countField] - left[countField];
+    }
+
+    return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
+  });
+};
+
+const buildShareLinks = ({ title, text, url }) => {
+  const encodedUrl = encodeURIComponent(url);
+  const encodedText = encodeURIComponent(text);
+
+  return {
+    weibo: `https://service.weibo.com/share/share.php?title=${encodedText}&url=${encodedUrl}`,
+    x: `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`,
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+    whatsapp: `https://wa.me/?text=${encodedText}%20${encodedUrl}`,
+    telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
+    linkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
+    native: { title, text, url }
+  };
+};
+
+const updateCurrentProfileCache = (nextProfile) => {
+  currentProfileCache = nextProfile;
+  return currentProfileCache;
+};
+
 export const ensureAnonymousLogin = async () => {
-    const existingUser = await resolveCurrentUser();
-    if (existingUser) {
-        return existingUser;
-    }
+  const existingUser = await resolveCurrentUser();
+  if (existingUser) {
+    return existingUser;
+  }
 
-    const existingLoginState = auth.hasLoginState() || await auth.getLoginState();
-    if (existingLoginState) {
-        return resolveCurrentUser();
-    }
+  const existingLoginState = auth.hasLoginState() || await auth.getLoginState();
+  if (existingLoginState) {
+    return resolveCurrentUser();
+  }
 
-    if (!loginPromise) {
-        loginPromise = auth.signInAnonymously()
-            .then(() => resolveCurrentUser())
-            .finally(() => {
-                loginPromise = null;
-            });
-    }
+  if (!loginPromise) {
+    loginPromise = auth.signInAnonymously()
+      .then(() => resolveCurrentUser())
+      .finally(() => {
+        loginPromise = null;
+      });
+  }
 
-    return loginPromise;
+  return loginPromise;
 };
 
-// 集合名称
-const COLLECTIONS = {
-    AWARENESS_RECORDS: 'awareness_records', // 觉察记录
-    USERS: 'users', // 用户信息
-    CHALLENGES: 'challenges', // 挑战数据
-    WEALTH_HISTORY: 'wealth_history', // 财富历史
-    DREAMS: 'dreams', // 梦想清单
+export const userProfileService = {
+  async ensureCurrentProfile(options = {}) {
+    const { refresh = false } = options;
+
+    if (!refresh && currentProfileCache) {
+      return currentProfileCache;
+    }
+
+    if (!refresh && currentProfilePromise) {
+      return currentProfilePromise;
+    }
+
+    currentProfilePromise = (async () => {
+      rememberPendingInviteCode();
+
+      const authUser = await ensureAnonymousLogin();
+      const authUid = authUser?.uid || '';
+      const nowIso = new Date().toISOString();
+
+      const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
+      const existingDocument = getFirstDocument(existingResult, collections.users);
+
+      if (existingDocument) {
+        const existingProfile = normalizeCurrentUserProfile(existingDocument);
+        const updatePayload = {
+          last_active: nowIso,
+          updated_at: new Date()
+        };
+
+        if (!existingProfile.inviteCode) {
+          updatePayload.invite_code = generateInviteCode(authUid);
+        }
+
+        if (!Array.isArray(existingDocument.wealth_history)) {
+          updatePayload.wealth_history = existingProfile.wealthHistory;
+        }
+
+        if (!existingDocument.reward_claims || typeof existingDocument.reward_claims !== 'object') {
+          updatePayload.reward_claims = existingProfile.rewardClaims;
+        }
+
+        await db.collection(collections.users).doc(existingProfile.id).update(updatePayload);
+
+        clearPendingInviteCode();
+
+        return updateCurrentProfileCache(
+          normalizeCurrentUserProfile({
+            ...existingDocument,
+            ...updatePayload,
+            _id: existingProfile.id
+          })
+        );
+      }
+
+      const pendingInviteCode = rememberPendingInviteCode();
+      let inviterUserId = '';
+
+      if (pendingInviteCode) {
+        const inviterResult = await db
+          .collection(collections.users)
+          .where({ invite_code: pendingInviteCode })
+          .limit(1)
+          .get();
+        const inviterDocument = getFirstDocument(inviterResult, collections.users);
+
+        if (inviterDocument && (inviterDocument.auth_uid || inviterDocument.authUid) !== authUid) {
+          inviterUserId = getDocumentId(inviterDocument);
+        }
+      }
+
+      const newUserPayload = {
+        auth_uid: authUid,
+        name: buildDefaultUserName(authUid),
+        status: 'active',
+        level: 1,
+        experience: 0,
+        is_student: false,
+        invite_code: generateInviteCode(authUid),
+        inviter_user_id: inviterUserId,
+        balance: 0,
+        wealth_history: [],
+        reward_claims: {},
+        join_date: nowIso.slice(0, 10),
+        last_active: nowIso,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      const createResult = await db.collection(collections.users).add(newUserPayload);
+      clearPendingInviteCode();
+
+      return updateCurrentProfileCache(
+        normalizeCurrentUserProfile({
+          ...newUserPayload,
+          _id: createResult.id
+        })
+      );
+    })().finally(() => {
+      currentProfilePromise = null;
+    });
+
+    return currentProfilePromise;
+  },
+
+  async getCurrentProfile(options = {}) {
+    return this.ensureCurrentProfile(options);
+  },
+
+  async updateCurrentProfile(profilePatch) {
+    const currentProfile = await this.ensureCurrentProfile();
+    const updatePayload = {
+      ...profilePatch,
+      updated_at: new Date()
+    };
+
+    await db.collection(collections.users).doc(currentProfile.id).update(updatePayload);
+
+    return updateCurrentProfileCache(
+      normalizeCurrentUserProfile({
+        ...currentProfile,
+        ...updatePayload,
+        _id: currentProfile.id
+      })
+    );
+  },
+
+  async buildInviteLink({ tagContent } = {}) {
+    const currentProfile = await this.ensureCurrentProfile();
+
+    if (typeof window === 'undefined') {
+      return `/record?invite=${encodeURIComponent(currentProfile.inviteCode)}`;
+    }
+
+    const shareUrl = new URL('/record', window.location.origin);
+    shareUrl.searchParams.set('invite', currentProfile.inviteCode);
+
+    if (tagContent) {
+      shareUrl.searchParams.set('tag', tagContent.trim().slice(0, 6));
+    }
+
+    return shareUrl.toString();
+  }
 };
 
-/**
- * 觉察记录相关操作
- */
 export const awarenessService = {
-    // 添加觉察记录
-    async addRecord(content) {
-        try {
-            const user = await ensureAnonymousLogin();
-            const userId = user?.uid || 'anonymous';
+  async addRecord(content, options = {}) {
+    try {
+      const trimmedContent = content.trim();
+      const currentProfile = await userProfileService.ensureCurrentProfile();
+      const accessType = normalizeAccessType(options.accessType || 'public');
 
-            const result = await db.collection(COLLECTIONS.AWARENESS_RECORDS).add({
-                userId,
-                content,
-                timestamp: new Date(),
-                createdAt: db.serverDate()
-            });
+      if (!trimmedContent) {
+        throw new Error('请输入标签内容');
+      }
 
-            if (!result?.id) {
-                throw new Error(result?.message || '添加觉察记录失败');
-            }
+      if (trimmedContent.length > 6) {
+        throw new Error('标签长度不能超过 6 个字符');
+      }
 
-            return { success: true, id: result.id };
-        } catch (error) {
-            console.error('添加觉察记录失败:', error);
-            return { success: false, error };
-        }
-    },
+      if (accessType === 'student' && !currentProfile.isStudent) {
+        throw new Error('学员觉察标签仅学员可发布');
+      }
 
-    // 获取用户的觉察记录
-    async getUserRecords(limit = 100) {
-        try {
-            const user = await ensureAnonymousLogin();
-            const userId = user?.uid || 'anonymous';
+      const nowIso = new Date().toISOString();
+      const payload = {
+        user_id: currentProfile.id,
+        auth_uid: currentProfile.authUid,
+        user_name: currentProfile.name,
+        content: trimmedContent,
+        access_type: accessType,
+        tag_key: `${trimmedContent}::${accessType}`,
+        timestamp: nowIso,
+        created_at_client: nowIso,
+        createdAt: db.serverDate(),
+        created_at: db.serverDate()
+      };
 
-            const result = await db.collection(COLLECTIONS.AWARENESS_RECORDS)
-                .where({
-                    userId
-                })
-                .orderBy('createdAt', 'desc')
-                .limit(limit)
-                .get();
+      const result = await db.collection(collections.awarenessRecords).add(payload);
 
-            return { success: true, data: getResponseData(result, COLLECTIONS.AWARENESS_RECORDS) };
-        } catch (error) {
-            console.error('获取用户觉察记录失败:', error);
-            return { success: false, error };
-        }
-    },
+      if (!result?.id) {
+        throw new Error(result?.message || '添加觉察记录失败');
+      }
 
-    // 获取用户的标签统计
-    async getUserTags() {
-        try {
-            const recordsResult = await this.getUserRecords();
-            if (!recordsResult.success) return { success: false };
-
-            const records = recordsResult.data;
-
-            // 本地聚合统计
-            const tagMap = {};
-            records.forEach(record => {
-                if (tagMap[record.content]) {
-                    tagMap[record.content].count++;
-                } else {
-                    tagMap[record.content] = {
-                        content: record.content,
-                        count: 1
-                    };
-                }
-            });
-
-            const tags = Object.values(tagMap).sort((a, b) => b.count - a.count);
-            return { success: true, data: tags };
-        } catch (error) {
-            console.error('获取用户标签统计失败:', error);
-            return { success: false, error };
-        }
-    },
-
-    // 获取社群热门标签
-    async getPopularTags(limit = 10) {
-        try {
-            await ensureAnonymousLogin();
-            // 获取最近的记录(比如最近1000条)
-            const result = await db.collection(COLLECTIONS.AWARENESS_RECORDS)
-                .orderBy('createdAt', 'desc')
-                .limit(1000)
-                .get();
-
-            // 本地聚合统计
-            const tagMap = {};
-            getResponseData(result, COLLECTIONS.AWARENESS_RECORDS).forEach(record => {
-                if (tagMap[record.content]) {
-                    tagMap[record.content].totalCount++;
-                } else {
-                    tagMap[record.content] = {
-                        content: record.content,
-                        totalCount: 1
-                    };
-                }
-            });
-
-            const tags = Object.values(tagMap)
-                .sort((a, b) => b.totalCount - a.totalCount)
-                .slice(0, limit);
-
-            return { success: true, data: tags };
-        } catch (error) {
-            console.error('获取热门标签失败:', error);
-            return { success: false, error };
-        }
+      return {
+        success: true,
+        id: result.id,
+        record: normalizeAwarenessRecord({
+          ...payload,
+          _id: result.id
+        })
+      };
+    } catch (error) {
+      console.error('添加觉察记录失败:', error);
+      return { success: false, error };
     }
+  },
+
+  async getUserRecords(limit = 100) {
+    try {
+      const currentProfile = await userProfileService.ensureCurrentProfile();
+      const result = await db
+        .collection(collections.awarenessRecords)
+        .where({ user_id: currentProfile.id })
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+
+      return {
+        success: true,
+        data: getResponseData(result, collections.awarenessRecords).map(normalizeAwarenessRecord)
+      };
+    } catch (error) {
+      console.error('获取用户觉察记录失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  async getRecentRecords(limit = 40) {
+    try {
+      await userProfileService.ensureCurrentProfile();
+      const result = await db
+        .collection(collections.awarenessRecords)
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+
+      const records = getResponseData(result, collections.awarenessRecords)
+        .map(normalizeAwarenessRecord)
+        .sort((left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime());
+
+      return { success: true, data: records };
+    } catch (error) {
+      console.error('获取最新觉察失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  async getUserTags() {
+    try {
+      const recordsResult = await this.getUserRecords();
+      if (!recordsResult.success) {
+        return { success: false, error: recordsResult.error };
+      }
+
+      return {
+        success: true,
+        data: groupAwarenessTags(recordsResult.data, 'count')
+      };
+    } catch (error) {
+      console.error('获取用户标签统计失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  async getPopularTags(limit = 16) {
+    try {
+      const recentRecordsResult = await this.getRecentRecords(1000);
+      if (!recentRecordsResult.success) {
+        return { success: false, error: recentRecordsResult.error };
+      }
+
+      return {
+        success: true,
+        data: groupAwarenessTags(recentRecordsResult.data, 'totalCount').slice(0, limit)
+      };
+    } catch (error) {
+      console.error('获取热门标签失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  async buildSharePayload(content) {
+    const shareUrl = await userProfileService.buildInviteLink({ tagContent: content });
+    const shareText = `我刚刚在理悟记录了此刻的觉察：「${content}」。一起进入应用，安住当下。`;
+
+    return {
+      title: '理悟 · 觉察此刻',
+      text: shareText,
+      url: shareUrl,
+      links: buildShareLinks({
+        title: '理悟 · 觉察此刻',
+        text: shareText,
+        url: shareUrl
+      })
+    };
+  }
 };
 
-/**
- * 用户认证相关操作
- */
-export const authService = {
-    // 匿名登录
-    async loginAnonymously() {
-        try {
-            await ensureAnonymousLogin();
-            return { success: true };
-        } catch (error) {
-            console.error('匿名登录失败:', error);
-            return { success: false, error };
-        }
-    },
+export const rewardSettingsService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: REWARD_SETTINGS_KEY })
+        .limit(1)
+        .get();
 
-    // 获取当前用户
-    getCurrentUser() {
-        return auth.currentUser;
-    },
+      if (isMissingCollectionResponse(result)) {
+        return {
+          rewardPoints: 50,
+          allowRepeatRewards: true,
+          inviterRewardRate: 0
+        };
+      }
 
-    // 监听登录状态变化
-    onLoginStateChanged(callback) {
-        return auth.onLoginStateChanged(callback);
+      const document = getFirstDocument(result, collections.appSettings);
+
+      return {
+        rewardPoints: Number(document?.reward_points ?? document?.rewardPoints ?? 50),
+        allowRepeatRewards: Boolean(document?.allow_repeat_rewards ?? document?.allowRepeatRewards ?? true),
+        inviterRewardRate: clampInviterRewardRate(document?.inviter_reward_rate ?? document?.inviterRewardRate ?? 0)
+      };
+    } catch (error) {
+      console.error('获取奖励设置失败:', error);
+      return {
+        rewardPoints: 50,
+        allowRepeatRewards: true,
+        inviterRewardRate: 0
+      };
     }
+  }
+};
+
+export const wealthService = {
+  async getCurrentWallet(options = {}) {
+    const currentProfile = await userProfileService.getCurrentProfile(options);
+
+    return {
+      balance: currentProfile.balance,
+      history: currentProfile.wealthHistory
+    };
+  },
+
+  async awardCurrentUser({ amount, description, source = 'manual', rewardKey = '', allowRepeatReward = true }) {
+    const normalizedAmount = Math.max(0, Number(amount) || 0);
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true });
+
+    if (!allowRepeatReward && rewardKey && currentProfile.rewardClaims[rewardKey]) {
+      return {
+        rewarded: false,
+        rewardAmount: 0,
+        repeatedRewardBlocked: true,
+        inviterBonusAmount: 0,
+        balance: currentProfile.balance,
+        history: currentProfile.wealthHistory
+      };
+    }
+
+    if (normalizedAmount <= 0) {
+      return {
+        rewarded: false,
+        rewardAmount: 0,
+        repeatedRewardBlocked: false,
+        inviterBonusAmount: 0,
+        balance: currentProfile.balance,
+        history: currentProfile.wealthHistory
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const historyEntry = normalizeWealthEntry({
+      id: `wealth_${Date.now()}`,
+      amount: normalizedAmount,
+      description,
+      date: nowIso,
+      type: 'EARN',
+      source,
+      rewardKey
+    });
+
+    const rewardClaims = !allowRepeatReward && rewardKey
+      ? {
+          ...currentProfile.rewardClaims,
+          [rewardKey]: nowIso
+        }
+      : currentProfile.rewardClaims;
+
+    await db.collection(collections.users).doc(currentProfile.id).update({
+      balance: _.inc(normalizedAmount),
+      wealth_history: _.unshift(historyEntry),
+      ...(rewardClaims !== currentProfile.rewardClaims ? { reward_claims: rewardClaims } : {}),
+      last_active: nowIso,
+      updated_at: new Date()
+    });
+
+    const nextProfile = updateCurrentProfileCache({
+      ...currentProfile,
+      balance: currentProfile.balance + normalizedAmount,
+      wealthHistory: [historyEntry, ...currentProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS),
+      rewardClaims,
+      lastActive: nowIso
+    });
+
+    let inviterBonusAmount = 0;
+
+    if (currentProfile.inviterUserId) {
+      const rewardSettings = await rewardSettingsService.getSettings();
+      inviterBonusAmount = Math.floor((normalizedAmount * clampInviterRewardRate(rewardSettings.inviterRewardRate)) / 100);
+
+      if (inviterBonusAmount > 0) {
+        const inviterEntry = normalizeWealthEntry({
+          id: `invite_${Date.now()}`,
+          amount: inviterBonusAmount,
+          description: `邀请奖励：${nextProfile.name} 获得福豆`,
+          date: nowIso,
+          type: 'EARN',
+          source: 'invite_bonus',
+          rewardKey: rewardKey ? `${rewardKey}__invite_bonus__${currentProfile.id}` : '',
+          relatedUserId: currentProfile.id
+        });
+
+        await db.collection(collections.users).doc(currentProfile.inviterUserId).update({
+          balance: _.inc(inviterBonusAmount),
+          wealth_history: _.unshift(inviterEntry),
+          updated_at: new Date()
+        });
+      }
+    }
+
+    return {
+      rewarded: true,
+      rewardAmount: normalizedAmount,
+      repeatedRewardBlocked: false,
+      inviterBonusAmount,
+      balance: nextProfile.balance,
+      history: nextProfile.wealthHistory
+    };
+  },
+
+  async spendCurrentUser({ amount, description, source = 'spend' }) {
+    const normalizedAmount = Math.max(0, Number(amount) || 0);
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true });
+
+    if (normalizedAmount <= 0) {
+      return {
+        success: false,
+        balance: currentProfile.balance,
+        history: currentProfile.wealthHistory
+      };
+    }
+
+    if (currentProfile.balance < normalizedAmount) {
+      return {
+        success: false,
+        insufficientBalance: true,
+        balance: currentProfile.balance,
+        history: currentProfile.wealthHistory
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const historyEntry = normalizeWealthEntry({
+      id: `spend_${Date.now()}`,
+      amount: -normalizedAmount,
+      description,
+      date: nowIso,
+      type: 'SPEND',
+      source
+    });
+
+    await db.collection(collections.users).doc(currentProfile.id).update({
+      balance: _.inc(-normalizedAmount),
+      wealth_history: _.unshift(historyEntry),
+      updated_at: new Date()
+    });
+
+    const nextProfile = updateCurrentProfileCache({
+      ...currentProfile,
+      balance: currentProfile.balance - normalizedAmount,
+      wealthHistory: [historyEntry, ...currentProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS)
+    });
+
+    return {
+      success: true,
+      balance: nextProfile.balance,
+      history: nextProfile.wealthHistory
+    };
+  }
+};
+
+export const authService = {
+  async loginAnonymously() {
+    try {
+      await ensureAnonymousLogin();
+      return { success: true };
+    } catch (error) {
+      console.error('匿名登录失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  getCurrentUser() {
+    return auth.currentUser;
+  },
+
+  onLoginStateChanged(callback) {
+    return auth.onLoginStateChanged(callback);
+  }
 };
 
 export { db, auth };

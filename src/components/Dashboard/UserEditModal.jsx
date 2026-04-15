@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Save } from 'lucide-react';
 
 const createFormData = (user) => ({
@@ -10,17 +10,22 @@ const createFormData = (user) => ({
   age: user?.age || '',
   status: user?.status || 'active',
   level: user?.level || 1,
-  experience: user?.experience || 0
+  experience: user?.experience || 0,
+  isStudent: Boolean(user?.isStudent)
 });
 
 const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
   const [formData, setFormData] = useState(() => createFormData(user));
 
+  useEffect(() => {
+    setFormData(createFormData(user));
+  }, [user]);
+
   const handleChange = (e) => {
     const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'number' ? parseInt(value) || 0 : value
+      [name]: type === 'checkbox' ? e.target.checked : type === 'number' ? parseInt(value) || 0 : value
     }));
   };
 
@@ -103,7 +108,6 @@ const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
                 borderRadius: '4px',
                 fontSize: '14px'
               }}
-              required
             />
           </div>
 
@@ -228,6 +232,39 @@ const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
                 }}
               />
             </div>
+          </div>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '14px 16px',
+              borderRadius: '10px',
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              marginBottom: '16px',
+              cursor: 'pointer'
+            }}
+          >
+            <input
+              type="checkbox"
+              name="isStudent"
+              checked={formData.isStudent}
+              onChange={handleChange}
+              style={{ width: '18px', height: '18px' }}
+            />
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>学员身份</div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                开启后，此用户可以发布和复用学员觉察标签。
+              </div>
+            </div>
+          </label>
+
+          <div style={{ marginBottom: '24px', padding: '12px 14px', borderRadius: '10px', backgroundColor: '#f8fafc', color: '#64748b', fontSize: '12px', lineHeight: 1.6 }}>
+            <div>邀请口令：{user?.inviteCode || '尚未生成'}</div>
+            <div>云端 UID：{user?.authUid || '未绑定匿名登录'}</div>
           </div>
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>

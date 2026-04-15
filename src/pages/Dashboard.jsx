@@ -251,7 +251,7 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>冥想奖励</span>
+              <span>福豆奖励</span>
             </button>
           </div>
         </nav>
@@ -411,7 +411,7 @@ const Dashboard = () => {
 
         {!loading && !error && activeTab === 'meditationSettings' && (
           <MeditationSettings
-            key={`${meditationSettings.documentId || 'default'}-${meditationSettings.rewardPoints}-${String(meditationSettings.allowRepeatRewards)}`}
+            key={`${meditationSettings.documentId || 'default'}-${meditationSettings.rewardPoints}-${String(meditationSettings.allowRepeatRewards)}-${meditationSettings.inviterRewardRate || 0}`}
             settings={meditationSettings}
             error={settingsError}
             saving={savingMeditationSettings}

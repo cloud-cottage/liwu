@@ -43,7 +43,7 @@ export const useDatabase = () => {
       setMeditationSettings(nextMeditationSettings);
       setSettingsError(
         nextMeditationSettings.missingCollection
-          ? '当前使用默认冥想奖励配置。若要在后台保存设置，请先创建集合：app_settings。'
+          ? '当前使用默认奖励配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
     } catch (err) {

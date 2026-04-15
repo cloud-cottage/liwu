@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
 
+const clampInviterRewardRate = (value) => {
+  const nextValue = Number(value);
+  if (!Number.isFinite(nextValue)) {
+    return 0;
+  }
+
+  return Math.min(20, Math.max(0, Math.round(nextValue)));
+};
+
 const MeditationSettings = ({
   settings,
   onSave,
@@ -8,6 +17,7 @@ const MeditationSettings = ({
 }) => {
   const [rewardPoints, setRewardPoints] = useState(settings.rewardPoints);
   const [allowRepeatRewards, setAllowRepeatRewards] = useState(settings.allowRepeatRewards);
+  const [inviterRewardRate, setInviterRewardRate] = useState(settings.inviterRewardRate || 0);
   const [successMessage, setSuccessMessage] = useState('');
 
   const handleSubmit = async (event) => {
@@ -16,10 +26,11 @@ const MeditationSettings = ({
 
     await onSave({
       rewardPoints,
-      allowRepeatRewards
+      allowRepeatRewards,
+      inviterRewardRate: clampInviterRewardRate(inviterRewardRate)
     });
 
-    setSuccessMessage('冥想奖励配置已保存到 CloudBase。');
+    setSuccessMessage('奖励配置已保存到 CloudBase。');
   };
 
   return (
@@ -32,9 +43,9 @@ const MeditationSettings = ({
           boxShadow: '0 4px 18px rgba(0, 0, 0, 0.06)'
         }}
       >
-        <h2 style={{ margin: '0 0 8px', fontSize: '24px', color: '#333' }}>冥想奖励设置</h2>
+        <h2 style={{ margin: '0 0 8px', fontSize: '24px', color: '#333' }}>福豆奖励设置</h2>
         <p style={{ margin: '0 0 24px', color: '#666', fontSize: '14px', lineHeight: 1.6 }}>
-          控制前台冥想完成后的积分发放逻辑。保存后，用户下一次完成冥想会按这里的配置结算。
+          保存后，冥想奖励和邀请返豆都会直接按这里的配置结算。
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -43,7 +54,7 @@ const MeditationSettings = ({
               htmlFor="meditation-reward-points"
               style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 600, color: '#333' }}
             >
-              每次冥想完成奖励积分
+              每次冥想完成奖励福豆
             </label>
             <input
               id="meditation-reward-points"
@@ -61,6 +72,35 @@ const MeditationSettings = ({
                 fontSize: '15px'
               }}
             />
+          </div>
+
+          <div>
+            <label
+              htmlFor="inviter-reward-rate"
+              style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 600, color: '#333' }}
+            >
+              邀请人返豆比例
+            </label>
+            <input
+              id="inviter-reward-rate"
+              type="number"
+              min="0"
+              max="20"
+              step="1"
+              value={inviterRewardRate}
+              onChange={(event) => setInviterRewardRate(clampInviterRewardRate(event.target.value))}
+              style={{
+                width: '100%',
+                maxWidth: '240px',
+                padding: '12px 14px',
+                borderRadius: '10px',
+                border: '1px solid #d9d9d9',
+                fontSize: '15px'
+              }}
+            />
+            <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
+              可设置 0% 到 20%。被邀请人每次获得福豆时，邀请人会按该比例收到返豆。
+            </div>
           </div>
 
           <label
@@ -84,7 +124,7 @@ const MeditationSettings = ({
             <div>
               <div style={{ fontSize: '14px', fontWeight: 600, color: '#333' }}>重复收听继续奖励</div>
               <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>
-                关闭后，同一个冥想节目只在首次完成时发放积分，后续重复收听只累计时长。
+                关闭后，同一个冥想节目只在首次完成时发放福豆，后续重复收听只累计时长。
               </div>
             </div>
           </label>

@@ -55,7 +55,7 @@ const MeditationPlayer = () => {
   }, []);
 
   useEffect(() => {
-    handleSegmentCompleteRef.current = () => {
+    handleSegmentCompleteRef.current = async () => {
       if (currentSegmentIndex < SEGMENT_COUNT - 1) {
         const nextIndex = currentSegmentIndex + 1;
         const audio = audioRef.current;
@@ -71,7 +71,7 @@ const MeditationPlayer = () => {
       }
 
       setIsPlaying(false);
-      const rewardResult = completeMeditationSession({
+      const rewardResult = await completeMeditationSession({
         duration: 30,
         rewardAmount: meditationSettings.rewardPoints,
         allowRepeatReward: meditationSettings.allowRepeatRewards,
@@ -81,6 +81,8 @@ const MeditationPlayer = () => {
 
       const rewardMessage = rewardResult.rewarded
         ? `获得 ${rewardResult.rewardAmount} 福豆，累计时长增加 30 分钟`
+        : rewardResult.error
+          ? '云端福豆暂未到账，累计时长增加 30 分钟'
         : rewardResult.repeatedRewardBlocked && meditationSettings.rewardPoints > 0
           ? '本次不重复发放福豆，累计时长增加 30 分钟'
           : '累计时长增加 30 分钟';

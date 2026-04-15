@@ -7,6 +7,7 @@ const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
 export const DEFAULT_MEDITATION_SETTINGS = {
   rewardPoints: 50,
   allowRepeatRewards: true,
+  inviterRewardRate: 0,
   documentId: null,
   missingCollection: false
 };
@@ -68,6 +69,11 @@ const normalizeUser = (user) => ({
   status: user.status || 'inactive',
   level: Number(user.level ?? 1),
   experience: Number(user.experience ?? 0),
+  authUid: user.auth_uid || user.authUid || '',
+  isStudent: Boolean(user.is_student ?? user.isStudent),
+  inviteCode: user.invite_code || user.inviteCode || '',
+  inviterUserId: user.inviter_user_id || user.inviterUserId || '',
+  balance: Number(user.balance || 0),
   bio: user.bio || '',
   location: user.location || '',
   age: user.age ?? '',
@@ -78,6 +84,10 @@ const normalizeMeditationSettings = (settings = {}) => ({
   rewardPoints: Number(settings.reward_points ?? settings.rewardPoints ?? DEFAULT_MEDITATION_SETTINGS.rewardPoints),
   allowRepeatRewards:
     settings.allow_repeat_rewards ?? settings.allowRepeatRewards ?? DEFAULT_MEDITATION_SETTINGS.allowRepeatRewards,
+  inviterRewardRate: Math.min(
+    20,
+    Math.max(0, Number(settings.inviter_reward_rate ?? settings.inviterRewardRate ?? DEFAULT_MEDITATION_SETTINGS.inviterRewardRate))
+  ),
   documentId: getDocumentId(settings) || null,
   missingCollection: false
 });
@@ -92,13 +102,23 @@ const toUserPayload = (userData) => {
   delete rest.tags;
   delete rest.joinDate;
   delete rest.lastActive;
+  delete rest.authUid;
+  delete rest.isStudent;
+  delete rest.inviteCode;
+  delete rest.inviterUserId;
+  delete rest.balance;
   delete rest.created_at;
   delete rest.updated_at;
 
   return {
     ...rest,
     ...(joinDate !== undefined ? { join_date: joinDate } : {}),
-    ...(lastActive !== undefined ? { last_active: lastActive } : {})
+    ...(lastActive !== undefined ? { last_active: lastActive } : {}),
+    ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),
+    ...(userData.isStudent !== undefined ? { is_student: Boolean(userData.isStudent) } : {}),
+    ...(userData.inviteCode !== undefined ? { invite_code: userData.inviteCode } : {}),
+    ...(userData.inviterUserId !== undefined ? { inviter_user_id: userData.inviterUserId } : {}),
+    ...(userData.balance !== undefined ? { balance: Math.max(0, Number(userData.balance) || 0) } : {})
   };
 };
 
@@ -138,7 +158,11 @@ const toTagPayload = (tagData) => {
 const toMeditationSettingsPayload = (settingsData) => ({
   key: MEDITATION_SETTINGS_KEY,
   reward_points: Math.max(0, Number(settingsData.rewardPoints ?? DEFAULT_MEDITATION_SETTINGS.rewardPoints)),
-  allow_repeat_rewards: Boolean(settingsData.allowRepeatRewards)
+  allow_repeat_rewards: Boolean(settingsData.allowRepeatRewards),
+  inviter_reward_rate: Math.min(
+    20,
+    Math.max(0, Number(settingsData.inviterRewardRate ?? DEFAULT_MEDITATION_SETTINGS.inviterRewardRate))
+  )
 });
 
 const attachTagsToUsers = (users, tags, categories, userTagLinks) => {

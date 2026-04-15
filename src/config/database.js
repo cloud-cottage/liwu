@@ -35,7 +35,8 @@ export const DATABASE_CONFIG = {
     tagCategories: 'tag_categories',
     tags: 'tags',
     userTags: 'user_tags',
-    appSettings: 'app_settings'
+    appSettings: 'app_settings',
+    awarenessRecords: 'awareness_records'
   },
   
   // Database options
