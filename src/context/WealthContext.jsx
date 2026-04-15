@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useState, useEffect, useContext } from 'react';
 
 const WealthContext = createContext();
@@ -44,6 +45,11 @@ export const WealthProvider = ({ children }) => {
         };
     });
 
+    const [meditationRewardClaims, setMeditationRewardClaims] = useState(() => {
+        const saved = localStorage.getItem('meditation_reward_claims');
+        return saved ? JSON.parse(saved) : {};
+    });
+
     const [awarenessRecords, setAwarenessRecords] = useState(() => {
         const saved = localStorage.getItem('awareness_records');
         return saved ? JSON.parse(saved) : [];
@@ -56,8 +62,9 @@ export const WealthProvider = ({ children }) => {
         localStorage.setItem('wealth_inventory', JSON.stringify(inventory));
         localStorage.setItem('wealth_challenges', JSON.stringify(challenges));
         localStorage.setItem('meditation_stats', JSON.stringify(meditationStats));
+        localStorage.setItem('meditation_reward_claims', JSON.stringify(meditationRewardClaims));
         localStorage.setItem('awareness_records', JSON.stringify(awarenessRecords));
-    }, [balance, history, dreams, inventory, challenges, meditationStats, awarenessRecords]);
+    }, [balance, history, dreams, inventory, challenges, meditationStats, meditationRewardClaims, awarenessRecords]);
 
     const addWealth = (amount, description) => {
         setBalance(prev => prev + amount);
@@ -106,6 +113,37 @@ export const WealthProvider = ({ children }) => {
             // Simple logic for medals: 1 medal per 5 sessions or some other rule
             medals: Math.max(prev.medals, Math.floor((prev.totalDuration + duration) / 40))
         }));
+    };
+
+    const completeMeditationSession = ({
+        duration,
+        rewardAmount = 0,
+        allowRepeatReward = true,
+        rewardKey = 'default_meditation_program',
+        rewardDescription = '完成一次冥想'
+    }) => {
+        updateMeditationStats(duration);
+
+        const hasRewardClaim = Boolean(meditationRewardClaims[rewardKey]);
+        const shouldReward = allowRepeatReward || !hasRewardClaim;
+        const normalizedRewardAmount = Math.max(0, Number(rewardAmount) || 0);
+
+        if (!allowRepeatReward && !hasRewardClaim) {
+            setMeditationRewardClaims(prev => ({
+                ...prev,
+                [rewardKey]: new Date().toISOString()
+            }));
+        }
+
+        if (shouldReward && normalizedRewardAmount > 0) {
+            addWealth(normalizedRewardAmount, rewardDescription);
+        }
+
+        return {
+            rewarded: shouldReward && normalizedRewardAmount > 0,
+            rewardAmount: shouldReward ? normalizedRewardAmount : 0,
+            repeatedRewardBlocked: !allowRepeatReward && hasRewardClaim
+        };
     };
 
     const completeChallenge = (challengeId) => {
@@ -178,6 +216,7 @@ export const WealthProvider = ({ children }) => {
             addDream,
             buyDream,
             updateMeditationStats,
+            completeMeditationSession,
             completeChallenge,
             addAwarenessRecord,
             getUserTags,

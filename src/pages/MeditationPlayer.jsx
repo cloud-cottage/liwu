@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Play, Pause, SkipForward } from 'lucide-react';
+import { X, Play, Pause } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWealth } from '../context/WealthContext';
+import DatabaseService, { DEFAULT_MEDITATION_SETTINGS } from '../services/database.js';
 
 const SEGMENT_COUNT = 5;
 const AUDIO_LIBRARY = [
@@ -11,31 +12,47 @@ const AUDIO_LIBRARY = [
 ];
 
 const createSessionSegments = () =>
-  Array.from({ length: SEGMENT_COUNT }, (_, index) => ({
+  Array.from({ length: SEGMENT_COUNT }, () => ({
     url: AUDIO_LIBRARY[Math.floor(Math.random() * AUDIO_LIBRARY.length)],
-    label: `第 ${index + 1} 段`,
   }));
 
 const MeditationPlayer = () => {
   const navigate = useNavigate();
-  const { updateMeditationStats } = useWealth();
+  const { completeMeditationSession } = useWealth();
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
+  const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const audioRef = useRef(new Audio());
   const handleSegmentCompleteRef = useRef(() => {});
   const [segments] = useState(createSessionSegments);
 
-  const currentSegment = segments[currentSegmentIndex];
   const elapsedTime = duration > 0 ? Math.max(duration - timeLeft, 0) : 0;
   const segmentProgress = duration > 0 ? Math.min((elapsedTime / duration) * 100, 100) : 0;
-  const tonearmRotation = 18 + segmentProgress * 0.16 + (isPlaying ? 0 : -6);
-  const segmentCaption = `${currentSegment.label} / 共 ${SEGMENT_COUNT} 段`;
+  const tonearmRotation = 8 + segmentProgress * 0.04 + (isPlaying ? 0 : -16);
   const timeLabel = !isLoaded ? '加载中...' : formatTime(timeLeft);
   const footerLabel = isBuffering && isPlaying ? '缓冲中...' : '吸气，感受当下；呼气，放下杂念。';
+
+  useEffect(() => {
+    let active = true;
+
+    DatabaseService.getMeditationSettings()
+      .then((settings) => {
+        if (active) {
+          setMeditationSettings(settings);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load meditation settings:', error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     handleSegmentCompleteRef.current = () => {
@@ -54,11 +71,24 @@ const MeditationPlayer = () => {
       }
 
       setIsPlaying(false);
-      updateMeditationStats(30);
-      window.alert('冥想完成！获得 50 福豆，累计时长增加 30 分钟');
+      const rewardResult = completeMeditationSession({
+        duration: 30,
+        rewardAmount: meditationSettings.rewardPoints,
+        allowRepeatReward: meditationSettings.allowRepeatRewards,
+        rewardKey: 'default_meditation_program',
+        rewardDescription: '完成一次冥想'
+      });
+
+      const rewardMessage = rewardResult.rewarded
+        ? `获得 ${rewardResult.rewardAmount} 福豆，累计时长增加 30 分钟`
+        : rewardResult.repeatedRewardBlocked && meditationSettings.rewardPoints > 0
+          ? '本次不重复发放福豆，累计时长增加 30 分钟'
+          : '累计时长增加 30 分钟';
+
+      window.alert(`冥想完成！${rewardMessage}`);
       navigate('/');
     };
-  }, [currentSegmentIndex, navigate, segments, updateMeditationStats]);
+  }, [completeMeditationSession, currentSegmentIndex, meditationSettings, navigate, segments]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -145,10 +175,6 @@ const MeditationPlayer = () => {
     setIsPlaying((previousValue) => !previousValue);
   };
 
-  const skipSegment = () => {
-    handleSegmentCompleteRef.current();
-  };
-
   const handleClose = () => {
     if (window.confirm('确定要结束冥想吗？当前进度将不会保存。')) {
       navigate('/');
@@ -173,11 +199,6 @@ const MeditationPlayer = () => {
           to { transform: rotate(360deg); }
         }
 
-        @keyframes cover-pulse {
-          0% { transform: scale(1); }
-          50% { transform: scale(1.02); }
-          100% { transform: scale(1); }
-        }
       `}</style>
 
       <div
@@ -259,22 +280,6 @@ const MeditationPlayer = () => {
             >
               <div
                 style={{
-                  position: 'absolute',
-                  top: '16px',
-                  left: '16px',
-                  padding: '7px 12px',
-                  borderRadius: '999px',
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  color: 'rgba(255, 248, 238, 0.84)',
-                  fontSize: '12px',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                {segmentCaption}
-              </div>
-
-              <div
-                style={{
                   position: 'relative',
                   width: 'min(78vw, 312px)',
                   height: 'min(78vw, 312px)',
@@ -318,7 +323,6 @@ const MeditationPlayer = () => {
                       inset: '19%',
                       borderRadius: '50%',
                       overflow: 'hidden',
-                      animation: isPlaying ? 'cover-pulse 5s ease-in-out infinite' : 'none',
                     }}
                   >
                     <img
@@ -372,6 +376,7 @@ const MeditationPlayer = () => {
                       backgroundPosition: 'center',
                       backgroundRepeat: 'no-repeat',
                       opacity: 0.9,
+                      animation: isPlaying ? 'vinyl-spin 3.2s linear infinite' : 'none'
                     }}
                   />
                   <div
@@ -389,11 +394,11 @@ const MeditationPlayer = () => {
                 <div
                   style={{
                     position: 'absolute',
-                    top: '-8px',
-                    right: '8px',
+                    top: '34px',
+                    right: '18px',
                     width: '42%',
                     height: '42%',
-                    transformOrigin: '14px 14px',
+                    transformOrigin: 'calc(100% - 14px) 14px',
                     transform: `rotate(${tonearmRotation}deg)`,
                     transition: 'transform 420ms ease-out',
                     pointerEvents: 'none',
@@ -403,7 +408,7 @@ const MeditationPlayer = () => {
                     style={{
                       position: 'absolute',
                       top: 0,
-                      left: 0,
+                      right: 0,
                       width: '28px',
                       height: '28px',
                       borderRadius: '50%',
@@ -416,7 +421,7 @@ const MeditationPlayer = () => {
                     style={{
                       position: 'absolute',
                       top: '9px',
-                      left: '12px',
+                      right: '12px',
                       width: '120px',
                       height: '8px',
                       borderRadius: '999px',
@@ -429,7 +434,7 @@ const MeditationPlayer = () => {
                     style={{
                       position: 'absolute',
                       top: '4px',
-                      left: '118px',
+                      right: '118px',
                       width: '18px',
                       height: '18px',
                       borderRadius: '8px',
@@ -464,30 +469,6 @@ const MeditationPlayer = () => {
             }}
           >
             {timeLabel}
-          </div>
-
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button
-              onClick={skipSegment}
-              style={{
-                border: '1px solid rgba(44, 44, 44, 0.1)',
-                borderRadius: '999px',
-                padding: '10px 16px',
-                background: 'rgba(255, 255, 255, 0.82)',
-                color: 'var(--color-accent-ink)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                cursor: 'pointer',
-                boxShadow: '0 10px 18px rgba(53, 40, 27, 0.06)',
-              }}
-            >
-              <SkipForward size={16} />
-              下一段
-            </button>
           </div>
         </div>
 

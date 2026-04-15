@@ -1,15 +1,55 @@
 import cloudbase from '@cloudbase/js-sdk';
+import { DATABASE_CONFIG } from '../config/database.js';
 
-// 腾讯云开发配置
+const { env, region, publishableKey } = DATABASE_CONFIG.cloudbase;
+
 const app = cloudbase.init({
-    env: 'liwu-0gtd91eebd863ccf' // 您的环境 ID
+    env,
+    ...(region ? { region } : {}),
+    ...(publishableKey ? { publishableKey } : {})
 });
 
-// 获取数据库引用
 const db = app.database();
+const auth = app.auth({ persistence: 'local' });
+let loginPromise = null;
 
-// 获取认证引用
-const auth = app.auth();
+const isMissingCollectionResponse = (response) => response?.code === 'DATABASE_COLLECTION_NOT_EXIST';
+
+const getResponseData = (response, collectionName) => {
+    if (Array.isArray(response?.data)) {
+        return response.data;
+    }
+
+    if (isMissingCollectionResponse(response)) {
+        return [];
+    }
+
+    throw new Error(response?.message || `CloudBase query failed for collection "${collectionName}"`);
+};
+
+const resolveCurrentUser = async () => auth.currentUser || auth.getCurrentUser();
+
+export const ensureAnonymousLogin = async () => {
+    const existingUser = await resolveCurrentUser();
+    if (existingUser) {
+        return existingUser;
+    }
+
+    const existingLoginState = auth.hasLoginState() || await auth.getLoginState();
+    if (existingLoginState) {
+        return resolveCurrentUser();
+    }
+
+    if (!loginPromise) {
+        loginPromise = auth.signInAnonymously()
+            .then(() => resolveCurrentUser())
+            .finally(() => {
+                loginPromise = null;
+            });
+    }
+
+    return loginPromise;
+};
 
 // 集合名称
 const COLLECTIONS = {
@@ -27,7 +67,7 @@ export const awarenessService = {
     // 添加觉察记录
     async addRecord(content) {
         try {
-            const user = auth.currentUser;
+            const user = await ensureAnonymousLogin();
             const userId = user?.uid || 'anonymous';
 
             const result = await db.collection(COLLECTIONS.AWARENESS_RECORDS).add({
@@ -36,6 +76,10 @@ export const awarenessService = {
                 timestamp: new Date(),
                 createdAt: db.serverDate()
             });
+
+            if (!result?.id) {
+                throw new Error(result?.message || '添加觉察记录失败');
+            }
 
             return { success: true, id: result.id };
         } catch (error) {
@@ -47,7 +91,7 @@ export const awarenessService = {
     // 获取用户的觉察记录
     async getUserRecords(limit = 100) {
         try {
-            const user = auth.currentUser;
+            const user = await ensureAnonymousLogin();
             const userId = user?.uid || 'anonymous';
 
             const result = await db.collection(COLLECTIONS.AWARENESS_RECORDS)
@@ -58,7 +102,7 @@ export const awarenessService = {
                 .limit(limit)
                 .get();
 
-            return { success: true, data: result.data };
+            return { success: true, data: getResponseData(result, COLLECTIONS.AWARENESS_RECORDS) };
         } catch (error) {
             console.error('获取用户觉察记录失败:', error);
             return { success: false, error };
@@ -97,6 +141,7 @@ export const awarenessService = {
     // 获取社群热门标签
     async getPopularTags(limit = 10) {
         try {
+            await ensureAnonymousLogin();
             // 获取最近的记录(比如最近1000条)
             const result = await db.collection(COLLECTIONS.AWARENESS_RECORDS)
                 .orderBy('createdAt', 'desc')
@@ -105,7 +150,7 @@ export const awarenessService = {
 
             // 本地聚合统计
             const tagMap = {};
-            result.data.forEach(record => {
+            getResponseData(result, COLLECTIONS.AWARENESS_RECORDS).forEach(record => {
                 if (tagMap[record.content]) {
                     tagMap[record.content].totalCount++;
                 } else {
@@ -135,7 +180,7 @@ export const authService = {
     // 匿名登录
     async loginAnonymously() {
         try {
-            await auth.anonymousAuthProvider().signIn();
+            await ensureAnonymousLogin();
             return { success: true };
         } catch (error) {
             console.error('匿名登录失败:', error);
