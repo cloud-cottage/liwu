@@ -1,10 +1,15 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { DATABASE_CONFIG } from '../config/database.js';
 
-const { cloudbase: { env, region, publishableKey }, collections } = DATABASE_CONFIG;
+const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
+const PENDING_AUTH_PHONE_STORAGE_KEY = 'liwu_pending_auth_phone';
+const MOCK_PHONE_OTP_STORAGE_KEY = 'liwu_mock_phone_otp_session';
+const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
+const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
+const MOCK_PHONE_OTP_CODE = '1234';
 
 const app = cloudbase.init({
   env,
@@ -44,6 +49,19 @@ const getDocumentId = (document) => document?._id || document?.id || '';
 
 const resolveCurrentUser = async () => auth.currentUser || auth.getCurrentUser();
 
+const resolveCurrentSession = async () => {
+  if (typeof auth.getSession !== 'function') {
+    return null;
+  }
+
+  try {
+    const sessionResult = await auth.getSession();
+    return sessionResult?.data?.session || null;
+  } catch {
+    return null;
+  }
+};
+
 const rememberPendingInviteCode = () => {
   if (typeof window === 'undefined') {
     return '';
@@ -64,12 +82,122 @@ const clearPendingInviteCode = () => {
   }
 };
 
+const rememberPendingAuthPhone = (phone = '') => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const normalizedPhone = String(phone || '').trim();
+  if (normalizedPhone) {
+    window.sessionStorage.setItem(PENDING_AUTH_PHONE_STORAGE_KEY, normalizedPhone);
+    return normalizedPhone;
+  }
+
+  return window.sessionStorage.getItem(PENDING_AUTH_PHONE_STORAGE_KEY) || '';
+};
+
+const clearPendingAuthPhone = () => {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(PENDING_AUTH_PHONE_STORAGE_KEY);
+  }
+};
+
+const readSessionStorageJSON = (key) => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const rawValue = window.sessionStorage.getItem(key);
+    return rawValue ? JSON.parse(rawValue) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeSessionStorageJSON = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.setItem(key, JSON.stringify(value));
+};
+
+const readLocalStorageJSON = (key) => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(key);
+    return rawValue ? JSON.parse(rawValue) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeLocalStorageJSON = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(key, JSON.stringify(value));
+};
+
+const clearMockPhoneOtpSession = () => {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(MOCK_PHONE_OTP_STORAGE_KEY);
+  }
+};
+
+const readMockPhoneAuthSession = () => readLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY);
+
+const writeMockPhoneAuthSession = (value) => {
+  writeLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY, value);
+};
+
+const clearMockPhoneAuthSession = () => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(MOCK_PHONE_AUTH_STORAGE_KEY);
+  }
+};
+
+const clearCurrentProfileCache = () => {
+  currentProfileCache = null;
+  currentProfilePromise = null;
+};
+
 const buildDefaultUserName = (authUid = '') => `用户${(authUid || '0000').slice(-4)}`;
 
 const generateInviteCode = (authUid = '') =>
   `LW${(authUid || '000000').slice(-6).toUpperCase()}${Date.now().toString(36).slice(-4).toUpperCase()}`;
 
 const normalizeAccessType = (value) => (value === 'student' ? 'student' : 'public');
+
+const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, '');
+
+const getAuthProviderLabel = (provider = '') => {
+  const normalizedProvider = String(provider || '').toLowerCase();
+
+  if (!normalizedProvider || normalizedProvider === 'anonymous') {
+    return 'anonymous';
+  }
+
+  if (normalizedProvider.includes('wx') || normalizedProvider.includes('wechat')) {
+    return 'wechat';
+  }
+
+  if (normalizedProvider.includes('phone')) {
+    return 'phone';
+  }
+
+  return normalizedProvider;
+};
+
+const isAnonymousDisplayName = (value = '') => {
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  return !normalizedValue || normalizedValue === 'anonymous' || normalizedValue === 'anon';
+};
 
 const clampInviterRewardRate = (value) => {
   const nextValue = Number(value);
@@ -197,6 +325,84 @@ const buildShareLinks = ({ title, text, url }) => {
   };
 };
 
+const normalizeAuthStatus = ({ session, currentUser } = {}) => {
+  const sessionUser = session?.user || null;
+  const provider =
+    sessionUser?.app_metadata?.provider ||
+    sessionUser?.app_metadata?.providers?.[0] ||
+    currentUser?.loginType ||
+    '';
+  const loginMethod = getAuthProviderLabel(provider);
+  const authUid = sessionUser?.id || sessionUser?.sub || currentUser?.uid || '';
+  const phoneNumber = normalizePhone(sessionUser?.phone || sessionUser?.phone_number || currentUser?.phoneNumber || '');
+  const email = sessionUser?.email || currentUser?.email || '';
+  const displayName =
+    sessionUser?.user_metadata?.name ||
+    sessionUser?.user_metadata?.nickName ||
+    sessionUser?.user_metadata?.username ||
+    currentUser?.name ||
+    currentUser?.username ||
+    buildDefaultUserName(authUid);
+  const isAnonymous = Boolean(
+    sessionUser?.is_anonymous ||
+    loginMethod === 'anonymous' ||
+    currentUser?.loginType === 'ANONYMOUS'
+  );
+
+  return {
+    hasSession: Boolean(sessionUser),
+    authUid,
+    phoneNumber,
+    email,
+    displayName: isAnonymousDisplayName(displayName) && isAnonymous ? buildDefaultUserName(authUid) : displayName,
+    provider,
+    loginMethod,
+    isAnonymous,
+    isAuthenticated: Boolean(sessionUser) && !isAnonymous,
+    isMockSession: false
+  };
+};
+
+const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
+  let currentUser = await resolveCurrentUser().catch(() => null);
+  let session = await resolveCurrentSession();
+
+  if (!currentUser && !session && allowAnonymous) {
+    await ensureAnonymousLogin();
+    currentUser = await resolveCurrentUser().catch(() => null);
+    session = await resolveCurrentSession();
+  }
+
+  const baseStatus = normalizeAuthStatus({ session, currentUser });
+  const mockPhoneAuthSession = readMockPhoneAuthSession();
+
+  if (baseStatus.isAuthenticated) {
+    return baseStatus;
+  }
+
+  if (!mockPhoneAuthSession) {
+    return baseStatus;
+  }
+
+  if (mockPhoneAuthSession.authUid && baseStatus.authUid && mockPhoneAuthSession.authUid !== baseStatus.authUid) {
+    clearMockPhoneAuthSession();
+    return baseStatus;
+  }
+
+  return {
+    ...baseStatus,
+    hasSession: true,
+    authUid: mockPhoneAuthSession.authUid || baseStatus.authUid,
+    phoneNumber: mockPhoneAuthSession.phoneNumber || baseStatus.phoneNumber,
+    displayName: mockPhoneAuthSession.displayName || baseStatus.displayName,
+    provider: 'mock_phone',
+    loginMethod: 'phone',
+    isAnonymous: false,
+    isAuthenticated: true,
+    isMockSession: true
+  };
+};
+
 const updateCurrentProfileCache = (nextProfile) => {
   currentProfileCache = nextProfile;
   return currentProfileCache;
@@ -226,7 +432,7 @@ export const ensureAnonymousLogin = async () => {
 
 export const userProfileService = {
   async ensureCurrentProfile(options = {}) {
-    const { refresh = false } = options;
+    const { refresh = false, allowAnonymous = true } = options;
 
     if (!refresh && currentProfileCache) {
       return currentProfileCache;
@@ -239,9 +445,14 @@ export const userProfileService = {
     currentProfilePromise = (async () => {
       rememberPendingInviteCode();
 
-      const authUser = await ensureAnonymousLogin();
-      const authUid = authUser?.uid || '';
+      const authStatus = await resolveAuthStatus({ allowAnonymous });
+      const authUid = authStatus?.authUid || '';
       const nowIso = new Date().toISOString();
+
+      if (!authUid) {
+        clearCurrentProfileCache();
+        return null;
+      }
 
       const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
       const existingDocument = getFirstDocument(existingResult, collections.users);
@@ -252,6 +463,18 @@ export const userProfileService = {
           last_active: nowIso,
           updated_at: new Date()
         };
+
+        if (authStatus.displayName && (!existingProfile.name || existingProfile.name.startsWith('用户'))) {
+          updatePayload.name = authStatus.displayName;
+        }
+
+        if (authStatus.email && existingProfile.email !== authStatus.email) {
+          updatePayload.email = authStatus.email;
+        }
+
+        if (authStatus.phoneNumber && existingProfile.phone !== authStatus.phoneNumber) {
+          updatePayload.phone = authStatus.phoneNumber;
+        }
 
         if (!existingProfile.inviteCode) {
           updatePayload.invite_code = generateInviteCode(authUid);
@@ -296,7 +519,9 @@ export const userProfileService = {
 
       const newUserPayload = {
         auth_uid: authUid,
-        name: buildDefaultUserName(authUid),
+        name: authStatus.displayName || buildDefaultUserName(authUid),
+        email: authStatus.email,
+        phone: authStatus.phoneNumber,
         status: 'active',
         level: 1,
         experience: 0,
@@ -334,6 +559,9 @@ export const userProfileService = {
 
   async updateCurrentProfile(profilePatch) {
     const currentProfile = await this.ensureCurrentProfile();
+    if (!currentProfile) {
+      return null;
+    }
     const updatePayload = {
       ...profilePatch,
       updated_at: new Date()
@@ -552,6 +780,10 @@ export const wealthService = {
   async getCurrentWallet(options = {}) {
     const currentProfile = await userProfileService.getCurrentProfile(options);
 
+    if (!currentProfile) {
+      return null;
+    }
+
     return {
       balance: currentProfile.balance,
       history: currentProfile.wealthHistory
@@ -706,12 +938,163 @@ export const wealthService = {
 };
 
 export const authService = {
+  async getAuthStatus(options = {}) {
+    return resolveAuthStatus(options);
+  },
+
   async loginAnonymously() {
     try {
       await ensureAnonymousLogin();
-      return { success: true };
+      const authStatus = await resolveAuthStatus({ allowAnonymous: true });
+      return { success: true, authStatus };
     } catch (error) {
       console.error('匿名登录失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  async requestPhoneOtp(phone) {
+    const normalizedPhone = normalizePhone(phone);
+
+    if (!normalizedPhone) {
+      throw new Error('请输入手机号');
+    }
+
+    rememberPendingAuthPhone(normalizedPhone);
+    writeSessionStorageJSON(MOCK_PHONE_OTP_STORAGE_KEY, {
+      phoneNumber: normalizedPhone,
+      requestedAt: new Date().toISOString(),
+      code: MOCK_PHONE_OTP_CODE
+    });
+
+    return {
+      success: true,
+      mockCode: MOCK_PHONE_OTP_CODE
+    };
+  },
+
+  async verifyPhoneOtp({ phone, code }) {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedCode = String(code || '').trim();
+
+    if (!normalizedPhone) {
+      throw new Error('请输入手机号');
+    }
+
+    if (!normalizedCode) {
+      throw new Error('请输入验证码');
+    }
+
+    const mockPhoneOtpSession = readSessionStorageJSON(MOCK_PHONE_OTP_STORAGE_KEY);
+
+    if (!mockPhoneOtpSession || mockPhoneOtpSession.phoneNumber !== normalizedPhone) {
+      throw new Error('请先获取验证码');
+    }
+
+    if (normalizedCode !== MOCK_PHONE_OTP_CODE) {
+      throw new Error('验证码错误，请输入 1234');
+    }
+
+    await ensureAnonymousLogin();
+    clearPendingAuthPhone();
+    clearMockPhoneOtpSession();
+
+    clearCurrentProfileCache();
+    let profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: false });
+    if (profile?.phone !== normalizedPhone) {
+      profile = await userProfileService.updateCurrentProfile({ phone: normalizedPhone });
+    }
+
+    writeMockPhoneAuthSession({
+      authUid: profile?.authUid || '',
+      phoneNumber: normalizedPhone,
+      displayName: profile?.name || buildDefaultUserName(profile?.authUid || ''),
+      loginMethod: 'phone',
+      signedInAt: new Date().toISOString()
+    });
+
+    return {
+      success: true,
+      profile,
+      authStatus: await resolveAuthStatus({ allowAnonymous: false })
+    };
+  },
+
+  hasOAuthRedirectParams() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    return Boolean(searchParams.get('code') && searchParams.get('state'));
+  },
+
+  async startWechatLogin({ phone, redirectTo } = {}) {
+    const normalizedPhone = normalizePhone(phone);
+
+    if (!normalizedPhone) {
+      throw new Error('请输入手机号');
+    }
+
+    rememberPendingAuthPhone(normalizedPhone);
+
+    const signInResult = await auth.signInWithOAuth({
+      provider: DEFAULT_WECHAT_PROVIDER_ID,
+      options: {
+        redirectTo
+      }
+    });
+
+    if (signInResult?.error) {
+      clearPendingAuthPhone();
+      throw new Error(signInResult.error.message || '微信登录跳转失败');
+    }
+
+    return { success: true, data: signInResult?.data };
+  },
+
+  async completeWechatLogin() {
+    const verifyResult = await auth.verifyOAuth({
+      provider: DEFAULT_WECHAT_PROVIDER_ID
+    });
+
+    if (verifyResult?.error) {
+      clearPendingAuthPhone();
+      throw new Error(verifyResult.error.message || '微信登录失败');
+    }
+
+    clearCurrentProfileCache();
+    let profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: false });
+    const pendingPhone = rememberPendingAuthPhone();
+
+    if (pendingPhone && profile?.phone !== pendingPhone) {
+      profile = await userProfileService.updateCurrentProfile({ phone: pendingPhone });
+    }
+
+    clearPendingAuthPhone();
+
+    return {
+      success: true,
+      profile,
+      authStatus: await resolveAuthStatus({ allowAnonymous: false })
+    };
+  },
+
+  async signOut() {
+    try {
+      const currentStatus = await resolveAuthStatus({ allowAnonymous: false });
+      clearPendingAuthPhone();
+      clearMockPhoneOtpSession();
+      clearMockPhoneAuthSession();
+      clearCurrentProfileCache();
+
+      if (currentStatus.hasSession && !currentStatus.isAnonymous && !currentStatus.isMockSession) {
+        await auth.signOut();
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('退出登录失败:', error);
       return { success: false, error };
     }
   },
@@ -720,8 +1103,20 @@ export const authService = {
     return auth.currentUser;
   },
 
+  async getCurrentSession() {
+    return resolveCurrentSession();
+  },
+
   onLoginStateChanged(callback) {
     return auth.onLoginStateChanged(callback);
+  },
+
+  onAuthStateChange(callback) {
+    if (typeof auth.onAuthStateChange !== 'function') {
+      return null;
+    }
+
+    return auth.onAuthStateChange(callback);
   }
 };
 

@@ -66,6 +66,7 @@ const Record = () => {
     loading,
     refreshing,
     error: cloudError,
+    lastUpdatedAt,
     addAwarenessRecord,
     refreshData
   } = useCloudAwareness();
@@ -132,7 +133,7 @@ const Record = () => {
   };
 
   const handleRefresh = async () => {
-    await refreshData();
+    await refreshData({ force: true });
   };
 
   const handleNativeShare = async () => {
@@ -209,8 +210,13 @@ const Record = () => {
               margin: '8px 0 0'
             }}
           >
-            云端标签约每 6 秒刷新一次，所有人都能看到此刻正在发生的觉察。
+            优先展示本地缓存标签，缓存过期或手动刷新时再从 CloudBase 拉取。
           </p>
+          {lastUpdatedAt && (
+            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '6px' }}>
+              最近更新：{new Date(lastUpdatedAt).toLocaleString('zh-CN', { hour12: false })}
+            </div>
+          )}
         </div>
         <button
           onClick={handleRefresh}

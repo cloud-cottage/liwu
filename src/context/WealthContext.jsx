@@ -57,10 +57,19 @@ export const WealthProvider = ({ children }) => {
   const syncWalletFromCloud = useCallback(async (options = {}) => {
     try {
       const wallet = await wealthService.getCurrentWallet(options);
+
+      if (!wallet) {
+        setBalance(0);
+        setHistory([]);
+        return null;
+      }
+
       setBalance(wallet.balance);
       setHistory(wallet.history);
+      return wallet;
     } catch (error) {
       console.error('同步云端福豆失败:', error);
+      return null;
     }
   }, []);
 

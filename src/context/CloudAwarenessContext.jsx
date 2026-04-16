@@ -3,11 +3,99 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { awarenessService, authService, userProfileService } from '../services/cloudbase';
 
 const CloudAwarenessContext = createContext();
-const LIVE_REFRESH_INTERVAL_MS = 6000;
+const PUBLIC_CACHE_KEY = 'liwu_awareness_public_cache_v1';
+const USER_CACHE_PREFIX = 'liwu_awareness_user_cache_v1';
+const PUBLIC_CACHE_TTL_MS = 5 * 60 * 1000;
+const USER_CACHE_TTL_MS = 2 * 60 * 1000;
+const MAX_RECENT_RECORDS = 40;
+const MAX_POPULAR_TAGS = 16;
+
+const readCache = (key) => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const cachedValue = window.localStorage.getItem(key);
+    return cachedValue ? JSON.parse(cachedValue) : null;
+  } catch (error) {
+    console.error('读取觉察缓存失败:', error);
+    return null;
+  }
+};
+
+const writeCache = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error('写入觉察缓存失败:', error);
+  }
+};
+
+const isExpired = (fetchedAt, ttl) => {
+  if (!fetchedAt) {
+    return true;
+  }
+
+  return Date.now() - new Date(fetchedAt).getTime() > ttl;
+};
+
+const upsertTagCount = (tags, record, countField) => {
+  const nextTags = [...tags];
+  const matchedIndex = nextTags.findIndex((item) => item.key === record.tagKey);
+
+  if (matchedIndex >= 0) {
+    nextTags[matchedIndex] = {
+      ...nextTags[matchedIndex],
+      [countField]: (nextTags[matchedIndex][countField] || 0) + 1,
+      lastUsedAt: record.timestamp
+    };
+  } else {
+    nextTags.unshift({
+      key: record.tagKey,
+      content: record.content,
+      accessType: record.accessType,
+      [countField]: 1,
+      lastUsedAt: record.timestamp
+    });
+  }
+
+  return nextTags
+    .sort((left, right) => {
+      if ((right[countField] || 0) !== (left[countField] || 0)) {
+        return (right[countField] || 0) - (left[countField] || 0);
+      }
+
+      return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
+    })
+    .slice(0, countField === 'totalCount' ? MAX_POPULAR_TAGS : nextTags.length);
+};
+
+const prependRecentRecord = (records, record) => [
+  record,
+  ...records.filter((item) => item.id !== record.id)
+].slice(0, MAX_RECENT_RECORDS);
+
+const buildUserCacheKey = (authUid = 'guest') => `${USER_CACHE_PREFIX}:${authUid || 'guest'}`;
 
 export const useCloudAwareness = () => useContext(CloudAwarenessContext);
 
 export const CloudAwarenessProvider = ({ children }) => {
+  const [authStatus, setAuthStatus] = useState({
+    hasSession: false,
+    authUid: '',
+    phoneNumber: '',
+    email: '',
+    displayName: '',
+    provider: '',
+    loginMethod: 'anonymous',
+    isAnonymous: true,
+    isAuthenticated: false
+  });
   const [currentUser, setCurrentUser] = useState(null);
   const [userTags, setUserTags] = useState([]);
   const [popularTags, setPopularTags] = useState([]);
@@ -15,10 +103,68 @@ export const CloudAwarenessProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
-  const loadData = useCallback(async ({ silent = false } = {}) => {
+  const hydrateCaches = useCallback((authUid = 'guest') => {
+    const publicCache = readCache(PUBLIC_CACHE_KEY);
+    const userCache = readCache(buildUserCacheKey(authUid));
+
+    if (publicCache?.popularTags) {
+      setPopularTags(publicCache.popularTags);
+    }
+
+    if (publicCache?.recentRecords) {
+      setRecentRecords(publicCache.recentRecords);
+    }
+
+    if (publicCache?.fetchedAt) {
+      setLastUpdatedAt(publicCache.fetchedAt);
+    }
+
+    if (userCache?.userTags) {
+      setUserTags(userCache.userTags);
+    } else {
+      setUserTags([]);
+    }
+
+    return {
+      hasPublicCache: Boolean(publicCache),
+      hasUserCache: Boolean(userCache),
+      publicStale: isExpired(publicCache?.fetchedAt, PUBLIC_CACHE_TTL_MS),
+      userStale: isExpired(userCache?.fetchedAt, USER_CACHE_TTL_MS)
+    };
+  }, []);
+
+  const persistCaches = useCallback((nextAuthUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt) => {
+    writeCache(PUBLIC_CACHE_KEY, {
+      fetchedAt,
+      popularTags: nextPopularTags,
+      recentRecords: nextRecentRecords
+    });
+
+    writeCache(buildUserCacheKey(nextAuthUid), {
+      fetchedAt,
+      userTags: nextUserTags
+    });
+  }, []);
+
+  const syncAuthState = useCallback(async ({ allowAnonymous = false } = {}) => {
+    const nextAuthStatus = await authService.getAuthStatus({ allowAnonymous });
+    setAuthStatus(nextAuthStatus);
+
+    if (!nextAuthStatus.hasSession && !allowAnonymous) {
+      setCurrentUser(null);
+      setUserTags([]);
+    }
+
+    return nextAuthStatus;
+  }, []);
+
+  const loadData = useCallback(async ({
+    silent = false,
+    force = false,
+    allowAnonymous = true
+  } = {}) => {
     try {
       if (silent) {
         setRefreshing(true);
@@ -28,18 +174,45 @@ export const CloudAwarenessProvider = ({ children }) => {
 
       setError('');
 
-      const [nextCurrentUser, userTagsResult, popularTagsResult, recentRecordsResult] = await Promise.all([
-        userProfileService.getCurrentProfile({ refresh: silent }),
-        awarenessService.getUserTags(),
+      const nextCurrentUser = await userProfileService.getCurrentProfile({
+        refresh: force,
+        allowAnonymous
+      });
+
+      const nextAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
+      setAuthStatus(nextAuthStatus);
+      setCurrentUser(nextCurrentUser);
+
+      const cacheSummary = hydrateCaches(nextCurrentUser?.authUid || nextAuthStatus.authUid || 'guest');
+      if (!force && cacheSummary.hasPublicCache && cacheSummary.hasUserCache && !cacheSummary.publicStale && !cacheSummary.userStale) {
+        return;
+      }
+
+      const [userTagsResult, popularTagsResult, recentRecordsResult] = await Promise.all([
+        nextCurrentUser ? awarenessService.getUserTags() : Promise.resolve({ success: true, data: [] }),
         awarenessService.getPopularTags(),
-        awarenessService.getRecentRecords()
+        awarenessService.getRecentRecords(MAX_RECENT_RECORDS)
       ]);
 
-      setCurrentUser(nextCurrentUser);
-      setUserTags(userTagsResult.success ? userTagsResult.data : []);
-      setPopularTags(popularTagsResult.success ? popularTagsResult.data : []);
-      setRecentRecords(recentRecordsResult.success ? recentRecordsResult.data : []);
-      setLastUpdatedAt(new Date().toISOString());
+      const nextUserTags = userTagsResult.success ? userTagsResult.data : [];
+      const nextPopularTags = popularTagsResult.success ? popularTagsResult.data : [];
+      const nextRecentRecords = recentRecordsResult.success ? recentRecordsResult.data : [];
+      const fetchedAt = new Date().toISOString();
+
+      setUserTags(nextUserTags);
+      setPopularTags(nextPopularTags);
+      setRecentRecords(nextRecentRecords);
+      setLastUpdatedAt(fetchedAt);
+
+      if (nextCurrentUser?.authUid) {
+        persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt);
+      } else {
+        writeCache(PUBLIC_CACHE_KEY, {
+          fetchedAt,
+          popularTags: nextPopularTags,
+          recentRecords: nextRecentRecords
+        });
+      }
 
       const nextError =
         userTagsResult.error?.message ||
@@ -55,33 +228,42 @@ export const CloudAwarenessProvider = ({ children }) => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [hydrateCaches, persistCaches]);
 
   useEffect(() => {
     let disposed = false;
-    let timerId = null;
 
     const initializeCloudbase = async () => {
       try {
-        const currentAuthUser = authService.getCurrentUser();
+        let cacheSummary = hydrateCaches('guest');
 
-        if (!currentAuthUser) {
-          const loginResult = await authService.loginAnonymously();
-          if (!loginResult.success) {
-            throw loginResult.error || new Error('匿名登录失败');
+        if (authService.hasOAuthRedirectParams()) {
+          if (!disposed) {
+            setLoading(false);
           }
+          return;
+        }
+
+        const currentAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
+        if (currentAuthStatus.authUid) {
+          cacheSummary = hydrateCaches(currentAuthStatus.authUid);
         }
 
         if (disposed) {
           return;
         }
 
-        setIsLoggedIn(true);
-        await loadData();
+        const shouldFetch =
+          !cacheSummary.hasPublicCache ||
+          cacheSummary.publicStale ||
+          !cacheSummary.hasUserCache ||
+          cacheSummary.userStale;
 
-        timerId = window.setInterval(() => {
-          void loadData({ silent: true });
-        }, LIVE_REFRESH_INTERVAL_MS);
+        await loadData({
+          silent: cacheSummary.hasPublicCache,
+          force: shouldFetch,
+          allowAnonymous: true
+        });
       } catch (initializeError) {
         console.error('初始化觉察云端失败:', initializeError);
         if (!disposed) {
@@ -95,11 +277,8 @@ export const CloudAwarenessProvider = ({ children }) => {
 
     return () => {
       disposed = true;
-      if (timerId) {
-        window.clearInterval(timerId);
-      }
     };
-  }, [loadData]);
+  }, [hydrateCaches, loadData]);
 
   const addAwarenessRecord = useCallback(async (content, options = {}) => {
     try {
@@ -109,8 +288,22 @@ export const CloudAwarenessProvider = ({ children }) => {
         return { success: false, error: result.error };
       }
 
+      const nextCurrentUser = await userProfileService.getCurrentProfile({ refresh: true, allowAnonymous: true });
+      const nextUserTags = upsertTagCount(userTags, result.record, 'count');
+      const nextPopularTags = upsertTagCount(popularTags, result.record, 'totalCount');
+      const nextRecentRecords = prependRecentRecord(recentRecords, result.record);
+      const fetchedAt = new Date().toISOString();
       const sharePayload = await awarenessService.buildSharePayload(content.trim());
-      await loadData({ silent: true });
+
+      setCurrentUser(nextCurrentUser);
+      setUserTags(nextUserTags);
+      setPopularTags(nextPopularTags);
+      setRecentRecords(nextRecentRecords);
+      setLastUpdatedAt(fetchedAt);
+
+      if (nextCurrentUser?.authUid) {
+        persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt);
+      }
 
       return {
         success: true,
@@ -121,13 +314,18 @@ export const CloudAwarenessProvider = ({ children }) => {
       console.error('提交觉察失败:', submitError);
       return { success: false, error: submitError };
     }
-  }, [loadData]);
+  }, [persistCaches, popularTags, recentRecords, userTags]);
 
-  const refreshData = useCallback(async () => {
-    await loadData({ silent: true });
+  const refreshData = useCallback(async (options = {}) => {
+    await loadData({
+      silent: true,
+      force: options.force ?? true,
+      allowAnonymous: options.allowAnonymous ?? true
+    });
   }, [loadData]);
 
   const contextValue = useMemo(() => ({
+    authStatus,
     currentUser,
     userTags,
     popularTags,
@@ -135,21 +333,23 @@ export const CloudAwarenessProvider = ({ children }) => {
     loading,
     refreshing,
     error,
-    isLoggedIn,
+    isLoggedIn: authStatus.isAuthenticated,
     lastUpdatedAt,
     addAwarenessRecord,
-    refreshData
+    refreshData,
+    syncAuthState
   }), [
     addAwarenessRecord,
+    authStatus,
     currentUser,
     error,
-    isLoggedIn,
     lastUpdatedAt,
     loading,
     popularTags,
     recentRecords,
     refreshData,
     refreshing,
+    syncAuthState,
     userTags
   ]);
 

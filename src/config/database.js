@@ -26,7 +26,8 @@ export const DATABASE_CONFIG = {
   cloudbase: {
     env: readEnv('VITE_CLOUDBASE_ENV', 'REACT_APP_CLOUDBASE_ENV') || 'liwu-0gtd91eebd863ccf',
     region: readEnv('VITE_CLOUDBASE_REGION', 'REACT_APP_CLOUDBASE_REGION') || 'ap-shanghai',
-    publishableKey: readEnv('VITE_CLOUDBASE_PUBLISHABLE_KEY', 'REACT_APP_CLOUDBASE_PUBLISHABLE_KEY')
+    publishableKey: readEnv('VITE_CLOUDBASE_PUBLISHABLE_KEY', 'REACT_APP_CLOUDBASE_PUBLISHABLE_KEY'),
+    wechatProviderId: readEnv('VITE_CLOUDBASE_WECHAT_PROVIDER_ID', 'REACT_APP_CLOUDBASE_WECHAT_PROVIDER_ID') || 'wx_open'
   },
   
   // Collection names
