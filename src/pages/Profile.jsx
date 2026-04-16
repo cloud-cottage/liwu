@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Award, LogOut, MessageSquareText, ShieldCheck, Smartphone, UserRound, Wallet } from 'lucide-react';
+import { Award, LogOut, MessageSquareText, ShieldCheck, Smartphone, UserRound, Wallet, X } from 'lucide-react';
 import { useWealth } from '../context/WealthContext';
 import { useCloudAwareness } from '../context/CloudAwarenessContext';
 import { authService } from '../services/cloudbase';
@@ -62,6 +62,219 @@ const InfoCard = ({ icon, label, value, accent }) => (
   </div>
 );
 
+const LoginModal = ({
+  open,
+  onClose,
+  phoneNumber,
+  verificationCode,
+  codeRequested,
+  sendingCode,
+  verifyingCode,
+  wechatLoading,
+  oauthProcessing,
+  feedbackMessage,
+  errorMessage,
+  onPhoneChange,
+  onCodeChange,
+  onSendCode,
+  onPhoneLogin,
+  onWechatLogin
+}) => {
+  if (!open && !oauthProcessing) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
+        backgroundColor: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '420px',
+          backgroundColor: '#fff',
+          borderRadius: '20px',
+          padding: '22px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div>
+            <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>登录账号</div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+              手机号验证码固定为 1234
+            </div>
+          </div>
+          {!oauthProcessing && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer',
+                color: '#64748b',
+                padding: '4px'
+              }}
+            >
+              <X size={18} />
+            </button>
+          )}
+        </div>
+
+        {(feedbackMessage || errorMessage) && !oauthProcessing && (
+          <div
+            style={{
+              padding: '12px 14px',
+              borderRadius: '10px',
+              backgroundColor: errorMessage ? '#fff1f2' : '#eff6ff',
+              color: errorMessage ? '#be123c' : '#1d4ed8',
+              fontSize: '13px',
+              lineHeight: 1.6,
+              marginBottom: '16px'
+            }}
+          >
+            {errorMessage || feedbackMessage}
+          </div>
+        )}
+
+        {oauthProcessing ? (
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '12px',
+              backgroundColor: '#eff6ff',
+              color: '#1d4ed8',
+              fontSize: '14px'
+            }}
+          >
+            正在处理微信登录回调...
+          </div>
+        ) : (
+          <>
+            <div style={{ marginBottom: '12px' }}>
+              <label htmlFor="profile-phone" style={{ display: 'block', fontSize: '13px', color: '#334155', marginBottom: '8px' }}>
+                手机号码
+              </label>
+              <input
+                id="profile-phone"
+                name="profile-phone"
+                type="tel"
+                inputMode="numeric"
+                placeholder="请输入手机号"
+                value={phoneNumber}
+                onChange={onPhoneChange}
+                style={{
+                  width: '100%',
+                  padding: '12px 14px',
+                  borderRadius: '12px',
+                  border: '1px solid #dbe4ee',
+                  fontSize: '15px',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: codeRequested ? '1fr 1fr' : '1fr', gap: '12px', marginBottom: '12px' }}>
+              {codeRequested && (
+                <input
+                  id="profile-code"
+                  name="profile-code"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="输入验证码"
+                  value={verificationCode}
+                  onChange={onCodeChange}
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    border: '1px solid #dbe4ee',
+                    fontSize: '15px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              )}
+
+              <button
+                type="button"
+                onClick={onSendCode}
+                disabled={sendingCode}
+                style={{
+                  border: 'none',
+                  borderRadius: '12px',
+                  backgroundColor: '#111827',
+                  color: '#fff',
+                  padding: '12px 14px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: sendingCode ? 'default' : 'pointer',
+                  opacity: sendingCode ? 0.7 : 1
+                }}
+              >
+                {sendingCode ? '发送中...' : '发送验证码'}
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={onPhoneLogin}
+                disabled={verifyingCode || !codeRequested}
+                style={{
+                  border: 'none',
+                  borderRadius: '12px',
+                  backgroundColor: codeRequested ? '#2563eb' : '#cbd5e1',
+                  color: '#fff',
+                  padding: '12px 14px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: codeRequested && !verifyingCode ? 'pointer' : 'default',
+                  opacity: verifyingCode ? 0.7 : 1
+                }}
+              >
+                {verifyingCode ? '登录中...' : '手机号登录'}
+              </button>
+
+              <button
+                type="button"
+                onClick={onWechatLogin}
+                disabled={wechatLoading}
+                style={{
+                  border: '1px solid #16a34a',
+                  borderRadius: '12px',
+                  backgroundColor: '#f0fdf4',
+                  color: '#15803d',
+                  padding: '12px 14px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: wechatLoading ? 'default' : 'pointer',
+                  opacity: wechatLoading ? 0.7 : 1
+                }}
+              >
+                {wechatLoading ? '跳转中...' : '微信登录'}
+              </button>
+            </div>
+
+            <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.7, marginTop: '12px' }}>
+              当前开发阶段手机号验证码固定为 1234。微信登录会先跳转微信授权，回到应用后绑定你填写的手机号。
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const Profile = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -82,6 +295,7 @@ const Profile = () => {
   const [oauthProcessing, setOauthProcessing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   const declutteredCount = history.filter((item) => item.type === 'EARN').length;
   const dreamCount = inventory.length;
@@ -104,6 +318,7 @@ const Profile = () => {
       try {
         await authService.completeWechatLogin();
         await Promise.all([
+          syncAuthState({ allowAnonymous: false }),
           refreshData({ force: true, allowAnonymous: true }),
           syncWalletFromCloud({ refresh: true, allowAnonymous: true })
         ]);
@@ -112,6 +327,7 @@ const Profile = () => {
           setPhoneNumber('');
           setVerificationCode('');
           setCodeRequested(false);
+          setIsLoginModalOpen(false);
           setFeedbackMessage('微信登录成功');
           navigate('/profile', { replace: true });
         }
@@ -132,7 +348,7 @@ const Profile = () => {
     return () => {
       cancelled = true;
     };
-  }, [location.search, navigate, refreshData, syncWalletFromCloud]);
+  }, [location.search, navigate, refreshData, syncAuthState, syncWalletFromCloud]);
 
   const handleSendCode = async () => {
     const normalizedPhone = normalizePhoneInput(phoneNumber);
@@ -181,6 +397,7 @@ const Profile = () => {
       });
 
       await Promise.all([
+        syncAuthState({ allowAnonymous: false }),
         refreshData({ force: true, allowAnonymous: true }),
         syncWalletFromCloud({ refresh: true, allowAnonymous: true })
       ]);
@@ -188,6 +405,7 @@ const Profile = () => {
       setFeedbackMessage('手机号登录成功');
       setVerificationCode('');
       setCodeRequested(false);
+      setIsLoginModalOpen(false);
     } catch (error) {
       setErrorMessage(error.message || '登录失败');
     } finally {
@@ -236,6 +454,7 @@ const Profile = () => {
     setPhoneNumber('');
     setVerificationCode('');
     setCodeRequested(false);
+    setIsLoginModalOpen(false);
     setFeedbackMessage('已退出登录');
   };
 
@@ -327,139 +546,38 @@ const Profile = () => {
           </div>
         )}
 
-        {!authStatus.isAuthenticated && !oauthProcessing && (
+        {!authStatus.isAuthenticated && (
           <div>
-            <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', marginBottom: '12px' }}>
-              账号登录
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', marginBottom: '10px' }}>
+              登录后可保存账号状态
             </div>
-
-            <div style={{ marginBottom: '12px' }}>
-              <label htmlFor="profile-phone" style={{ display: 'block', fontSize: '13px', color: '#334155', marginBottom: '8px' }}>
-                手机号码
-              </label>
-              <input
-                id="profile-phone"
-                name="profile-phone"
-                type="tel"
-                inputMode="numeric"
-                placeholder="请输入手机号"
-                value={phoneNumber}
-                onChange={(event) => {
-                  setPhoneNumber(normalizePhoneInput(event.target.value));
-                  setErrorMessage('');
-                }}
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '12px',
-                  border: '1px solid #dbe4ee',
-                  fontSize: '15px',
-                  boxSizing: 'border-box'
-                }}
-              />
+            <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7, marginBottom: '14px' }}>
+              手机号验证码和微信登录都收在模态框里，当前开发阶段验证码固定为 1234。
             </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: codeRequested ? '1fr 1fr' : '1fr', gap: '12px', marginBottom: '12px' }}>
-              {codeRequested && (
-                <input
-                  id="profile-code"
-                  name="profile-code"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="输入验证码"
-                  value={verificationCode}
-                  onChange={(event) => {
-                    setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6));
-                    setErrorMessage('');
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    border: '1px solid #dbe4ee',
-                    fontSize: '15px',
-                    boxSizing: 'border-box'
-                  }}
-                />
-              )}
-
-              <button
-                type="button"
-                onClick={handleSendCode}
-                disabled={sendingCode}
-                style={{
-                  border: 'none',
-                  borderRadius: '12px',
-                  backgroundColor: '#111827',
-                  color: '#fff',
-                  padding: '12px 14px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: sendingCode ? 'default' : 'pointer',
-                  opacity: sendingCode ? 0.7 : 1
-                }}
-              >
-                {sendingCode ? '发送中...' : '发送验证码'}
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <button
-                type="button"
-                onClick={handlePhoneLogin}
-                disabled={verifyingCode || !codeRequested}
-                style={{
-                  border: 'none',
-                  borderRadius: '12px',
-                  backgroundColor: codeRequested ? '#2563eb' : '#cbd5e1',
-                  color: '#fff',
-                  padding: '12px 14px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: codeRequested && !verifyingCode ? 'pointer' : 'default',
-                  opacity: verifyingCode ? 0.7 : 1
-                }}
-              >
-                {verifyingCode ? '登录中...' : '手机号登录'}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleWechatLogin}
-                disabled={wechatLoading}
-                style={{
-                  border: '1px solid #16a34a',
-                  borderRadius: '12px',
-                  backgroundColor: '#f0fdf4',
-                  color: '#15803d',
-                  padding: '12px 14px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: wechatLoading ? 'default' : 'pointer',
-                  opacity: wechatLoading ? 0.7 : 1
-                }}
-              >
-                {wechatLoading ? '跳转中...' : '微信登录'}
-              </button>
-            </div>
-
-            <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.7, marginTop: '12px' }}>
-              当前开发阶段手机号验证码固定为 1234。微信登录会先跳转微信授权，回到应用后绑定你填写的手机号。
-            </div>
-          </div>
-        )}
-
-        {oauthProcessing && (
-          <div
-            style={{
-              padding: '14px 16px',
-              borderRadius: '12px',
-              backgroundColor: '#eff6ff',
-              color: '#1d4ed8',
-              fontSize: '14px'
-            }}
-          >
-            正在处理微信登录回调...
+            <button
+              type="button"
+              onClick={() => {
+                setErrorMessage('');
+                setFeedbackMessage('');
+                setIsLoginModalOpen(true);
+              }}
+              style={{
+                border: 'none',
+                borderRadius: '12px',
+                backgroundColor: '#0f172a',
+                color: '#fff',
+                padding: '12px 16px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <Smartphone size={16} />
+              打开登录弹窗
+            </button>
           </div>
         )}
 
@@ -492,6 +610,31 @@ const Profile = () => {
           </div>
         )}
       </section>
+
+      <LoginModal
+        open={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        phoneNumber={phoneNumber}
+        verificationCode={verificationCode}
+        codeRequested={codeRequested}
+        sendingCode={sendingCode}
+        verifyingCode={verifyingCode}
+        wechatLoading={wechatLoading}
+        oauthProcessing={oauthProcessing}
+        feedbackMessage={feedbackMessage}
+        errorMessage={errorMessage}
+        onPhoneChange={(event) => {
+          setPhoneNumber(normalizePhoneInput(event.target.value));
+          setErrorMessage('');
+        }}
+        onCodeChange={(event) => {
+          setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6));
+          setErrorMessage('');
+        }}
+        onSendCode={handleSendCode}
+        onPhoneLogin={handlePhoneLogin}
+        onWechatLogin={handleWechatLogin}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '30px' }}>
         <InfoCard icon={Wallet} label="虚拟资产" value={`¥ ${balance}`} accent="var(--color-accent-clay)" />

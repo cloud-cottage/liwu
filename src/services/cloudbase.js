@@ -199,6 +199,14 @@ const isAnonymousDisplayName = (value = '') => {
   return !normalizedValue || normalizedValue === 'anonymous' || normalizedValue === 'anon';
 };
 
+const buildMockPhoneSession = ({ phoneNumber, authUid = '', displayName = '' }) => ({
+  authUid: authUid || `mock_phone_${phoneNumber}`,
+  phoneNumber,
+  displayName: displayName || `用户${phoneNumber.slice(-4)}`,
+  loginMethod: 'phone',
+  signedInAt: new Date().toISOString()
+});
+
 const clampInviterRewardRate = (value) => {
   const nextValue = Number(value);
   if (!Number.isFinite(nextValue)) {
@@ -995,23 +1003,50 @@ export const authService = {
       throw new Error('验证码错误，请输入 1234');
     }
 
-    await ensureAnonymousLogin();
     clearPendingAuthPhone();
     clearMockPhoneOtpSession();
 
-    clearCurrentProfileCache();
-    let profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: false });
-    if (profile?.phone !== normalizedPhone) {
-      profile = await userProfileService.updateCurrentProfile({ phone: normalizedPhone });
+    let currentAuthStatus = {
+      authUid: '',
+      displayName: ''
+    };
+
+    try {
+      currentAuthStatus = await resolveAuthStatus({ allowAnonymous: true });
+    } catch (error) {
+      console.error('读取当前匿名态失败:', error);
     }
 
-    writeMockPhoneAuthSession({
-      authUid: profile?.authUid || '',
+    let profile = null;
+    let mockSession = buildMockPhoneSession({
       phoneNumber: normalizedPhone,
-      displayName: profile?.name || buildDefaultUserName(profile?.authUid || ''),
-      loginMethod: 'phone',
-      signedInAt: new Date().toISOString()
+      authUid: currentAuthStatus.authUid,
+      displayName: currentAuthStatus.displayName && !isAnonymousDisplayName(currentAuthStatus.displayName)
+        ? currentAuthStatus.displayName
+        : ''
     });
+
+    writeMockPhoneAuthSession(mockSession);
+
+    try {
+      await ensureAnonymousLogin();
+      clearCurrentProfileCache();
+      profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: true });
+      if (profile?.phone !== normalizedPhone) {
+        profile = await userProfileService.updateCurrentProfile({ phone: normalizedPhone });
+      }
+
+      if (profile) {
+        mockSession = buildMockPhoneSession({
+          phoneNumber: normalizedPhone,
+          authUid: profile.authUid,
+          displayName: profile.name
+        });
+        writeMockPhoneAuthSession(mockSession);
+      }
+    } catch (error) {
+      console.error('模拟手机号登录云端同步失败:', error);
+    }
 
     return {
       success: true,
