@@ -11,6 +11,43 @@ const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
+const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
+
+const shouldUseCloudBaseProxy = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.location.hostname === 'liwu.yunduojihua.com';
+};
+
+const isCloudBaseApiUrl = (value = '') => {
+  try {
+    const nextUrl = new URL(String(value));
+    return nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com');
+  } catch {
+    return false;
+  }
+};
+
+const toProxyUrl = (targetUrl) => `${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}`;
+
+const installCloudBaseRequestProxy = () => {
+  if (typeof window === 'undefined' || !shouldUseCloudBaseProxy() || window.__liwuCloudBaseProxyInstalled) {
+    return;
+  }
+
+  const originalOpen = window.XMLHttpRequest.prototype.open;
+
+  window.XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
+    const nextUrl = typeof url === 'string' && isCloudBaseApiUrl(url) ? toProxyUrl(url) : url;
+    return originalOpen.call(this, method, nextUrl, ...rest);
+  };
+
+  window.__liwuCloudBaseProxyInstalled = true;
+};
+
+installCloudBaseRequestProxy();
 
 const app = cloudbase.init({
   env,
