@@ -65,6 +65,69 @@ const normalizeTag = (tag, categoriesById = new Map()) => {
   };
 };
 
+const normalizeShopCategory = (category = {}) => ({
+  id: getDocumentId(category),
+  name: category.name || '',
+  slug: category.slug || '',
+  description: category.description || '',
+  status: category.status || 'active',
+  sortOrder: Number(category.sort_order ?? category.sortOrder ?? 0)
+});
+
+const normalizeShopProduct = (product = {}) => ({
+  id: getDocumentId(product),
+  name: product.name || '',
+  subtitle: product.subtitle || '',
+  categoryId: product.category_id || product.categoryId || '',
+  productType: product.product_type || product.productType || 'physical',
+  coverImage: product.cover_image || product.coverImage || '',
+  description: product.description || '',
+  status: product.status || 'draft',
+  skuMode: product.sku_mode || product.skuMode || 'single',
+  pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
+  priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
+  stockTotal: Number(product.stock_total ?? product.stockTotal ?? 0),
+  salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
+  limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
+  sortOrder: Number(product.sort_order ?? product.sortOrder ?? 0)
+});
+
+const normalizeShopSku = (sku = {}) => ({
+  id: getDocumentId(sku),
+  productId: sku.product_id || sku.productId || '',
+  skuName: sku.sku_name || sku.skuName || '',
+  skuCode: sku.sku_code || sku.skuCode || '',
+  pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
+  priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
+  stock: Number(sku.stock ?? 0),
+  status: sku.status || 'active'
+});
+
+const normalizeShopOrder = (order = {}) => ({
+  id: getDocumentId(order),
+  orderNo: order.order_no || order.orderNo || '',
+  userId: order.user_id || order.userId || '',
+  orderType: order.order_type || order.orderType || 'points',
+  status: order.status || 'pending_payment',
+  totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
+  totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+  paidAt: order.paid_at || order.paidAt || '',
+  createdAt: order.created_at || order.createdAt || ''
+});
+
+const normalizeShopOrderItem = (item = {}) => ({
+  id: getDocumentId(item),
+  orderId: item.order_id || item.orderId || '',
+  productId: item.product_id || item.productId || '',
+  skuId: item.sku_id || item.skuId || '',
+  productName: item.product_name_snapshot || item.productNameSnapshot || '',
+  skuName: item.sku_name_snapshot || item.skuNameSnapshot || '',
+  quantity: Number(item.quantity ?? 0),
+  subtotalPoints: Number(item.subtotal_points ?? item.subtotalPoints ?? 0),
+  subtotalCash: Number(item.subtotal_cash ?? item.subtotalCash ?? 0),
+  productType: item.product_type || item.productType || 'physical'
+});
+
 const normalizeUser = (user) => ({
   id: getDocumentId(user),
   name: user.name || '',
@@ -223,6 +286,45 @@ const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
 };
 
 class DatabaseService {
+  static async getShopManagementData() {
+    try {
+      await ensureAnonymousLogin();
+      const [categoriesResult, productsResult, skusResult, ordersResult, orderItemsResult] = await Promise.all([
+        db.collection(collections.shopCategories).limit(200).get(),
+        db.collection(collections.shopProducts).limit(500).get(),
+        db.collection(collections.shopProductSkus).limit(1000).get(),
+        db.collection(collections.shopOrders).limit(1000).get(),
+        db.collection(collections.shopOrderItems).limit(2000).get()
+      ]);
+
+      return {
+        categories: getDocuments(categoriesResult, collections.shopCategories)
+          .map(normalizeShopCategory)
+          .sort((left, right) => left.sortOrder - right.sortOrder),
+        products: getDocuments(productsResult, collections.shopProducts)
+          .map(normalizeShopProduct)
+          .sort((left, right) => {
+            if (left.sortOrder !== right.sortOrder) {
+              return left.sortOrder - right.sortOrder;
+            }
+
+            return right.salesCount - left.salesCount;
+          }),
+        skus: getDocuments(skusResult, collections.shopProductSkus)
+          .map(normalizeShopSku)
+          .sort((left, right) => left.pricePoints - right.pricePoints),
+        orders: getDocuments(ordersResult, collections.shopOrders)
+          .map(normalizeShopOrder)
+          .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()),
+        orderItems: getDocuments(orderItemsResult, collections.shopOrderItems)
+          .map(normalizeShopOrderItem)
+      };
+    } catch (error) {
+      console.error('Error fetching shop management data:', error);
+      throw error;
+    }
+  }
+
   static async getAwarenessTagSettings() {
     try {
       await ensureAnonymousLogin();

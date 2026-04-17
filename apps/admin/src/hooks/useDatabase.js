@@ -23,6 +23,11 @@ export const useDatabase = () => {
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
+  const [shopCategories, setShopCategories] = useState([]);
+  const [shopProducts, setShopProducts] = useState([]);
+  const [shopSkus, setShopSkus] = useState([]);
+  const [shopOrders, setShopOrders] = useState([]);
+  const [shopOrderItems, setShopOrderItems] = useState([]);
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
@@ -35,11 +40,12 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessTagOverview] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
-        DatabaseService.getAwarenessTagOverview()
+        DatabaseService.getAwarenessTagOverview(),
+        DatabaseService.getShopManagementData()
       ]);
 
       setUsers(dashboardData.users);
@@ -48,6 +54,11 @@ export const useDatabase = () => {
       setMeditationSettings(nextMeditationSettings);
       setAwarenessTagSettings(nextAwarenessTagSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
+      setShopCategories(nextShopManagementData.categories);
+      setShopProducts(nextShopManagementData.products);
+      setShopSkus(nextShopManagementData.skus);
+      setShopOrders(nextShopManagementData.orders);
+      setShopOrderItems(nextShopManagementData.orderItems);
       setSettingsError(
         nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
@@ -62,6 +73,11 @@ export const useDatabase = () => {
       setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setAwarenessTagOverview([]);
+      setShopCategories([]);
+      setShopProducts([]);
+      setShopSkus([]);
+      setShopOrders([]);
+      setShopOrderItems([]);
     } finally {
       setLoading(false);
     }
@@ -88,6 +104,11 @@ export const useDatabase = () => {
       setCategories([]);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setAwarenessTagOverview([]);
+      setShopCategories([]);
+      setShopProducts([]);
+      setShopSkus([]);
+      setShopOrders([]);
+      setShopOrderItems([]);
     } finally {
       setLoading(false);
     }
@@ -231,6 +252,11 @@ export const useDatabase = () => {
     meditationSettings,
     awarenessTagSettings,
     awarenessTagOverview,
+    shopCategories,
+    shopProducts,
+    shopSkus,
+    shopOrders,
+    shopOrderItems,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,

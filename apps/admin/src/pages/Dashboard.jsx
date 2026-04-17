@@ -7,6 +7,7 @@ import TagManagement from '../components/Dashboard/TagManagement';
 import DatabaseStatus from '../components/Dashboard/DatabaseStatus';
 import MeditationSettings from '../components/Dashboard/MeditationSettings.jsx';
 import AwarenessTagSettings from '../components/Dashboard/AwarenessTagSettings.jsx';
+import ShopManagement from '../components/Dashboard/ShopManagement.jsx';
 import { useDatabase } from '../hooks/useDatabase.js';
 
 // Add CSS reset to remove default margins
@@ -43,6 +44,11 @@ const Dashboard = () => {
     meditationSettings,
     awarenessTagSettings,
     awarenessTagOverview,
+    shopCategories,
+    shopProducts,
+    shopSkus,
+    shopOrders,
+    shopOrderItems,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
@@ -132,6 +138,9 @@ const Dashboard = () => {
   const activeUsers = users.filter(user => user.status === 'active').length;
   const usersWithTags = users.filter(user => user.tags.length > 0).length;
   const totalTagAssignments = users.reduce((sum, user) => sum + user.tags.length, 0);
+  const totalShopProducts = shopProducts.length;
+  const totalShopOrders = shopOrders.length;
+  const totalShopSkus = shopSkus.length;
 
   return (
     <div style={{ 
@@ -265,6 +274,26 @@ const Dashboard = () => {
               }}
             >
               <span>觉察标签</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('shop')}
+              style={{
+                padding: '12px 16px',
+                border: 'none',
+                borderRadius: '8px',
+                backgroundColor: activeTab === 'shop' ? '#2196F3' : 'transparent',
+                color: activeTab === 'shop' ? '#fff' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 500,
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span>工坊</span>
             </button>
             <button
               onClick={() => setActiveTab('meditationSettings')}
@@ -411,6 +440,48 @@ const Dashboard = () => {
               </div>
               <div style={{ fontSize: '16px', color: '#666' }}>标签分配总数</div>
             </div>
+
+            <div style={{
+              backgroundColor: '#fff',
+              padding: '32px',
+              borderRadius: '16px',
+              boxShadow: 'var(--shadow-sm)',
+              textAlign: 'center',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+            }}>
+              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#0f766e', marginBottom: '12px' }}>
+                {totalShopProducts}
+              </div>
+              <div style={{ fontSize: '16px', color: '#666' }}>工坊商品数</div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#fff',
+              padding: '32px',
+              borderRadius: '16px',
+              boxShadow: 'var(--shadow-sm)',
+              textAlign: 'center',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+            }}>
+              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#b45309', marginBottom: '12px' }}>
+                {totalShopSkus}
+              </div>
+              <div style={{ fontSize: '16px', color: '#666' }}>工坊规格数</div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#fff',
+              padding: '32px',
+              borderRadius: '16px',
+              boxShadow: 'var(--shadow-sm)',
+              textAlign: 'center',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+            }}>
+              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#1d4ed8', marginBottom: '12px' }}>
+                {totalShopOrders}
+              </div>
+              <div style={{ fontSize: '16px', color: '#666' }}>工坊订单数</div>
+            </div>
           </div>
         )}
 
@@ -460,6 +531,16 @@ const Dashboard = () => {
             error={settingsError}
             saving={savingAwarenessTagSettings}
             onSave={handleSaveAwarenessTagSettings}
+          />
+        )}
+
+        {!loading && !error && activeTab === 'shop' && (
+          <ShopManagement
+            categories={shopCategories}
+            products={shopProducts}
+            skus={shopSkus}
+            orders={shopOrders}
+            orderItems={shopOrderItems}
           />
         )}
       </div>
