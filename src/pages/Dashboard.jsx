@@ -6,6 +6,7 @@ import TagStatistics from '../components/Dashboard/TagStatistics';
 import TagManagement from '../components/Dashboard/TagManagement';
 import DatabaseStatus from '../components/Dashboard/DatabaseStatus';
 import MeditationSettings from '../components/Dashboard/MeditationSettings.jsx';
+import AwarenessTagSettings from '../components/Dashboard/AwarenessTagSettings.jsx';
 import { useDatabase } from '../hooks/useDatabase.js';
 
 // Add CSS reset to remove default margins
@@ -40,8 +41,11 @@ const Dashboard = () => {
     tags,
     categories,
     meditationSettings,
+    awarenessTagSettings,
+    awarenessTagOverview,
     settingsError,
     savingMeditationSettings,
+    savingAwarenessTagSettings,
     loading,
     error,
     updateUser,
@@ -50,7 +54,8 @@ const Dashboard = () => {
     updateTag,
     createTag,
     updateUserTags,
-    updateMeditationSettings
+    updateMeditationSettings,
+    updateAwarenessTagSettings
   } = useDatabase();
 
   const handleRefreshCloudbase = () => {
@@ -112,6 +117,14 @@ const Dashboard = () => {
       await updateMeditationSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update meditation settings:', err);
+    }
+  };
+
+  const handleSaveAwarenessTagSettings = async (nextSettings) => {
+    try {
+      await updateAwarenessTagSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update awareness tag settings:', err);
     }
   };
 
@@ -232,6 +245,26 @@ const Dashboard = () => {
               }}
             >
               <span>标签管理</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('awarenessTags')}
+              style={{
+                padding: '12px 16px',
+                border: 'none',
+                borderRadius: '8px',
+                backgroundColor: activeTab === 'awarenessTags' ? '#2196F3' : 'transparent',
+                color: activeTab === 'awarenessTags' ? '#fff' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 500,
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span>觉察标签</span>
             </button>
             <button
               onClick={() => setActiveTab('meditationSettings')}
@@ -416,6 +449,17 @@ const Dashboard = () => {
             error={settingsError}
             saving={savingMeditationSettings}
             onSave={handleSaveMeditationSettings}
+          />
+        )}
+
+        {!loading && !error && activeTab === 'awarenessTags' && (
+          <AwarenessTagSettings
+            key={`${awarenessTagSettings.documentId || 'default'}-${awarenessTagOverview.length}`}
+            tags={awarenessTagOverview}
+            settings={awarenessTagSettings}
+            error={settingsError}
+            saving={savingAwarenessTagSettings}
+            onSave={handleSaveAwarenessTagSettings}
           />
         )}
       </div>

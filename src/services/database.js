@@ -3,12 +3,19 @@ import { db, ensureAnonymousLogin } from './cloudbase.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
+const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
 
 export const DEFAULT_MEDITATION_SETTINGS = {
   rewardPoints: 50,
   allowRepeatRewards: true,
   inviterRewardRate: 0,
   documentId: null,
+  missingCollection: false
+};
+
+export const DEFAULT_AWARENESS_TAG_SETTINGS = {
+  documentId: null,
+  tagsByKey: {},
   missingCollection: false
 };
 
@@ -92,6 +99,12 @@ const normalizeMeditationSettings = (settings = {}) => ({
   missingCollection: false
 });
 
+const normalizeAwarenessTagSettings = (settings = {}) => ({
+  documentId: getDocumentId(settings) || null,
+  tagsByKey: settings.tags_by_key || settings.tagsByKey || {},
+  missingCollection: false
+});
+
 const toUserPayload = (userData) => {
   const rest = { ...userData };
   const joinDate = rest.joinDate;
@@ -165,6 +178,11 @@ const toMeditationSettingsPayload = (settingsData) => ({
   )
 });
 
+const toAwarenessTagSettingsPayload = (settingsData) => ({
+  key: AWARENESS_TAG_SETTINGS_KEY,
+  tags_by_key: settingsData.tagsByKey || {}
+});
+
 const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
   const categoriesById = new Map(categories.map((category) => [category.id, category]));
   const normalizedTags = tags.map((tag) => normalizeTag(tag, categoriesById));
@@ -205,6 +223,146 @@ const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
 };
 
 class DatabaseService {
+  static async getAwarenessTagSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: AWARENESS_TAG_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_AWARENESS_TAG_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_AWARENESS_TAG_SETTINGS };
+      }
+
+      return normalizeAwarenessTagSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_AWARENESS_TAG_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching awareness tag settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveAwarenessTagSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: AWARENESS_TAG_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toAwarenessTagSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+
+        return normalizeAwarenessTagSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeAwarenessTagSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving awareness tag settings:', error);
+      throw error;
+    }
+  }
+
+  static async getAwarenessTagOverview(limit = 200) {
+    try {
+      await ensureAnonymousLogin();
+      const [recordsResult, settings] = await Promise.all([
+        db.collection(collections.awarenessRecords).limit(2000).get(),
+        this.getAwarenessTagSettings()
+      ]);
+
+      const tagMap = new Map();
+
+      getDocuments(recordsResult, collections.awarenessRecords).forEach((record) => {
+        const content = (record.content || '').trim();
+        const accessType = record.access_type || record.accessType || 'public';
+        const tagKey = record.tag_key || `${content}::${accessType}`;
+        const timestamp = record.created_at_client || record.timestamp || record.created_at || record.createdAt || '';
+
+        if (!content) {
+          return;
+        }
+
+        const existingTag = tagMap.get(tagKey) || {
+          key: tagKey,
+          content,
+          accessType,
+          totalCount: 0,
+          lastUsedAt: timestamp,
+          lastUserName: record.user_name || record.userName || '匿名用户',
+          description: settings.tagsByKey?.[tagKey]?.description || ''
+        };
+
+        existingTag.totalCount += 1;
+
+        if (new Date(timestamp || 0).getTime() >= new Date(existingTag.lastUsedAt || 0).getTime()) {
+          existingTag.lastUsedAt = timestamp;
+          existingTag.lastUserName = record.user_name || record.userName || '匿名用户';
+        }
+
+        existingTag.description = settings.tagsByKey?.[tagKey]?.description || '';
+        tagMap.set(tagKey, existingTag);
+      });
+
+      return Array.from(tagMap.values())
+        .sort((left, right) => {
+          if (right.totalCount !== left.totalCount) {
+            return right.totalCount - left.totalCount;
+          }
+
+          return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
+        })
+        .slice(0, limit);
+    } catch (error) {
+      console.error('Error fetching awareness tag overview:', error);
+      throw error;
+    }
+  }
+
   static async getMeditationSettings() {
     try {
       await ensureAnonymousLogin();

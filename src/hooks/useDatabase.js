@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import DatabaseService, { DEFAULT_MEDITATION_SETTINGS } from '../services/database.js';
+import DatabaseService, { DEFAULT_AWARENESS_TAG_SETTINGS, DEFAULT_MEDITATION_SETTINGS } from '../services/database.js';
 import DatabaseInitializer from '../services/databaseInit.js';
 
 const getSetupErrorMessage = (error) => {
@@ -21,8 +21,11 @@ export const useDatabase = () => {
   const [tags, setTags] = useState([]);
   const [categories, setCategories] = useState([]);
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
+  const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
+  const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
+  const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -32,18 +35,22 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessTagOverview] = await Promise.all([
         DatabaseService.getDashboardData(),
-        DatabaseService.getMeditationSettings()
+        DatabaseService.getMeditationSettings(),
+        DatabaseService.getAwarenessTagSettings(),
+        DatabaseService.getAwarenessTagOverview()
       ]);
 
       setUsers(dashboardData.users);
       setTags(dashboardData.tags);
       setCategories(dashboardData.categories);
       setMeditationSettings(nextMeditationSettings);
+      setAwarenessTagSettings(nextAwarenessTagSettings);
+      setAwarenessTagOverview(nextAwarenessTagOverview);
       setSettingsError(
-        nextMeditationSettings.missingCollection
-          ? '当前使用默认奖励配置。若要在后台保存设置，请先创建集合：app_settings。'
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection
+          ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
     } catch (err) {
@@ -53,6 +60,8 @@ export const useDatabase = () => {
       setTags([]);
       setCategories([]);
       setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
+      setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
+      setAwarenessTagOverview([]);
     } finally {
       setLoading(false);
     }
@@ -77,6 +86,8 @@ export const useDatabase = () => {
       setUsers([]);
       setTags([]);
       setCategories([]);
+      setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
+      setAwarenessTagOverview([]);
     } finally {
       setLoading(false);
     }
@@ -189,6 +200,24 @@ export const useDatabase = () => {
     }
   };
 
+  const updateAwarenessTagSettings = async (settingsData) => {
+    try {
+      setSavingAwarenessTagSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveAwarenessTagSettings(settingsData);
+      setAwarenessTagSettings(savedSettings);
+      setAwarenessTagOverview(await DatabaseService.getAwarenessTagOverview());
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating awareness tag settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingAwarenessTagSettings(false);
+    }
+  };
+
   // Initialize on mount
   useEffect(() => {
     void initializeDatabase();
@@ -200,8 +229,11 @@ export const useDatabase = () => {
     tags,
     categories,
     meditationSettings,
+    awarenessTagSettings,
+    awarenessTagOverview,
     settingsError,
     savingMeditationSettings,
+    savingAwarenessTagSettings,
     loading,
     error,
     
@@ -215,6 +247,7 @@ export const useDatabase = () => {
     updateUserTags,
     getUserTags,
     updateMeditationSettings,
+    updateAwarenessTagSettings,
     initializeDatabase,
     
     // Utility

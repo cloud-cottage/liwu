@@ -8,6 +8,7 @@ const MOCK_PHONE_OTP_STORAGE_KEY = 'liwu_mock_phone_otp_session';
 const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
 const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
+const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
@@ -350,7 +351,7 @@ const normalizeAwarenessRecord = (record = {}) => {
   };
 };
 
-const groupAwarenessTags = (records, countField) => {
+const groupAwarenessTags = (records, countField, tagSettingsByKey = {}) => {
   const tagMap = new Map();
 
   records.forEach((record) => {
@@ -363,14 +364,19 @@ const groupAwarenessTags = (records, countField) => {
       content: record.content,
       accessType: record.accessType,
       [countField]: 0,
-      lastUsedAt: record.timestamp
+      lastUsedAt: record.timestamp,
+      lastUserName: record.userName || '匿名用户',
+      description: tagSettingsByKey[record.tagKey]?.description || ''
     };
 
     existingTag[countField] += 1;
-    existingTag.lastUsedAt =
-      new Date(record.timestamp || 0).getTime() > new Date(existingTag.lastUsedAt || 0).getTime()
-        ? record.timestamp
-        : existingTag.lastUsedAt;
+
+    if (new Date(record.timestamp || 0).getTime() >= new Date(existingTag.lastUsedAt || 0).getTime()) {
+      existingTag.lastUsedAt = record.timestamp;
+      existingTag.lastUserName = record.userName || '匿名用户';
+    }
+
+    existingTag.description = tagSettingsByKey[record.tagKey]?.description || '';
 
     tagMap.set(record.tagKey, existingTag);
   });
@@ -382,6 +388,29 @@ const groupAwarenessTags = (records, countField) => {
 
     return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
   });
+};
+
+const getAwarenessTagSettings = async () => {
+  try {
+    await ensureAnonymousLogin();
+    const result = await db
+      .collection(collections.appSettings)
+      .where({ key: AWARENESS_TAG_SETTINGS_KEY })
+      .limit(1)
+      .get();
+
+    if (isMissingCollectionResponse(result)) {
+      return { tagsByKey: {} };
+    }
+
+    const document = getFirstDocument(result, collections.appSettings);
+    return {
+      tagsByKey: document?.tags_by_key || document?.tagsByKey || {}
+    };
+  } catch (error) {
+    console.error('获取觉察标签配置失败:', error);
+    return { tagsByKey: {} };
+  }
 };
 
 const buildShareLinks = ({ title, text, url }) => {
@@ -713,6 +742,11 @@ export const userProfileService = {
 };
 
 export const awarenessService = {
+  async getTagMetadata(tagKey) {
+    const settings = await getAwarenessTagSettings();
+    return settings.tagsByKey?.[tagKey] || {};
+  },
+
   async addRecord(content, options = {}) {
     try {
       const trimmedContent = content.trim();
@@ -843,14 +877,17 @@ export const awarenessService = {
 
   async getUserTags() {
     try {
-      const recordsResult = await this.getUserRecords();
+      const [recordsResult, awarenessTagSettings] = await Promise.all([
+        this.getUserRecords(),
+        getAwarenessTagSettings()
+      ]);
       if (!recordsResult.success) {
         return { success: false, error: recordsResult.error };
       }
 
       return {
         success: true,
-        data: groupAwarenessTags(recordsResult.data, 'count')
+        data: groupAwarenessTags(recordsResult.data, 'count', awarenessTagSettings.tagsByKey)
       };
     } catch (error) {
       console.error('获取用户标签统计失败:', error);
@@ -860,14 +897,17 @@ export const awarenessService = {
 
   async getPopularTags(limit = 16) {
     try {
-      const recentRecordsResult = await this.getRecentRecords(1000);
+      const [recentRecordsResult, awarenessTagSettings] = await Promise.all([
+        this.getRecentRecords(5000),
+        getAwarenessTagSettings()
+      ]);
       if (!recentRecordsResult.success) {
         return { success: false, error: recentRecordsResult.error };
       }
 
       return {
         success: true,
-        data: groupAwarenessTags(recentRecordsResult.data, 'totalCount').slice(0, limit)
+        data: groupAwarenessTags(recentRecordsResult.data, 'totalCount', awarenessTagSettings.tagsByKey).slice(0, limit)
       };
     } catch (error) {
       console.error('获取热门标签失败:', error);

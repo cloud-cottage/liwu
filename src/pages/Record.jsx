@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   CheckCircle2,
-  Clock3,
   Copy,
   Lock,
   RefreshCw,
@@ -12,6 +11,7 @@ import {
   X
 } from 'lucide-react';
 import { useCloudAwareness } from '../context/CloudAwarenessContext';
+import { awarenessService } from '../services/cloudbase';
 
 const ACCESS_TYPE_META = {
   public: {
@@ -30,30 +30,142 @@ const ACCESS_TYPE_META = {
   }
 };
 
-const getRelativeTime = (timestamp) => {
-  if (!timestamp) {
-    return '刚刚';
-  }
-
-  const elapsedMs = Date.now() - new Date(timestamp).getTime();
-  const elapsedMinutes = Math.max(1, Math.floor(elapsedMs / 60000));
-
-  if (elapsedMinutes < 60) {
-    return `${elapsedMinutes} 分钟前`;
-  }
-
-  const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) {
-    return `${elapsedHours} 小时前`;
-  }
-
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  return `${elapsedDays} 天前`;
-};
-
 const getAccessMeta = (accessType) => ACCESS_TYPE_META[accessType] || ACCESS_TYPE_META.public;
 
 const canPublishTag = (tag, currentUser) => tag.accessType !== 'student' || Boolean(currentUser?.isStudent);
+
+const getTagCloudFontSize = (count, maxCount) => {
+  if (!maxCount || count >= maxCount) {
+    return 24;
+  }
+
+  if (count >= Math.max(2, Math.ceil(maxCount * 0.66))) {
+    return 20;
+  }
+
+  if (count >= Math.max(2, Math.ceil(maxCount * 0.4))) {
+    return 17;
+  }
+
+  return 15;
+};
+
+const AwareTagModal = ({
+  tag,
+  currentUser,
+  submitting,
+  onClose,
+  onSubmit
+}) => {
+  if (!tag) {
+    return null;
+  }
+
+  const accessMeta = getAccessMeta(tag.accessType);
+  const disabled = !canPublishTag(tag, currentUser);
+  const historicalCount = tag.totalCount || tag.count || 0;
+  const lastUserName = tag.lastUserName || '匿名用户';
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        zIndex: 30
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '420px',
+          backgroundColor: '#fff',
+          borderRadius: '20px',
+          padding: '24px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.2)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              aware_tag
+            </div>
+            <div style={{ fontSize: '20px', fontWeight: 700, color: '#111827', marginTop: '6px' }}>{tag.content}</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div
+          style={{
+            borderRadius: '16px',
+            padding: '16px',
+            backgroundColor: accessMeta.backgroundColor,
+            border: `1px solid ${accessMeta.borderColor}`,
+            marginBottom: '16px'
+          }}
+        >
+          <div style={{ fontSize: '14px', color: '#334155', lineHeight: 1.8 }}>
+            {tag.description?.trim() ? tag.description.trim() : '无简介'}
+          </div>
+        </div>
+
+        {tag.accessType === 'student' && (
+          <div style={{ marginBottom: '12px' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                borderRadius: '999px',
+                backgroundColor: 'rgba(15, 118, 110, 0.12)',
+                color: '#0f766e',
+                fontSize: '12px',
+                fontWeight: 600,
+                padding: '6px 10px'
+              }}
+            >
+              学员觉察
+            </span>
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gap: '10px', marginBottom: '20px' }}>
+          <div style={{ fontSize: '13px', color: '#475569' }}>历史标记总数：{historicalCount}</div>
+          <div style={{ fontSize: '13px', color: '#475569' }}>最近标记者：{lastUserName}</div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onSubmit(tag)}
+          disabled={disabled || submitting}
+          style={{
+            width: '100%',
+            border: 'none',
+            backgroundColor: disabled ? '#cbd5e1' : '#111827',
+            color: '#fff',
+            borderRadius: '12px',
+            padding: '12px 14px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: disabled || submitting ? 'not-allowed' : 'pointer',
+            opacity: submitting ? 0.7 : 1
+          }}
+        >
+          {disabled ? '仅学员可觉察' : submitting ? '发布中...' : '我也觉察它'}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const Record = () => {
   const location = useLocation();
@@ -61,11 +173,9 @@ const Record = () => {
     currentUser,
     userTags,
     popularTags,
-    recentRecords,
     loading,
     refreshing,
     error: cloudError,
-    lastUpdatedAt,
     addAwarenessRecord,
     refreshData
   } = useCloudAwareness();
@@ -75,13 +185,12 @@ const Record = () => {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [selectedAccessType, setSelectedAccessType] = useState('public');
-  const [confirmTag, setConfirmTag] = useState(null);
+  const [activeAwareTag, setActiveAwareTag] = useState(null);
   const [sharePayload, setSharePayload] = useState(null);
   const [shareStatus, setShareStatus] = useState('');
-
-  const communityRecords = useMemo(() => (
-    recentRecords.filter((record) => record.userId !== currentUser?.id)
-  ), [currentUser?.id, recentRecords]);
+  const maxPopularTagCount = useMemo(() => (
+    popularTags.reduce((currentMax, tag) => Math.max(currentMax, tag.totalCount || 0), 0)
+  ), [popularTags]);
 
   const submitAwareness = async ({ content, accessType }) => {
     setSubmitting(true);
@@ -94,7 +203,7 @@ const Record = () => {
     }
 
     setError('');
-    setConfirmTag(null);
+    setActiveAwareTag(null);
     setInputValue('');
     setSelectedAccessType('public');
     setSharePayload(result.sharePayload);
@@ -121,14 +230,22 @@ const Record = () => {
     });
   };
 
-  const handleTagClick = (tag) => {
+  const handleTagClick = async (tag) => {
     if (!canPublishTag(tag, currentUser)) {
       setError('学员觉察标签仅学员可发布');
       return;
     }
 
     setError('');
-    setConfirmTag(tag);
+    try {
+      const metadata = await awarenessService.getTagMetadata(tag.key);
+      setActiveAwareTag({
+        ...tag,
+        description: metadata.description || tag.description || ''
+      });
+    } catch {
+      setActiveAwareTag(tag);
+    }
   };
 
   const handleRefresh = async () => {
@@ -202,20 +319,6 @@ const Record = () => {
           >
             觉察
           </h1>
-          <p
-            style={{
-              fontSize: '14px',
-              color: 'var(--color-text-secondary)',
-              margin: '8px 0 0'
-            }}
-          >
-            优先展示本地缓存标签，缓存过期或手动刷新时再从 CloudBase 拉取。
-          </p>
-          {lastUpdatedAt && (
-            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '6px' }}>
-              最近更新：{new Date(lastUpdatedAt).toLocaleString('zh-CN', { hour12: false })}
-            </div>
-          )}
         </div>
         <button
           onClick={handleRefresh}
@@ -387,17 +490,6 @@ const Record = () => {
                 >
                   {tag.accessType === 'student' && <Lock size={14} color={meta.color} />}
                   <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{tag.content}</span>
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      color: meta.color,
-                      backgroundColor: meta.backgroundColor,
-                      padding: '2px 8px',
-                      borderRadius: '999px'
-                    }}
-                  >
-                    {meta.label}
-                  </span>
                   <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{tag.count}次</span>
                 </button>
               );
@@ -411,13 +503,25 @@ const Record = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
             <TrendingUp size={18} color="var(--color-accent-clay)" />
             <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--color-text-primary)', margin: 0 }}>
-              大家正在觉察
+              同心同照亮
             </h2>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '12px 16px',
+              alignItems: 'center',
+              backgroundColor: '#fff',
+              borderRadius: '18px',
+              padding: '20px',
+              boxShadow: 'var(--shadow-sm)'
+            }}
+          >
             {popularTags.map((tag) => {
               const meta = getAccessMeta(tag.accessType);
               const disabled = !canPublishTag(tag, currentUser);
+              const fontSize = getTagCloudFontSize(tag.totalCount || 0, maxPopularTagCount);
 
               return (
                 <button
@@ -425,20 +529,22 @@ const Record = () => {
                   onClick={() => handleTagClick(tag)}
                   disabled={disabled}
                   style={{
-                    padding: '10px 16px',
-                    backgroundColor: meta.backgroundColor,
+                    padding: '10px 14px',
+                    backgroundColor: '#fff',
                     border: `1px solid ${meta.borderColor}`,
                     borderRadius: '20px',
                     cursor: disabled ? 'not-allowed' : 'pointer',
-                    display: 'flex',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '8px',
-                    opacity: disabled ? 0.55 : 1
+                    opacity: disabled ? 0.45 : 1,
+                    color: meta.color,
+                    fontSize,
+                    fontWeight: tag.totalCount === maxPopularTagCount ? 700 : 600,
+                    lineHeight: 1.2,
+                    boxShadow: 'var(--shadow-sm)'
                   }}
                 >
-                  {tag.accessType === 'student' && <Lock size={14} color={meta.color} />}
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: meta.color }}>{tag.content}</span>
-                  <span style={{ fontSize: '12px', color: meta.color }}>{tag.totalCount}次</span>
+                  <span>{tag.content}</span>
                 </button>
               );
             })}
@@ -446,204 +552,13 @@ const Record = () => {
         </div>
       )}
 
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-          <Clock3 size={18} color="var(--color-accent-ink)" />
-          <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--color-text-primary)', margin: 0 }}>
-            最新发布
-          </h2>
-        </div>
-        {communityRecords.length === 0 ? (
-          <div
-            style={{
-              backgroundColor: '#fff',
-              borderRadius: '16px',
-              padding: '24px',
-              color: 'var(--color-text-secondary)',
-              boxShadow: 'var(--shadow-sm)'
-            }}
-          >
-            还没有其它人的云端觉察，发布第一个标签吧。
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gap: '12px' }}>
-            {communityRecords.slice(0, 12).map((record) => {
-              const meta = getAccessMeta(record.accessType);
-              const disabled = !canPublishTag(record, currentUser);
-
-              return (
-                <div
-                  key={record.id}
-                  style={{
-                    backgroundColor: '#fff',
-                    borderRadius: '16px',
-                    padding: '16px',
-                    boxShadow: 'var(--shadow-sm)'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{record.userName}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                        {getRelativeTime(record.timestamp)}
-                      </div>
-                    </div>
-                    <span
-                      style={{
-                        alignSelf: 'flex-start',
-                        fontSize: '11px',
-                        color: meta.color,
-                        backgroundColor: meta.backgroundColor,
-                        borderRadius: '999px',
-                        padding: '4px 10px'
-                      }}
-                    >
-                      {meta.label}
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-                    <button
-                      onClick={() => handleTagClick(record)}
-                      disabled={disabled}
-                      style={{
-                        flex: 1,
-                        textAlign: 'left',
-                        border: `1px solid ${meta.borderColor}`,
-                        backgroundColor: meta.backgroundColor,
-                        color: meta.color,
-                        borderRadius: '14px',
-                        padding: '12px 14px',
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        opacity: disabled ? 0.55 : 1
-                      }}
-                    >
-                      {record.accessType === 'student' && <Lock size={14} />}
-                      <span style={{ fontSize: '15px', fontWeight: 600 }}>{record.content}</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleTagClick(record)}
-                      disabled={disabled}
-                      style={{
-                        border: 'none',
-                        backgroundColor: disabled ? '#cbd5e1' : '#111827',
-                        color: '#fff',
-                        borderRadius: '12px',
-                        padding: '12px 14px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                        minWidth: '92px'
-                      }}
-                    >
-                      {disabled ? '仅学员' : '跟发'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {confirmTag && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-            zIndex: 30
-          }}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: '420px',
-              backgroundColor: '#fff',
-              borderRadius: '20px',
-              padding: '24px',
-              boxShadow: '0 24px 80px rgba(15, 23, 42, 0.2)'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ fontSize: '18px', fontWeight: 700, color: '#111827' }}>确认发布</div>
-              <button
-                type="button"
-                onClick={() => setConfirmTag(null)}
-                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div
-              style={{
-                borderRadius: '16px',
-                padding: '16px',
-                backgroundColor: getAccessMeta(confirmTag.accessType).backgroundColor,
-                border: `1px solid ${getAccessMeta(confirmTag.accessType).borderColor}`,
-                marginBottom: '16px'
-              }}
-            >
-              <div style={{ fontSize: '18px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>{confirmTag.content}</div>
-              <div style={{ fontSize: '13px', color: getAccessMeta(confirmTag.accessType).color }}>
-                {getAccessMeta(confirmTag.accessType).label} · {getAccessMeta(confirmTag.accessType).hint}
-              </div>
-            </div>
-
-            <div style={{ fontSize: '14px', color: '#475569', lineHeight: 1.7, marginBottom: '20px' }}>
-              确认后会把这个标签发布到你的觉察里，并同步到 CloudBase。
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                type="button"
-                onClick={() => setConfirmTag(null)}
-                style={{
-                  flex: 1,
-                  border: '1px solid #cbd5e1',
-                  backgroundColor: '#fff',
-                  color: '#334155',
-                  borderRadius: '12px',
-                  padding: '12px 14px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => submitAwareness({ content: confirmTag.content, accessType: confirmTag.accessType })}
-                disabled={submitting}
-                style={{
-                  flex: 1,
-                  border: 'none',
-                  backgroundColor: '#111827',
-                  color: '#fff',
-                  borderRadius: '12px',
-                  padding: '12px 14px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                  opacity: submitting ? 0.7 : 1
-                }}
-              >
-                {submitting ? '发布中...' : '确认发布'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AwareTagModal
+        tag={activeAwareTag}
+        currentUser={currentUser}
+        submitting={submitting}
+        onClose={() => setActiveAwareTag(null)}
+        onSubmit={(tag) => submitAwareness({ content: tag.content, accessType: tag.accessType })}
+      />
 
       {sharePayload && (
         <div
