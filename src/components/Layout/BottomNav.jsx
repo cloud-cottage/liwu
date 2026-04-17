@@ -23,7 +23,7 @@ const BottomNav = () => {
             </NavLink>
 
             <NavLink
-                to="/record"
+                to="/aware"
                 className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
             >
                 <Sparkles size={24} strokeWidth={1.5} />

@@ -9,7 +9,6 @@ import {
   Share2,
   Sparkles,
   TrendingUp,
-  Users,
   X
 } from 'lucide-react';
 import { useCloudAwareness } from '../context/CloudAwarenessContext';
@@ -237,24 +236,6 @@ const Record = () => {
           <RefreshCw size={16} style={{ animation: loading || refreshing ? 'spin 1s linear infinite' : 'none' }} />
           刷新
         </button>
-      </div>
-
-      <div
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '8px 12px',
-          borderRadius: '999px',
-          backgroundColor: currentUser?.isStudent ? 'rgba(15, 118, 110, 0.1)' : 'rgba(37, 99, 235, 0.1)',
-          color: currentUser?.isStudent ? '#0f766e' : '#2563eb',
-          fontSize: '12px',
-          fontWeight: 600,
-          marginBottom: '24px'
-        }}
-      >
-        <Users size={14} />
-        {currentUser?.isStudent ? '当前身份：学员，可发布学员觉察标签' : '当前身份：普通用户，可发布普通觉察标签'}
       </div>
 
       {(error || cloudError) && (

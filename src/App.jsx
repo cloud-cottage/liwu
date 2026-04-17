@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Outlet, Navigate } from 'react-router-dom';
 import BottomNav from './components/Layout/BottomNav';
 import Home from './pages/Home';
 import Record from './pages/Record';
@@ -34,7 +34,8 @@ function App() {
             <Route path="/" element={<Layout />}>
               <Route index element={<Home />} />
               <Route path="meditation-tab" element={<MeditationHome />} />
-              <Route path="record" element={<Record />} />
+              <Route path="aware" element={<Record />} />
+              <Route path="record" element={<Navigate to="/aware" replace />} />
               <Route path="community" element={<Community />} />
               <Route path="profile" element={<Profile />} />
               <Route path="challenges" element={<Challenges />} />

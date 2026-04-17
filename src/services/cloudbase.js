@@ -6,6 +6,7 @@ const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
 const PENDING_AUTH_PHONE_STORAGE_KEY = 'liwu_pending_auth_phone';
 const MOCK_PHONE_OTP_STORAGE_KEY = 'liwu_mock_phone_otp_session';
 const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
+const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
@@ -102,6 +103,22 @@ const clearPendingAuthPhone = () => {
   }
 };
 
+const readLocalStorageValue = (key) => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.localStorage.getItem(key) || '';
+};
+
+const writeLocalStorageValue = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(key, value);
+};
+
 const readSessionStorageJSON = (key) => {
   if (typeof window === 'undefined') {
     return null;
@@ -165,6 +182,17 @@ const clearMockPhoneAuthSession = () => {
 const clearCurrentProfileCache = () => {
   currentProfileCache = null;
   currentProfilePromise = null;
+};
+
+const getOrCreateAwarenessAuthorKey = () => {
+  const existingKey = readLocalStorageValue(AWARENESS_AUTHOR_KEY_STORAGE_KEY);
+  if (existingKey) {
+    return existingKey;
+  }
+
+  const nextKey = `aware_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  writeLocalStorageValue(AWARENESS_AUTHOR_KEY_STORAGE_KEY, nextKey);
+  return nextKey;
 };
 
 const buildDefaultUserName = (authUid = '') => `用户${(authUid || '0000').slice(-4)}`;
@@ -274,6 +302,7 @@ const normalizeAwarenessRecord = (record = {}) => {
 
   return {
     id: getDocumentId(record),
+    authorKey: record.author_key || record.authorKey || record.auth_uid || record.user_id || '',
     userId: record.user_id || record.userId || '',
     authUid: record.auth_uid || record.authUid || '',
     userName: record.user_name || record.userName || '匿名用户',
@@ -408,6 +437,48 @@ const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
     isAnonymous: false,
     isAuthenticated: true,
     isMockSession: true
+  };
+};
+
+const resolveAwarenessIdentity = async () => {
+  const fallbackAuthorKey = getOrCreateAwarenessAuthorKey();
+  let authStatus = {
+    authUid: '',
+    displayName: '',
+    isAuthenticated: false
+  };
+  let currentProfile = null;
+
+  try {
+    authStatus = await resolveAuthStatus({ allowAnonymous: true });
+  } catch (error) {
+    console.error('读取觉察身份状态失败:', error);
+  }
+
+  try {
+    currentProfile = await userProfileService.getCurrentProfile({
+      refresh: false,
+      allowAnonymous: true
+    });
+  } catch (error) {
+    console.error('读取觉察用户档案失败:', error);
+  }
+
+  const authorKey = currentProfile?.authUid || authStatus.authUid || fallbackAuthorKey;
+  const userId = currentProfile?.id || authorKey;
+  const authUid = currentProfile?.authUid || authStatus.authUid || authorKey;
+  const userName =
+    currentProfile?.name ||
+    authStatus.displayName ||
+    buildDefaultUserName(authUid);
+
+  return {
+    authorKey,
+    userId,
+    authUid,
+    userName,
+    isStudent: Boolean(currentProfile?.isStudent),
+    profile: currentProfile
   };
 };
 
@@ -593,7 +664,7 @@ export const userProfileService = {
       return `/record?invite=${encodeURIComponent(currentProfile.inviteCode)}`;
     }
 
-    const shareUrl = new URL('/record', window.location.origin);
+    const shareUrl = new URL('/aware', window.location.origin);
     shareUrl.searchParams.set('invite', currentProfile.inviteCode);
 
     if (tagContent) {
@@ -608,7 +679,7 @@ export const awarenessService = {
   async addRecord(content, options = {}) {
     try {
       const trimmedContent = content.trim();
-      const currentProfile = await userProfileService.ensureCurrentProfile();
+      const awarenessIdentity = await resolveAwarenessIdentity();
       const accessType = normalizeAccessType(options.accessType || 'public');
 
       if (!trimmedContent) {
@@ -619,25 +690,39 @@ export const awarenessService = {
         throw new Error('标签长度不能超过 6 个字符');
       }
 
-      if (accessType === 'student' && !currentProfile.isStudent) {
+      if (accessType === 'student' && !awarenessIdentity.isStudent) {
         throw new Error('学员觉察标签仅学员可发布');
       }
 
       const nowIso = new Date().toISOString();
-      const payload = {
-        user_id: currentProfile.id,
-        auth_uid: currentProfile.authUid,
-        user_name: currentProfile.name,
+      const basePayload = {
+        author_key: awarenessIdentity.authorKey,
+        user_id: awarenessIdentity.userId,
+        auth_uid: awarenessIdentity.authUid,
+        user_name: awarenessIdentity.userName,
         content: trimmedContent,
         access_type: accessType,
         tag_key: `${trimmedContent}::${accessType}`,
         timestamp: nowIso,
-        created_at_client: nowIso,
-        createdAt: db.serverDate(),
-        created_at: db.serverDate()
+        created_at_client: nowIso
       };
 
-      const result = await db.collection(collections.awarenessRecords).add(payload);
+      let result;
+
+      try {
+        result = await db.collection(collections.awarenessRecords).add({
+          ...basePayload,
+          createdAt: db.serverDate(),
+          created_at: db.serverDate()
+        });
+      } catch (primaryError) {
+        console.error('觉察写入使用 serverDate 失败，改用本地时间重试:', primaryError);
+        result = await db.collection(collections.awarenessRecords).add({
+          ...basePayload,
+          createdAt: new Date(),
+          created_at: new Date()
+        });
+      }
 
       if (!result?.id) {
         throw new Error(result?.message || '添加觉察记录失败');
@@ -647,7 +732,7 @@ export const awarenessService = {
         success: true,
         id: result.id,
         record: normalizeAwarenessRecord({
-          ...payload,
+          ...basePayload,
           _id: result.id
         })
       };
@@ -659,17 +744,40 @@ export const awarenessService = {
 
   async getUserRecords(limit = 100) {
     try {
-      const currentProfile = await userProfileService.ensureCurrentProfile();
-      const result = await db
-        .collection(collections.awarenessRecords)
-        .where({ user_id: currentProfile.id })
-        .orderBy('createdAt', 'desc')
-        .limit(limit)
-        .get();
+      const awarenessIdentity = await resolveAwarenessIdentity();
+      const queries = [
+        awarenessIdentity.authorKey ? { author_key: awarenessIdentity.authorKey } : null,
+        awarenessIdentity.profile?.id ? { user_id: awarenessIdentity.profile.id } : null,
+        awarenessIdentity.authUid && awarenessIdentity.authUid !== awarenessIdentity.authorKey
+          ? { auth_uid: awarenessIdentity.authUid }
+          : null
+      ].filter(Boolean);
+
+      const results = await Promise.all(
+        queries.map(async (query) => {
+          const result = await db
+            .collection(collections.awarenessRecords)
+            .where(query)
+            .orderBy('createdAt', 'desc')
+            .limit(limit)
+            .get();
+
+          return getResponseData(result, collections.awarenessRecords).map(normalizeAwarenessRecord);
+        })
+      );
+
+      const recordsById = new Map();
+      results.flat().forEach((record) => {
+        if (record.id) {
+          recordsById.set(record.id, record);
+        }
+      });
 
       return {
         success: true,
-        data: getResponseData(result, collections.awarenessRecords).map(normalizeAwarenessRecord)
+        data: Array.from(recordsById.values())
+          .sort((left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime())
+          .slice(0, limit)
       };
     } catch (error) {
       console.error('获取用户觉察记录失败:', error);
@@ -679,7 +787,6 @@ export const awarenessService = {
 
   async getRecentRecords(limit = 40) {
     try {
-      await userProfileService.ensureCurrentProfile();
       const result = await db
         .collection(collections.awarenessRecords)
         .orderBy('createdAt', 'desc')
