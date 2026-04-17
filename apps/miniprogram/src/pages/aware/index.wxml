@@ -1,0 +1,56 @@
+<view class="page-shell">
+  <view class="section-card composer-card">
+    <view class="section-title">觉察</view>
+    <view class="section-subtitle">输入 6 个汉字以内的状态，写入同一套 CloudBase 觉察集合。</view>
+    <input
+      class="aware-input"
+      placeholder="输入你的状态（6个汉字以内）"
+      maxlength="6"
+      value="{{inputValue}}"
+      bindinput="handleInput"
+    />
+    <button class="primary-button publish-button" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="handlePublish">
+      觉察此刻
+    </button>
+  </view>
+
+  <view class="section-card" wx:if="{{myTags.length}}">
+    <view class="section-title">我的常用觉察</view>
+    <view class="tag-pills">
+      <view class="tag-pill" wx:for="{{myTags}}" wx:key="key">{{item.content}}</view>
+    </view>
+  </view>
+
+  <view class="section-card">
+    <view class="section-title">同心同照亮</view>
+    <view class="section-subtitle">点开任一标签，查看 aware_tag 详情并一键复用。</view>
+    <view class="cloud-wrap" wx:if="{{popularTags.length}}">
+      <view
+        class="cloud-tag"
+        wx:for="{{popularTags}}"
+        wx:key="key"
+        data-tag="{{item}}"
+        bindtap="handleTagTap"
+        style="font-size: {{item.fontSize}}rpx;"
+      >
+        {{item.content}}
+      </view>
+    </view>
+    <view class="empty-text" wx:else>还没有可展示的社区觉察标签。</view>
+  </view>
+
+  <view class="modal-mask" wx:if="{{showTagModal}}" bindtap="handleCloseTagModal">
+    <view class="modal-card" catchtap="noop">
+      <view class="modal-label">aware_tag</view>
+      <view class="modal-title">{{activeTag.content}}</view>
+      <view class="modal-intro">{{activeTag.description || '无简介'}}</view>
+      <view class="modal-badge" wx:if="{{activeTag.accessType === 'student'}}">学员觉察</view>
+      <view class="modal-meta">历史标记总数：{{activeTag.totalCount || 0}}</view>
+      <view class="modal-meta">最近标记者：{{activeTag.lastUserName || '匿名用户'}}</view>
+      <button class="primary-button modal-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleRepublishTag">
+        我也觉察它
+      </button>
+      <button class="ghost-button close-button" bindtap="handleCloseTagModal">关闭</button>
+    </view>
+  </view>
+</view>

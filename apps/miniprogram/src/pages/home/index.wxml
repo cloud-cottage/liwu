@@ -1,0 +1,28 @@
+<view class="page-shell">
+  <view class="section-card hero-card">
+    <view class="hero-label">LIWU MINI</view>
+    <view class="section-title">你好，{{profile.name || '小悟朋友'}}</view>
+    <view class="section-subtitle">把首页、小程序觉察和个人资料先接到同一套 CloudBase 数据源上。</view>
+    <button class="primary-button hero-button" bindtap="handleAwareTap">立即觉察</button>
+  </view>
+
+  <view class="section-card quick-card">
+    <view class="section-title">快捷入口</view>
+    <view class="section-subtitle">先把首页、觉察、我的跑通，再逐步接入工坊和更多内容。</view>
+    <view class="quick-list">
+      <view class="quick-item" wx:for="{{cards}}" wx:key="title" data-path="{{item.path}}" bindtap="handleCardTap">
+        <view class="quick-title">{{item.title}}</view>
+        <view class="quick-subtitle">{{item.subtitle}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section-card tag-card">
+    <view class="section-title">同心同照亮</view>
+    <view class="section-subtitle">社区觉察标签热度前列会在这里显示。</view>
+    <view class="tag-list" wx:if="{{tags.length}}">
+      <view class="tag-pill" wx:for="{{tags}}" wx:key="key">{{item.content}}</view>
+    </view>
+    <view class="empty-text" wx:else>还没有可展示的社区标签。</view>
+  </view>
+</view>

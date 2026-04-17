@@ -1,0 +1,9 @@
+{
+  "name": "@liwu/web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "echo \"Decide web client direction before wiring a runtime for apps/web\"",
+    "build": "echo \"No build configured for apps/web yet\""
+  }
+}

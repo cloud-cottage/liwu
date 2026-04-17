@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  server:
+    image: node:20-alpine
+    working_dir: /workspace/apps/server
+    command: sh -c "npm run dev"
+    volumes:
+      - .:/workspace
+    ports:
+      - "3000:3000"

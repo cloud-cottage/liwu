@@ -1,0 +1,41 @@
+<view class="page-shell">
+  <view class="section-card profile-card">
+    <view class="section-title">{{profile.name || '我的'}}</view>
+    <view class="section-subtitle">本地资料会用于小程序内的觉察署名，并与 CloudBase 觉察记录联动。</view>
+    <view class="stats-row">
+      <view class="stat-box">
+        <view class="stat-label">author_key</view>
+        <view class="stat-value">{{profile.authorKey}}</view>
+      </view>
+      <view class="stat-box">
+        <view class="stat-label">我的觉察总数</view>
+        <view class="stat-value">{{awareCount}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section-card editor-card">
+    <view class="section-title">编辑资料</view>
+    <view class="field-label">昵称</view>
+    <input class="field-input" value="{{form.name}}" data-field="name" bindinput="handleInput" />
+    <view class="field-label">手机号</view>
+    <input class="field-input" value="{{form.phone}}" data-field="phone" bindinput="handleInput" />
+    <view class="field-label">简介</view>
+    <textarea class="field-textarea" value="{{form.bio}}" data-field="bio" bindinput="handleInput" />
+    <button class="primary-button save-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存资料</button>
+  </view>
+
+  <view class="section-card">
+    <view class="section-title">最近觉察</view>
+    <view class="tag-pills" wx:if="{{recentTags.length}}">
+      <view class="tag-pill" wx:for="{{recentTags}}" wx:key="key">{{item.content}}</view>
+    </view>
+    <view class="empty-text" wx:else>还没有你的觉察记录。</view>
+  </view>
+
+  <view class="section-card shop-entry">
+    <view class="section-title">工坊入口</view>
+    <view class="section-subtitle">工坊暂未接入商品与订单，先保留入口页。</view>
+    <button class="ghost-button shop-button" bindtap="handleGoShop">进入工坊</button>
+  </view>
+</view>

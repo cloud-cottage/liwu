@@ -3,11 +3,24 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "npm run dev:app",
+    "dev:app": "npm --workspace @liwu/app run dev",
+    "dev:web": "npm --workspace @liwu/web run dev",
+    "dev:admin": "npm --workspace @liwu/admin run dev",
+    "build": "npm run build:app",
+    "build:app": "npm --workspace @liwu/app run build",
+    "build:web": "npm --workspace @liwu/web run build",
+    "build:admin": "npm --workspace @liwu/admin run build",
+    "build:miniprogram": "npm --workspace @liwu/miniprogram run build",
+    "build:server": "npm --workspace @liwu/server run build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "npm --workspace @liwu/app run preview",
+    "preview:admin": "npm --workspace @liwu/admin run preview"
   },
   "dependencies": {
     "@cloudbase/js-sdk": "^2.25.3",

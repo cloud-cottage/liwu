@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+apps/*/dist
 dist-ssr
 *.local
 
@@ -23,3 +24,4 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+apps/miniprogram/project.private.config.json

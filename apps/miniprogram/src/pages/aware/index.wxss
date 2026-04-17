@@ -1,0 +1,120 @@
+.composer-card {
+  margin-bottom: 24rpx;
+}
+
+.aware-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 24rpx;
+  padding: 22rpx 24rpx;
+  border-radius: 24rpx;
+  background: #f8fafc;
+  font-size: 28rpx;
+}
+
+.publish-button {
+  width: 100%;
+  margin-top: 20rpx;
+}
+
+.tag-pills {
+  margin-top: 20rpx;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
+.tag-pill {
+  padding: 14rpx 22rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  box-shadow: 0 12rpx 30rpx rgba(15, 23, 42, 0.05);
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.cloud-wrap {
+  margin-top: 20rpx;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18rpx 20rpx;
+}
+
+.cloud-tag {
+  padding: 14rpx 22rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  box-shadow: 0 12rpx 30rpx rgba(15, 23, 42, 0.05);
+  color: #2563eb;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  padding: 32rpx;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-card {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 28rpx;
+  box-sizing: border-box;
+}
+
+.modal-label {
+  font-size: 22rpx;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.modal-title {
+  margin-top: 10rpx;
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #111827;
+}
+
+.modal-intro {
+  margin-top: 18rpx;
+  padding: 20rpx;
+  border-radius: 20rpx;
+  background: rgba(37, 99, 235, 0.08);
+  color: #334155;
+  font-size: 26rpx;
+  line-height: 1.7;
+}
+
+.modal-badge {
+  display: inline-flex;
+  margin-top: 18rpx;
+  padding: 10rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.modal-meta {
+  margin-top: 14rpx;
+  font-size: 24rpx;
+  color: #475569;
+}
+
+.modal-button,
+.close-button {
+  width: 100%;
+  margin-top: 20rpx;
+}

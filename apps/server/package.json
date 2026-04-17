@@ -1,0 +1,10 @@
+{
+  "name": "@liwu/server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"Scaffold apps/server before choosing runtime\"",
+    "build": "echo \"Add TypeScript build pipeline for apps/server\""
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/home/index",
+    "pages/aware/index",
+    "pages/profile/index",
+    "pages/shop/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "理悟",
+    "navigationBarBackgroundColor": "#f7f4ef",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f7f4ef"
+  }
+}

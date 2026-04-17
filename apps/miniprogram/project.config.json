@@ -1,0 +1,6 @@
+{
+  "miniprogramRoot": "src/",
+  "projectname": "liwu-miniprogram",
+  "appid": "touristappid",
+  "compileType": "miniprogram"
+}
