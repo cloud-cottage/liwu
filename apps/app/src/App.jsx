@@ -9,6 +9,7 @@ import Challenges from './pages/Challenges';
 import ChallengeDetail from './pages/ChallengeDetail';
 import MeditationHome from './modules/meditate';
 import MeditationPlayer from './modules/meditate/player';
+import Shop from './modules/shop';
 import { WealthProvider } from './context/WealthContext';
 import { CloudAwarenessProvider } from './context/CloudAwarenessContext';
 import './App.css';
@@ -37,6 +38,7 @@ function App() {
               <Route path="record" element={<Navigate to="/aware" replace />} />
               <Route path="community" element={<Community />} />
               <Route path="profile" element={<Profile />} />
+              <Route path="shop" element={<Shop />} />
               <Route path="challenges" element={<Challenges />} />
               <Route path="challenges/:id" element={<ChallengeDetail />} />
             </Route>

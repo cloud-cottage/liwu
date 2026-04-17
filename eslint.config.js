@@ -33,6 +33,7 @@ export default defineConfig([
         App: 'readonly',
         Page: 'readonly',
         Component: 'readonly',
+        getApp: 'readonly',
         wx: 'readonly',
         require: 'readonly',
         module: 'readonly'

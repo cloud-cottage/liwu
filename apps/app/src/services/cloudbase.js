@@ -351,6 +351,91 @@ const normalizeAwarenessRecord = (record = {}) => {
   };
 };
 
+const normalizeShopCategory = (category = {}) => ({
+  id: getDocumentId(category),
+  name: category.name || '',
+  slug: category.slug || '',
+  sortOrder: Number(category.sort_order ?? category.sortOrder ?? 0),
+  status: category.status || 'active',
+  coverImage: category.cover_image || category.coverImage || '',
+  description: category.description || ''
+});
+
+const normalizeShopProduct = (product = {}) => ({
+  id: getDocumentId(product),
+  name: product.name || '',
+  subtitle: product.subtitle || '',
+  categoryId: product.category_id || product.categoryId || '',
+  productType: product.product_type || product.productType || 'physical',
+  coverImage: product.cover_image || product.coverImage || '',
+  gallery: product.gallery || [],
+  description: product.description || '',
+  detailBlocks: product.detail_blocks || product.detailBlocks || [],
+  status: product.status || 'draft',
+  skuMode: product.sku_mode || product.skuMode || 'single',
+  pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
+  priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
+  stockTotal: Number(product.stock_total ?? product.stockTotal ?? 0),
+  salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
+  limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
+  sortOrder: Number(product.sort_order ?? product.sortOrder ?? 0),
+  tags: product.tags || []
+});
+
+const normalizeShopSku = (sku = {}) => ({
+  id: getDocumentId(sku),
+  productId: sku.product_id || sku.productId || '',
+  skuName: sku.sku_name || sku.skuName || '',
+  skuCode: sku.sku_code || sku.skuCode || '',
+  attrs: sku.attrs || {},
+  pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
+  priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
+  stock: Number(sku.stock ?? 0),
+  lockStock: Number(sku.lock_stock ?? sku.lockStock ?? 0),
+  status: sku.status || 'active',
+  weight: Number(sku.weight ?? 0)
+});
+
+const normalizeAddress = (address = {}) => ({
+  id: getDocumentId(address),
+  userId: address.user_id || address.userId || '',
+  receiverName: address.receiver_name || address.receiverName || '',
+  phone: address.phone || '',
+  province: address.province || '',
+  city: address.city || '',
+  district: address.district || '',
+  detailAddress: address.detail_address || address.detailAddress || '',
+  postalCode: address.postal_code || address.postalCode || '',
+  label: address.label || '',
+  isDefault: Boolean(address.is_default ?? address.isDefault)
+});
+
+const normalizeShopOrder = (order = {}) => ({
+  id: getDocumentId(order),
+  orderNo: order.order_no || order.orderNo || '',
+  userId: order.user_id || order.userId || '',
+  orderType: order.order_type || order.orderType || 'points',
+  status: order.status || 'pending_payment',
+  totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
+  totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+  createdAt: order.created_at || order.createdAt || ''
+});
+
+const toAddressPayload = (addressData = {}, userId) => ({
+  user_id: userId,
+  receiver_name: addressData.receiverName || '',
+  phone: addressData.phone || '',
+  province: addressData.province || '',
+  city: addressData.city || '',
+  district: addressData.district || '',
+  detail_address: addressData.detailAddress || '',
+  postal_code: addressData.postalCode || '',
+  label: addressData.label || '',
+  is_default: Boolean(addressData.isDefault)
+});
+
+const generateOrderNo = () => `LW${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${Date.now().toString().slice(-6)}`
+
 const groupAwarenessTags = (records, countField, tagSettingsByKey = {}) => {
   const tagMap = new Map();
 
@@ -1125,6 +1210,273 @@ export const wealthService = {
       success: true,
       balance: nextProfile.balance,
       history: nextProfile.wealthHistory
+    };
+  }
+};
+
+export const shopService = {
+  async getCategories() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection(collections.shopCategories).where({ status: 'active' }).limit(100).get();
+      return getResponseData(result, collections.shopCategories)
+        .map(normalizeShopCategory)
+        .sort((left, right) => left.sortOrder - right.sortOrder);
+    } catch (error) {
+      console.error('获取工坊分类失败:', error);
+      return [];
+    }
+  },
+
+  async getProducts({ categoryId = '', limit = 100 } = {}) {
+    try {
+      await ensureAnonymousLogin();
+      const query = categoryId
+        ? { status: 'active', category_id: categoryId }
+        : { status: 'active' };
+      const result = await db.collection(collections.shopProducts).where(query).limit(limit).get();
+      return getResponseData(result, collections.shopProducts)
+        .map(normalizeShopProduct)
+        .sort((left, right) => {
+          if (left.sortOrder !== right.sortOrder) {
+            return left.sortOrder - right.sortOrder;
+          }
+
+          return right.salesCount - left.salesCount;
+        });
+    } catch (error) {
+      console.error('获取工坊商品失败:', error);
+      return [];
+    }
+  },
+
+  async getProductDetail(productId) {
+    try {
+      await ensureAnonymousLogin();
+      const [productResult, skuResult, categories] = await Promise.all([
+        db.collection(collections.shopProducts).doc(productId).get(),
+        db.collection(collections.shopProductSkus).where({ product_id: productId, status: 'active' }).limit(100).get(),
+        this.getCategories()
+      ]);
+
+      const productDocument = getFirstDocument(productResult, collections.shopProducts);
+      if (!productDocument) {
+        return null;
+      }
+
+      const product = normalizeShopProduct(productDocument);
+      const category = categories.find((item) => item.id === product.categoryId) || null;
+      const skus = getResponseData(skuResult, collections.shopProductSkus)
+        .map(normalizeShopSku)
+        .sort((left, right) => left.pricePoints - right.pricePoints);
+
+      return {
+        ...product,
+        category,
+        skus
+      };
+    } catch (error) {
+      console.error('获取工坊商品详情失败:', error);
+      return null;
+    }
+  },
+
+  async getUserAddresses() {
+    try {
+      const currentProfile = await userProfileService.getCurrentProfile({ refresh: true });
+      if (!currentProfile) {
+        return [];
+      }
+
+      const result = await db.collection(collections.userAddresses).where({ user_id: currentProfile.id }).limit(50).get();
+      return getResponseData(result, collections.userAddresses)
+        .map(normalizeAddress)
+        .sort((left, right) => Number(right.isDefault) - Number(left.isDefault));
+    } catch (error) {
+      console.error('获取收货地址失败:', error);
+      return [];
+    }
+  },
+
+  async saveUserAddress(addressData) {
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true });
+    if (!currentProfile) {
+      throw new Error('请先登录后再保存地址');
+    }
+
+    if (!addressData.receiverName || !addressData.phone || !addressData.province || !addressData.city || !addressData.detailAddress) {
+      throw new Error('请填写完整地址信息');
+    }
+
+    const payload = {
+      ...toAddressPayload(addressData, currentProfile.id),
+      updated_at: new Date()
+    };
+
+    if (payload.is_default) {
+      const existingAddresses = await this.getUserAddresses();
+      await Promise.all(existingAddresses.map((address) => (
+        db.collection(collections.userAddresses).doc(address.id).update({ is_default: false, updated_at: new Date() })
+      )));
+    }
+
+    if (addressData.id) {
+      await db.collection(collections.userAddresses).doc(addressData.id).update(payload);
+      return normalizeAddress({ _id: addressData.id, ...payload });
+    }
+
+    const result = await db.collection(collections.userAddresses).add({
+      ...payload,
+      created_at: new Date()
+    });
+
+    return normalizeAddress({ _id: result.id, ...payload });
+  },
+
+  async createPointsOrder({
+    productId,
+    skuId,
+    quantity = 1,
+    addressId = ''
+  }) {
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true });
+    if (!currentProfile) {
+      throw new Error('请先登录后再下单');
+    }
+
+    const product = await this.getProductDetail(productId);
+    if (!product) {
+      throw new Error('商品不存在');
+    }
+
+    const sku = product.skus.find((item) => item.id === skuId) || product.skus[0] || null;
+    if (!sku) {
+      throw new Error('该商品暂无可下单规格');
+    }
+
+    const normalizedQuantity = Math.max(1, Number(quantity) || 1);
+    const totalPoints = sku.pricePoints * normalizedQuantity;
+    const totalCash = sku.priceCash * normalizedQuantity;
+
+    if (totalCash > 0) {
+      throw new Error('现金支付链路尚未接入，当前仅支持纯福豆兑换商品');
+    }
+
+    if (currentProfile.balance < totalPoints) {
+      throw new Error('福豆余额不足');
+    }
+
+    let receiverSnapshot = null;
+    if (product.productType === 'physical') {
+      const addresses = await this.getUserAddresses();
+      const address = addresses.find((item) => item.id === addressId) || addresses.find((item) => item.isDefault) || null;
+      if (!address) {
+        throw new Error('请先填写收货地址');
+      }
+
+      receiverSnapshot = {
+        receiver_name: address.receiverName,
+        phone: address.phone,
+        province: address.province,
+        city: address.city,
+        district: address.district,
+        detail_address: address.detailAddress,
+        postal_code: address.postalCode,
+        label: address.label
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const orderNo = generateOrderNo();
+    const orderPayload = {
+      order_no: orderNo,
+      user_id: currentProfile.id,
+      order_type: 'points',
+      status: 'paid',
+      address_id: addressId || '',
+      receiver_snapshot: receiverSnapshot,
+      total_points: totalPoints,
+      total_cash: 0,
+      shipping_fee: 0,
+      discount_cash: 0,
+      discount_points: 0,
+      pay_channel: 'points',
+      pay_transaction_id: '',
+      remark: '',
+      cancel_reason: '',
+      paid_at: nowIso,
+      shipped_at: '',
+      completed_at: '',
+      created_at: nowIso,
+      updated_at: nowIso
+    };
+
+    const orderResult = await db.collection(collections.shopOrders).add(orderPayload);
+    const orderId = orderResult.id;
+
+    const orderItemPayload = {
+      order_id: orderId,
+      product_id: product.id,
+      sku_id: sku.id,
+      product_name_snapshot: product.name,
+      sku_name_snapshot: sku.skuName || '默认规格',
+      cover_snapshot: product.coverImage,
+      attrs_snapshot: sku.attrs || {},
+      price_points_snapshot: sku.pricePoints,
+      price_cash_snapshot: sku.priceCash,
+      quantity: normalizedQuantity,
+      subtotal_points: totalPoints,
+      subtotal_cash: 0,
+      product_type: product.productType,
+      created_at: nowIso
+    };
+
+    await db.collection(collections.shopOrderItems).add(orderItemPayload);
+
+    const nextBalance = currentProfile.balance - totalPoints;
+    const pointLedgerPayload = {
+      user_id: currentProfile.id,
+      delta: -totalPoints,
+      balance_after: nextBalance,
+      biz_type: 'shop_spend',
+      biz_id: orderId,
+      description: `工坊兑换：${product.name}`,
+      operator_id: '',
+      created_at: nowIso
+    };
+
+    await db.collection(collections.pointLedger).add(pointLedgerPayload);
+
+    const wealthHistoryEntry = normalizeWealthEntry({
+      id: `shop_spend_${Date.now()}`,
+      amount: -totalPoints,
+      description: `工坊兑换：${product.name}`,
+      date: nowIso,
+      type: 'SPEND',
+      source: 'shop_spend',
+      relatedUserId: currentProfile.id
+    });
+
+    await db.collection(collections.users).doc(currentProfile.id).update({
+      balance: nextBalance,
+      wealth_history: _.unshift(wealthHistoryEntry),
+      updated_at: new Date()
+    });
+
+    updateCurrentProfileCache({
+      ...currentProfile,
+      balance: nextBalance,
+      wealthHistory: [wealthHistoryEntry, ...currentProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS)
+    });
+
+    return {
+      order: normalizeShopOrder({
+        _id: orderId,
+        ...orderPayload
+      }),
+      item: orderItemPayload,
+      pointLedger: pointLedgerPayload,
+      balance: nextBalance
     };
   }
 };

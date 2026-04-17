@@ -1,4 +1,5 @@
 const { getHomePageData } = require('../../utils/home')
+const { openMiniRoute } = require('../../utils/navigation')
 
 Page({
   data: {
@@ -37,10 +38,17 @@ Page({
 
   handleCardTap(event) {
     const { path } = event.currentTarget.dataset
-    wx.navigateTo({ url: path })
+    openMiniRoute(path)
   },
 
   handleAwareTap() {
-    wx.navigateTo({ url: '/pages/aware/index' })
+    openMiniRoute('/pages/aware/index')
+  },
+
+  onShareAppMessage() {
+    return {
+      title: '理悟小程序',
+      path: '/pages/home/index'
+    }
   }
 })

@@ -1,3 +1,1 @@
-const ShopModule = () => null
-
-export default ShopModule
+export { default } from './ShopScreen.jsx'

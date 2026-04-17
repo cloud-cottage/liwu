@@ -1,14 +1,46 @@
 {
   "pages": [
     "pages/home/index",
+    "pages/shop/index",
     "pages/aware/index",
-    "pages/profile/index",
-    "pages/shop/index"
+    "pages/profile/index"
   ],
   "window": {
     "navigationBarTitleText": "理悟",
     "navigationBarBackgroundColor": "#f7f4ef",
     "navigationBarTextStyle": "black",
     "backgroundColor": "#f7f4ef"
+  },
+  "tabBar": {
+    "color": "#64748b",
+    "selectedColor": "#111827",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "首页",
+        "iconPath": "assets/tabbar/home.png",
+        "selectedIconPath": "assets/tabbar/home-active.png"
+      },
+      {
+        "pagePath": "pages/shop/index",
+        "text": "工坊",
+        "iconPath": "assets/tabbar/shop.png",
+        "selectedIconPath": "assets/tabbar/shop-active.png"
+      },
+      {
+        "pagePath": "pages/aware/index",
+        "text": "觉察",
+        "iconPath": "assets/tabbar/aware.png",
+        "selectedIconPath": "assets/tabbar/aware-active.png"
+      },
+      {
+        "pagePath": "pages/profile/index",
+        "text": "我的",
+        "iconPath": "assets/tabbar/profile.png",
+        "selectedIconPath": "assets/tabbar/profile-active.png"
+      }
+    ]
   }
 }

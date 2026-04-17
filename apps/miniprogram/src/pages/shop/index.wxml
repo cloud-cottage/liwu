@@ -1,6 +1,77 @@
 <view class="page-shell">
-  <view class="section-card">
+  <view class="section-card hero-card">
     <view class="section-title">工坊</view>
-    <view class="section-subtitle">小程序工坊页已预留，将来接商品、积分与订单。</view>
+    <view class="section-subtitle">这里已经接上线上店铺集合，先联调分类、商品和规格读取。</view>
+  </view>
+
+  <view class="category-row">
+    <view class="category-pill {{activeCategoryId === '' ? 'category-pill-active' : ''}}" data-category-id="" bindtap="handleCategoryTap">
+      全部
+    </view>
+    <view
+      class="category-pill {{activeCategoryId === item.id ? 'category-pill-active' : ''}}"
+      wx:for="{{categories}}"
+      wx:key="id"
+      data-category-id="{{item.id}}"
+      bindtap="handleCategoryTap"
+    >
+      {{item.name}}
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="section-card empty-card">
+    <view class="empty-text">正在加载工坊数据...</view>
+  </view>
+
+  <view wx:elif="{{products.length}}" class="product-list">
+    <view
+      class="section-card product-card"
+      wx:for="{{products}}"
+      wx:key="id"
+      data-product-id="{{item.id}}"
+      bindtap="handleProductTap"
+    >
+      <view class="product-title">{{item.name}}</view>
+      <view class="product-subtitle">{{item.subtitle || item.description || '等待补充商品描述'}}</view>
+      <view class="product-price">{{item.pricePointsFrom}} 福豆{{item.priceCashFrom ? ' + ¥' + item.priceCashFrom : ''}}</view>
+    </view>
+  </view>
+
+  <view wx:else class="section-card empty-card">
+    <view class="empty-text">当前分类下还没有商品。</view>
+  </view>
+
+  <view class="modal-mask" wx:if="{{showProductModal}}" bindtap="handleCloseProductModal">
+    <view class="modal-card" catchtap="noop">
+      <view class="modal-label">shop_item</view>
+      <view class="modal-title">{{activeProduct.name}}</view>
+      <view class="modal-intro">{{activeProduct.description || activeProduct.subtitle || '商品详情待补充'}}</view>
+      <view class="modal-meta">分类：{{activeProduct.category ? activeProduct.category.name : '未分类'}}</view>
+      <view class="modal-meta">销量：{{activeProduct.salesCount}}</view>
+      <view class="modal-meta">库存：{{activeProduct.stockTotal}}</view>
+      <view class="modal-meta">限购：{{activeProduct.limitPerUser || '不限'}}</view>
+
+      <view class="sku-list" wx:if="{{activeProduct.skus.length}}">
+        <view class="sku-card" wx:for="{{activeProduct.skus}}" wx:key="id">
+          <view class="sku-title {{selectedSkuId === item.id ? 'sku-title-active' : ''}}" data-sku-id="{{item.id}}" bindtap="handleSkuTap">{{item.skuName || '默认规格'}}</view>
+          <view class="sku-subtitle">{{item.pricePoints}} 福豆{{item.priceCash ? ' + ¥' + item.priceCash : ''}} · 库存 {{item.stock}}</view>
+        </view>
+      </view>
+
+      <view class="address-box" wx:if="{{activeProduct.productType === 'physical'}}">
+        <view class="address-title">收货地址</view>
+        <input class="address-input" placeholder="收件人" data-field="receiverName" value="{{addressDraft.receiverName}}" bindinput="handleAddressInput" />
+        <input class="address-input" placeholder="手机号" data-field="phone" value="{{addressDraft.phone}}" bindinput="handleAddressInput" />
+        <input class="address-input" placeholder="省份" data-field="province" value="{{addressDraft.province}}" bindinput="handleAddressInput" />
+        <input class="address-input" placeholder="城市" data-field="city" value="{{addressDraft.city}}" bindinput="handleAddressInput" />
+        <input class="address-input" placeholder="区县" data-field="district" value="{{addressDraft.district}}" bindinput="handleAddressInput" />
+        <input class="address-input" placeholder="详细地址" data-field="detailAddress" value="{{addressDraft.detailAddress}}" bindinput="handleAddressInput" />
+        <input class="address-input" placeholder="邮编" data-field="postalCode" value="{{addressDraft.postalCode}}" bindinput="handleAddressInput" />
+        <button class="ghost-button modal-button" bindtap="handleSaveAddress">保存收货地址</button>
+      </view>
+
+      <button class="primary-button modal-button" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handleCreateOrder">立即兑换</button>
+      <button class="ghost-button close-button" bindtap="handleCloseProductModal">关闭</button>
+    </view>
   </view>
 </view>

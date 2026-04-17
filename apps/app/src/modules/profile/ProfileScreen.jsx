@@ -663,6 +663,41 @@ const Profile = () => {
         </div>
       </section>
 
+      <section style={{ marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+          <Wallet size={16} color="var(--color-accent-ink)" />
+          <h3 style={{ fontSize: '16px', margin: 0 }}>工坊入口</h3>
+        </div>
+        <div
+          style={{
+            backgroundColor: '#fff',
+            padding: '18px',
+            borderRadius: '12px',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7, marginBottom: '14px' }}>
+            已接入分类、商品和规格读取。现在可以从这里进入工坊联调线上店铺。
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/shop')}
+            style={{
+              border: 'none',
+              borderRadius: '12px',
+              backgroundColor: '#111827',
+              color: '#fff',
+              padding: '12px 16px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            进入工坊
+          </button>
+        </div>
+      </section>
+
       <section>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
           <MessageSquareText size={16} color="var(--color-accent-ink)" />

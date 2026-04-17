@@ -37,7 +37,14 @@ export const DATABASE_CONFIG = {
     tags: 'tags',
     userTags: 'user_tags',
     appSettings: 'app_settings',
-    awarenessRecords: 'awareness_records'
+    awarenessRecords: 'awareness_records',
+    shopCategories: 'shop_categories',
+    shopProducts: 'shop_products',
+    shopProductSkus: 'shop_product_skus',
+    shopOrders: 'shop_orders',
+    shopOrderItems: 'shop_order_items',
+    userAddresses: 'user_addresses',
+    pointLedger: 'point_ledger'
   },
   
   // Database options

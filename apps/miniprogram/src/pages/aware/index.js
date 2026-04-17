@@ -122,5 +122,12 @@ Page({
       inputValue: this.data.activeTag.content
     })
     await this.handlePublish()
+  },
+
+  onShareAppMessage() {
+    return {
+      title: '来理悟小程序，一起觉察当下',
+      path: '/pages/aware/index'
+    }
   }
 })

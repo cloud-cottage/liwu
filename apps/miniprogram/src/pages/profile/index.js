@@ -1,4 +1,5 @@
 const { getProfilePageData, saveLocalProfile } = require('../../utils/profile')
+const { openMiniRoute } = require('../../utils/navigation')
 
 Page({
   data: {
@@ -60,6 +61,8 @@ Page({
 
     try {
       const nextProfile = saveLocalProfile(this.data.form)
+      const app = getApp()
+      app.globalData.profile = nextProfile
       this.setData({
         saving: false,
         profile: nextProfile
@@ -78,6 +81,13 @@ Page({
   },
 
   handleGoShop() {
-    wx.navigateTo({ url: '/pages/shop/index' })
+    openMiniRoute('/pages/shop/index')
+  },
+
+  onShareAppMessage() {
+    return {
+      title: '我的理悟小程序',
+      path: '/pages/profile/index'
+    }
   }
 })

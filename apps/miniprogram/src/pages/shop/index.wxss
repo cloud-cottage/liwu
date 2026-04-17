@@ -1,3 +1,165 @@
-.section-card {
+.hero-card {
   margin-bottom: 24rpx;
+}
+
+.category-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14rpx;
+  margin-bottom: 24rpx;
+}
+
+.category-pill {
+  padding: 14rpx 22rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #475569;
+  font-size: 24rpx;
+  font-weight: 600;
+  box-shadow: 0 10rpx 24rpx rgba(15, 23, 42, 0.05);
+}
+
+.category-pill-active {
+  background: #111827;
+  color: #ffffff;
+}
+
+.product-list {
+  display: grid;
+  gap: 18rpx;
+}
+
+.product-card {
+  display: grid;
+  gap: 10rpx;
+}
+
+.product-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.product-subtitle {
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: #64748b;
+}
+
+.product-price {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #111827;
+}
+
+.empty-card {
+  margin-top: 12rpx;
+}
+
+.empty-text {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  padding: 32rpx;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-card {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 28rpx;
+  box-sizing: border-box;
+}
+
+.modal-label {
+  font-size: 22rpx;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.modal-title {
+  margin-top: 10rpx;
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #111827;
+}
+
+.modal-intro {
+  margin-top: 18rpx;
+  padding: 20rpx;
+  border-radius: 20rpx;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 26rpx;
+  line-height: 1.7;
+}
+
+.modal-meta {
+  margin-top: 14rpx;
+  font-size: 24rpx;
+  color: #475569;
+}
+
+.sku-list {
+  margin-top: 18rpx;
+  display: grid;
+  gap: 12rpx;
+}
+
+.sku-card {
+  padding: 18rpx 20rpx;
+  border-radius: 20rpx;
+  background: #f8fafc;
+}
+
+.sku-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.sku-title-active {
+  color: #2563eb;
+}
+
+.sku-subtitle {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.address-box {
+  margin-top: 18rpx;
+}
+
+.address-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.address-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  background: #f8fafc;
+  font-size: 24rpx;
+}
+
+.modal-button,
+.close-button {
+  width: 100%;
+  margin-top: 20rpx;
 }
