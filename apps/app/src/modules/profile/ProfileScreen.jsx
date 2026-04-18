@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Award, LogOut, MessageSquareText, ShieldCheck, ShoppingBag, Smartphone, UserRound, Wallet, X } from 'lucide-react';
+import { Award, BookOpen, LogOut, MessageSquareText, ShieldCheck, ShoppingBag, Smartphone, UserRound, Wallet, X } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { authService } from '../../services/cloudbase';
@@ -278,7 +278,7 @@ const LoginModal = ({
 const Profile = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { balance, inventory, history, syncWalletFromCloud } = useWealth();
+  const { balance, history, syncWalletFromCloud } = useWealth();
   const {
     authStatus,
     currentUser,
@@ -296,10 +296,6 @@ const Profile = () => {
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-
-  const declutteredCount = history.filter((item) => item.type === 'EARN').length;
-  const dreamCount = inventory.length;
-  const honorPoints = (declutteredCount * 10) + (dreamCount * 50);
 
   const recentEntries = useMemo(() => history.slice(0, 5), [history]);
 
@@ -637,8 +633,8 @@ const Profile = () => {
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '30px' }}>
-        <InfoCard icon={Wallet} label="虚拟资产" value={`¥ ${balance}`} accent="var(--color-accent-clay)" />
-        <InfoCard icon={Award} label="福豆" value={honorPoints} accent="var(--color-text-secondary)" />
+        <InfoCard icon={BookOpen} label="花开纪念册" value="敬请期待" accent="var(--color-accent-clay)" />
+        <InfoCard icon={Award} label="福豆" value={balance} accent="var(--color-text-secondary)" />
       </div>
 
       <section style={{ marginBottom: '24px' }}>

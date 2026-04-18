@@ -79,15 +79,13 @@ const MeditationPlayer = () => {
         rewardDescription: '完成一次冥想'
       });
 
-      const rewardMessage = rewardResult.rewarded
-        ? `获得 ${rewardResult.rewardAmount} 福豆，累计时长增加 30 分钟`
-        : rewardResult.error
-          ? '云端福豆暂未到账，累计时长增加 30 分钟'
+      const completionMessage = rewardResult.error
+        ? '冥想完成，累计时长增加 30 分钟。云端福豆暂未到账。'
         : rewardResult.repeatedRewardBlocked && meditationSettings.rewardPoints > 0
-          ? '本次不重复发放福豆，累计时长增加 30 分钟'
-          : '累计时长增加 30 分钟';
+          ? '冥想完成，本次不重复发放福豆，累计时长增加 30 分钟。'
+          : '冥想完成，累计时长增加 30 分钟。';
 
-      window.alert(`冥想完成！${rewardMessage}`);
+      window.alert(completionMessage);
       navigate('/');
     };
   }, [completeMeditationSession, currentSegmentIndex, meditationSettings, navigate, segments]);

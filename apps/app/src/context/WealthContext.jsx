@@ -1,15 +1,171 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { wealthService } from '../services/cloudbase';
 
 const WealthContext = createContext();
 const WALLET_SYNC_INTERVAL_MS = 15000;
+const REWARD_MODAL_MARKER_KEY = 'wealth_reward_modal_marker';
 
 export const useWealth = () => useContext(WealthContext);
 
 const readStoredJSON = (key, fallback) => {
   const storedValue = localStorage.getItem(key);
   return storedValue ? JSON.parse(storedValue) : fallback;
+};
+
+const readSessionJSON = (key, fallback) => {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  try {
+    const storedValue = window.sessionStorage.getItem(key);
+    return storedValue ? JSON.parse(storedValue) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeSessionJSON = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.setItem(key, JSON.stringify(value));
+};
+
+const removeSessionValue = (key) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.removeItem(key);
+};
+
+const isRewardEntry = (entry = {}) => entry?.type === 'EARN' && Number(entry.amount || 0) > 0;
+
+const getEntryTimestamp = (entry = {}) => {
+  const parsedTime = new Date(entry.date || entry.createdAt || 0).getTime();
+  return Number.isNaN(parsedTime) ? 0 : parsedTime;
+};
+
+const getLatestRewardEntry = (entries = []) => entries.find(isRewardEntry) || null;
+
+const createRewardMarker = (entry = null) => (
+  entry
+    ? {
+        id: entry.id || '',
+        timestamp: getEntryTimestamp(entry)
+      }
+    : {
+        id: '',
+        timestamp: 0
+      }
+);
+
+const getNewRewardEntries = (entries = [], marker = createRewardMarker()) => (
+  entries
+    .filter(isRewardEntry)
+    .filter((entry) => {
+      const entryTimestamp = getEntryTimestamp(entry);
+      return entryTimestamp > marker.timestamp || (entryTimestamp === marker.timestamp && entry.id !== marker.id);
+    })
+    .sort((left, right) => getEntryTimestamp(left) - getEntryTimestamp(right))
+);
+
+const RewardArrivalModal = ({ entry, balance, onClose }) => {
+  if (!entry) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 70,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        backgroundColor: 'rgba(15, 23, 42, 0.45)'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '420px',
+          backgroundColor: '#fff',
+          borderRadius: '24px',
+          padding: '24px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)',
+          textAlign: 'center'
+        }}
+      >
+        <div
+          style={{
+            width: '72px',
+            height: '72px',
+            borderRadius: '50%',
+            margin: '0 auto 18px',
+            background: 'linear-gradient(135deg, rgba(214, 140, 101, 0.18) 0%, rgba(214, 140, 101, 0.32) 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '30px',
+            fontWeight: 700,
+            color: '#9a3412'
+          }}
+        >
+          福
+        </div>
+
+        <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          reward_notice
+        </div>
+        <h3 style={{ margin: '10px 0 0', fontSize: '26px', color: '#111827' }}>福豆到账</h3>
+        <div style={{ marginTop: '14px', fontSize: '40px', fontWeight: 700, color: '#9a3412', lineHeight: 1 }}>
+          +{entry.amount}
+        </div>
+        <div style={{ marginTop: '8px', fontSize: '15px', fontWeight: 600, color: '#334155' }}>
+          当前福豆 {balance}
+        </div>
+
+        <div
+          style={{
+            marginTop: '18px',
+            borderRadius: '16px',
+            backgroundColor: '#f8fafc',
+            padding: '16px',
+            color: '#475569',
+            fontSize: '14px',
+            lineHeight: 1.7
+          }}
+        >
+          {entry.description || '你获得了一笔新的福豆奖励。'}
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: '100%',
+            marginTop: '18px',
+            border: 'none',
+            borderRadius: '14px',
+            backgroundColor: '#111827',
+            color: '#fff',
+            padding: '13px 16px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          我知道了
+        </button>
+      </div>
+    </div>
+  );
 };
 
 export const WealthProvider = ({ children }) => {
@@ -44,6 +200,46 @@ export const WealthProvider = ({ children }) => {
           sessionCount: 0
         };
   });
+  const [rewardModalQueue, setRewardModalQueue] = useState([]);
+  const rewardTrackingReadyRef = useRef(false);
+
+  const enqueueRewardEntries = useCallback((entries = []) => {
+    if (entries.length === 0) {
+      return;
+    }
+
+    setRewardModalQueue((currentQueue) => {
+      const queuedIds = new Set(currentQueue.map((entry) => entry.id));
+      const entriesToAppend = entries.filter((entry) => entry.id && !queuedIds.has(entry.id));
+      return entriesToAppend.length > 0 ? [...currentQueue, ...entriesToAppend] : currentQueue;
+    });
+  }, []);
+
+  const processRewardHistoryUpdate = useCallback((nextHistory = []) => {
+    if (!rewardTrackingReadyRef.current) {
+      return;
+    }
+
+    const latestRewardEntry = getLatestRewardEntry(nextHistory);
+    const storedMarker = readSessionJSON(REWARD_MODAL_MARKER_KEY, null);
+
+    if (!latestRewardEntry) {
+      return;
+    }
+
+    if (!storedMarker) {
+      writeSessionJSON(REWARD_MODAL_MARKER_KEY, createRewardMarker(latestRewardEntry));
+      return;
+    }
+
+    const nextRewardEntries = getNewRewardEntries(nextHistory, storedMarker);
+    if (nextRewardEntries.length === 0) {
+      return;
+    }
+
+    enqueueRewardEntries(nextRewardEntries);
+    writeSessionJSON(REWARD_MODAL_MARKER_KEY, createRewardMarker(nextRewardEntries[nextRewardEntries.length - 1]));
+  }, [enqueueRewardEntries]);
 
   useEffect(() => {
     localStorage.setItem('wealth_balance', String(balance));
@@ -54,6 +250,20 @@ export const WealthProvider = ({ children }) => {
     localStorage.setItem('meditation_stats', JSON.stringify(meditationStats));
   }, [balance, challenges, dreams, history, inventory, meditationStats]);
 
+  useEffect(() => {
+    if (rewardTrackingReadyRef.current) {
+      return;
+    }
+
+    rewardTrackingReadyRef.current = true;
+    const storedMarker = readSessionJSON(REWARD_MODAL_MARKER_KEY, null);
+    const latestRewardEntry = getLatestRewardEntry(history);
+
+    if (!storedMarker && latestRewardEntry) {
+      writeSessionJSON(REWARD_MODAL_MARKER_KEY, createRewardMarker(latestRewardEntry));
+    }
+  }, [history]);
+
   const syncWalletFromCloud = useCallback(async (options = {}) => {
     try {
       const wallet = await wealthService.getCurrentWallet(options);
@@ -61,17 +271,20 @@ export const WealthProvider = ({ children }) => {
       if (!wallet) {
         setBalance(0);
         setHistory([]);
+        setRewardModalQueue([]);
+        removeSessionValue(REWARD_MODAL_MARKER_KEY);
         return null;
       }
 
       setBalance(wallet.balance);
       setHistory(wallet.history);
+      processRewardHistoryUpdate(wallet.history);
       return wallet;
     } catch (error) {
       console.error('同步云端福豆失败:', error);
       return null;
     }
-  }, []);
+  }, [processRewardHistoryUpdate]);
 
   useEffect(() => {
     let disposed = false;
@@ -114,6 +327,7 @@ export const WealthProvider = ({ children }) => {
 
       setBalance(result.balance);
       setHistory(result.history);
+      processRewardHistoryUpdate(result.history);
       return result;
     } catch (error) {
       console.error('云端福豆发放失败:', error);
@@ -127,7 +341,7 @@ export const WealthProvider = ({ children }) => {
         error
       };
     }
-  }, [balance, history]);
+  }, [balance, history, processRewardHistoryUpdate]);
 
   const addDream = useCallback((name, price) => {
     setDreams((currentDreams) => [
@@ -226,6 +440,10 @@ export const WealthProvider = ({ children }) => {
     )));
   }, []);
 
+  const closeRewardModal = useCallback(() => {
+    setRewardModalQueue((currentQueue) => currentQueue.slice(1));
+  }, []);
+
   return (
     <WealthContext.Provider
       value={{
@@ -245,6 +463,11 @@ export const WealthProvider = ({ children }) => {
       }}
     >
       {children}
+      <RewardArrivalModal
+        entry={rewardModalQueue[0] || null}
+        balance={balance}
+        onClose={closeRewardModal}
+      />
     </WealthContext.Provider>
   );
 };
