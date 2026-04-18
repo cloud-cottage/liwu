@@ -185,7 +185,7 @@ const normalizeUser = (user) => ({
   experience: Number(user.experience ?? 0),
   authUid: user.auth_uid || user.authUid || '',
   isStudent: Boolean(user.is_student ?? user.isStudent),
-  inviteCode: user.invite_code || user.inviteCode || '',
+  inviteCode: user.uid ? String(user.uid) : '',
   inviterUserId: user.inviter_user_id || user.inviterUserId || '',
   balance: Number(user.balance || 0),
   bio: user.bio || '',
@@ -210,6 +210,16 @@ const normalizeAwarenessTagSettingEntry = (entry = {}) => ({
   description: entry.description || '',
   rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0))
 });
+
+const ADMIN_AWARENESS_TAG_MAX_LENGTH = 18;
+
+const getAwarenessTagLength = (value = '') => (
+  Array.from(String(value || '')).reduce((total, character) => (
+    total + (/[\u3400-\u9FFF\uF900-\uFAFF]/u.test(character) ? 2 : 1)
+  ), 0)
+);
+
+const normalizeAwarenessTagContent = (value = '') => String(value || '').trim();
 
 const normalizeAwarenessTagSettingsMap = (tagsByKey = {}) => (
   Object.fromEntries(
@@ -249,7 +259,6 @@ const toUserPayload = (userData) => {
     ...(lastActive !== undefined ? { last_active: lastActive } : {}),
     ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),
     ...(userData.isStudent !== undefined ? { is_student: Boolean(userData.isStudent) } : {}),
-    ...(userData.inviteCode !== undefined ? { invite_code: userData.inviteCode } : {}),
     ...(userData.inviterUserId !== undefined ? { inviter_user_id: userData.inviterUserId } : {}),
     ...(userData.balance !== undefined ? { balance: Math.max(0, Number(userData.balance) || 0) } : {})
   };
@@ -544,6 +553,15 @@ class DatabaseService {
 
       const existingDocuments = getDocuments(existingResult, collections.appSettings);
       if (rename && rename.fromKey && rename.toKey && rename.fromKey !== rename.toKey) {
+        const normalizedContent = normalizeAwarenessTagContent(rename.toContent);
+        if (!normalizedContent) {
+          throw new Error('请输入觉察标签名称');
+        }
+
+        if (getAwarenessTagLength(normalizedContent) > ADMIN_AWARENESS_TAG_MAX_LENGTH) {
+          throw new Error('标签名称最多 9 个汉字（18 个字符）');
+        }
+
         const conflictingResult = await db
           .collection(collections.awarenessRecords)
           .where({ tag_key: rename.toKey })
@@ -564,7 +582,8 @@ class DatabaseService {
         await Promise.all(
           records.map((record) => (
             db.collection(collections.awarenessRecords).doc(getDocumentId(record)).update({
-              content: rename.toContent,
+              content: normalizedContent,
+              access_type: rename.toAccessType === 'student' ? 'student' : 'public',
               tag_key: rename.toKey,
               updated_at: new Date()
             })

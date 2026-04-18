@@ -79,7 +79,7 @@ const normalizeUser = (user) => ({
   experience: Number(user.experience ?? 0),
   authUid: user.auth_uid || user.authUid || '',
   isStudent: Boolean(user.is_student ?? user.isStudent),
-  inviteCode: user.invite_code || user.inviteCode || '',
+  inviteCode: user.uid ? String(user.uid) : '',
   inviterUserId: user.inviter_user_id || user.inviterUserId || '',
   balance: Number(user.balance || 0),
   bio: user.bio || '',
@@ -132,7 +132,6 @@ const toUserPayload = (userData) => {
     ...(lastActive !== undefined ? { last_active: lastActive } : {}),
     ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),
     ...(userData.isStudent !== undefined ? { is_student: Boolean(userData.isStudent) } : {}),
-    ...(userData.inviteCode !== undefined ? { invite_code: userData.inviteCode } : {}),
     ...(userData.inviterUserId !== undefined ? { inviter_user_id: userData.inviterUserId } : {}),
     ...(userData.balance !== undefined ? { balance: Math.max(0, Number(userData.balance) || 0) } : {})
   };

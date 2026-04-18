@@ -89,7 +89,7 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                         )}
                       </div>
                       <div style={{ fontSize: '12px', color: '#666' }}>用户 ID：{user.id}</div>
-                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>邀请码：{user.inviteCode || '未生成'}</div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>邀请码：{user.uid || '未生成'}</div>
                     </div>
                   </div>
                 </td>

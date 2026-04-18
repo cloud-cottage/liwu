@@ -234,6 +234,7 @@ const getOrCreateAwarenessAuthorKey = () => {
 };
 
 const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴';
+const AWARENESS_TAG_REUSE_MAX_LENGTH = 18;
 
 const parseNaturalNumber = (value = '') => {
   const normalizedValue = String(value || '').trim();
@@ -270,18 +271,13 @@ const getUserUid = (document = {}) => (
 
 const getUserInviteCode = (document = {}) => {
   const existingUid = getUserUid(document);
-  if (existingUid) {
-    return formatNaturalNumber(existingUid);
-  }
-
-  const existingInviteCode = parseNaturalNumber(document.invite_code || document.inviteCode || '');
-  return existingInviteCode ? formatNaturalNumber(existingInviteCode) : '';
+  return existingUid ? formatNaturalNumber(existingUid) : '';
 };
 
 const getNextUserUid = async () => {
   const usersResult = await db.collection(collections.users).limit(2000).get();
   const maxUserUid = getResponseData(usersResult, collections.users).reduce((currentMax, document) => (
-    Math.max(currentMax, getUserUid(document), parseNaturalNumber(document.invite_code || document.inviteCode || ''))
+    Math.max(currentMax, getUserUid(document))
   ), 0);
 
   return Number(formatNaturalNumber(maxUserUid + 1));
@@ -321,6 +317,12 @@ const buildMockPhoneSession = ({ phoneNumber, authUid = '', displayName = '' }) 
   loginMethod: 'phone',
   signedInAt: new Date().toISOString()
 });
+
+const getAwarenessTagLength = (value = '') => (
+  Array.from(String(value || '')).reduce((total, character) => (
+    total + (/[\u3400-\u9FFF\uF900-\uFAFF]/u.test(character) ? 2 : 1)
+  ), 0)
+);
 
 const clampInviterRewardRate = (value) => {
   const nextValue = Number(value);
@@ -363,16 +365,16 @@ const normalizeRewardClaims = (value) => {
 
 const normalizeCurrentUserProfile = (document = {}) => ({
   id: getDocumentId(document),
-  uid: getUserUid(document) || parseNaturalNumber(document.invite_code || document.inviteCode || '') || 0,
+  uid: getUserUid(document) || 0,
   authUid: document.auth_uid || document.authUid || '',
-  name: document.name || buildDefaultUserName(getUserUid(document) || parseNaturalNumber(document.invite_code || document.inviteCode || '') || 1),
+  name: document.name || buildDefaultUserName(getUserUid(document) || 1),
   email: document.email || '',
   phone: document.phone || '',
   status: document.status || 'active',
   level: Number(document.level ?? 1),
   experience: Number(document.experience ?? 0),
   isStudent: Boolean(document.is_student ?? document.isStudent),
-  inviteCode: getUserInviteCode(document) || String(document.invite_code || document.inviteCode || ''),
+  inviteCode: getUserInviteCode(document),
   inviterUserId: document.inviter_user_id || document.inviterUserId || '',
   balance: Number(document.balance || 0),
   wealthHistory: normalizeWealthHistory(document.wealth_history || document.wealthHistory),
@@ -766,9 +768,7 @@ export const userProfileService = {
       if (existingDocument) {
         const existingProfile = normalizeCurrentUserProfile(existingDocument);
         const rawExistingUid = getUserUid(existingDocument);
-        const rawExistingInviteCode = parseNaturalNumber(existingDocument.invite_code || existingDocument.inviteCode || '');
         const resolvedUid = existingProfile.uid || await getNextUserUid();
-        const resolvedInviteCode = formatNaturalNumber(resolvedUid);
         const resolvedDefaultName = buildDefaultUserName(resolvedUid);
         const updatePayload = {
           last_active: nowIso,
@@ -789,10 +789,6 @@ export const userProfileService = {
 
         if (rawExistingUid !== resolvedUid) {
           updatePayload.uid = resolvedUid;
-        }
-
-        if (rawExistingInviteCode !== resolvedUid) {
-          updatePayload.invite_code = resolvedInviteCode;
         }
 
         if (!existingProfile.name || isSystemGeneratedUserName(existingProfile.name)) {
@@ -824,9 +820,10 @@ export const userProfileService = {
       let inviterUserId = '';
 
       if (pendingInviteCode) {
+        const inviterUid = parseNaturalNumber(pendingInviteCode);
         const inviterResult = await db
           .collection(collections.users)
-          .where({ invite_code: pendingInviteCode })
+          .where({ uid: inviterUid })
           .limit(1)
           .get();
         const inviterDocument = getFirstDocument(inviterResult, collections.users);
@@ -846,7 +843,6 @@ export const userProfileService = {
         level: 1,
         experience: 0,
         is_student: false,
-        invite_code: '',
         inviter_user_id: inviterUserId,
         balance: 0,
         wealth_history: [],
@@ -856,8 +852,6 @@ export const userProfileService = {
         created_at: new Date(),
         updated_at: new Date()
       };
-
-      newUserPayload.invite_code = formatNaturalNumber(newUserPayload.uid);
       newUserPayload.name = buildDefaultUserName(newUserPayload.uid);
 
       const createResult = await db.collection(collections.users).add(newUserPayload);
@@ -935,8 +929,8 @@ export const awarenessService = {
         throw new Error('请输入标签内容');
       }
 
-      if (trimmedContent.length > 6) {
-        throw new Error('标签长度不能超过 6 个字符');
+      if (getAwarenessTagLength(trimmedContent) > AWARENESS_TAG_REUSE_MAX_LENGTH) {
+        throw new Error('标签长度不能超过 9 个汉字');
       }
 
       if (accessType === 'student' && !awarenessIdentity.isStudent) {

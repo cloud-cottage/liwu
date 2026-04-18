@@ -5,7 +5,47 @@ const tagNatureLabel = {
   student: '学员觉察'
 };
 
+const tagNatureMeta = {
+  public: {
+    label: '普通标签',
+    color: '#475569',
+    backgroundColor: '#f8fafc',
+    borderColor: '#dbe4ee'
+  },
+  student: {
+    label: '学员标签',
+    color: '#0f766e',
+    backgroundColor: 'rgba(15, 118, 110, 0.1)',
+    borderColor: 'rgba(15, 118, 110, 0.2)'
+  }
+};
+
+const ADMIN_AWARENESS_TAG_MAX_LENGTH = 18;
+
 const normalizeRewardPoints = (value) => Math.max(0, Number(value) || 0);
+
+const getAwarenessTagLength = (value = '') => (
+  Array.from(String(value || '')).reduce((total, character) => (
+    total + (/[\u3400-\u9FFF\uF900-\uFAFF]/u.test(character) ? 2 : 1)
+  ), 0)
+);
+
+const trimAwarenessTagValue = (value = '', maxLength = ADMIN_AWARENESS_TAG_MAX_LENGTH) => {
+  let currentLength = 0;
+  let result = '';
+
+  for (const character of Array.from(String(value || ''))) {
+    const nextLength = currentLength + (/[\u3400-\u9FFF\uF900-\uFAFF]/u.test(character) ? 2 : 1);
+    if (nextLength > maxLength) {
+      break;
+    }
+
+    result += character;
+    currentLength = nextLength;
+  }
+
+  return result;
+};
 
 const formatDateTime = (value) => {
   if (!value) {
@@ -59,11 +99,13 @@ const SortButton = ({ label, active, direction, onClick, align = 'left' }) => (
 const AwarenessTagDetailModal = ({
   tag,
   draftContent,
+  draftAccessType,
   draftDescription,
   draftRewardPoints,
   saving,
   onClose,
   onContentChange,
+  onAccessTypeChange,
   onDescriptionChange,
   onRewardPointsChange,
   onSave
@@ -71,6 +113,9 @@ const AwarenessTagDetailModal = ({
   if (!tag) {
     return null;
   }
+
+  const accessMeta = tagNatureMeta[draftAccessType] || tagNatureMeta.public;
+  const currentLength = getAwarenessTagLength(draftContent);
 
   return (
     <div
@@ -119,14 +164,14 @@ const AwarenessTagDetailModal = ({
               style={{
                 alignSelf: 'flex-start',
                 borderRadius: '999px',
-                backgroundColor: tag.accessType === 'student' ? 'rgba(15, 118, 110, 0.12)' : '#f8fafc',
-                color: tag.accessType === 'student' ? '#0f766e' : '#475569',
+                backgroundColor: accessMeta.backgroundColor,
+                color: accessMeta.color,
                 padding: '8px 12px',
                 fontSize: '12px',
                 fontWeight: 600
               }}
             >
-              {tagNatureLabel[tag.accessType] || tagNatureLabel.public}
+              {tagNatureLabel[draftAccessType] || tagNatureLabel.public}
             </span>
           </div>
         </div>
@@ -157,9 +202,9 @@ const AwarenessTagDetailModal = ({
               <input
                 id="awareness-tag-name"
                 type="text"
-                maxLength="6"
+                maxLength="18"
                 value={draftContent}
-                onChange={(event) => onContentChange(event.target.value)}
+                onChange={(event) => onContentChange(trimAwarenessTagValue(event.target.value))}
                 placeholder="请输入标签名称"
                 style={{
                   width: '100%',
@@ -171,8 +216,41 @@ const AwarenessTagDetailModal = ({
                   color: '#334155'
                 }}
               />
+              <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                <span>修改后会同步更新此觉察标签的历史记录名称。</span>
+                <span>{currentLength}/{ADMIN_AWARENESS_TAG_MAX_LENGTH}</span>
+              </div>
+            </div>
+
+            <div>
+              <label style={fieldLabelStyle}>标签性质</label>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {Object.entries(tagNatureMeta).map(([accessType, meta]) => {
+                  const active = draftAccessType === accessType;
+                  return (
+                    <button
+                      key={accessType}
+                      type="button"
+                      onClick={() => onAccessTypeChange(accessType)}
+                      style={{
+                        border: `1px solid ${active ? meta.color : meta.borderColor}`,
+                        backgroundColor: meta.backgroundColor,
+                        color: meta.color,
+                        borderRadius: '12px',
+                        padding: '10px 14px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        minWidth: '112px'
+                      }}
+                    >
+                      {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
               <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
-                修改后会同步更新此觉察标签的历史记录名称。
+                在普通标签和学员标签之间切换时，会同步更新该标签的历史记录性质。
               </div>
             </div>
 
@@ -286,6 +364,7 @@ const AwarenessTagSettings = ({
   const [sortConfig, setSortConfig] = useState({ key: 'totalCount', direction: 'desc' });
   const [selectedTagKey, setSelectedTagKey] = useState('');
   const [draftContent, setDraftContent] = useState('');
+  const [draftAccessType, setDraftAccessType] = useState('public');
   const [draftDescription, setDraftDescription] = useState('');
   const [draftRewardPoints, setDraftRewardPoints] = useState('0');
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -341,6 +420,7 @@ const AwarenessTagSettings = ({
   const handleOpenTag = (tag) => {
     setSelectedTagKey(tag.key);
     setDraftContent(tag.content || '');
+    setDraftAccessType(tag.accessType || 'public');
     setDraftDescription(tag.description || '');
     setDraftRewardPoints(String(tag.rewardPoints || 0));
     setMessage({ type: '', text: '' });
@@ -351,13 +431,18 @@ const AwarenessTagSettings = ({
       return;
     }
 
-    const trimmedContent = String(draftContent || '').trim().slice(0, 6);
+    const trimmedContent = trimAwarenessTagValue(String(draftContent || '').trim());
     if (!trimmedContent) {
       setMessage({ type: 'error', text: '请输入觉察标签名称。' });
       return;
     }
 
-    const nextTagKey = `${trimmedContent}::${selectedTag.accessType}`;
+    if (getAwarenessTagLength(trimmedContent) > ADMIN_AWARENESS_TAG_MAX_LENGTH) {
+      setMessage({ type: 'error', text: '标签名称最多 9 个汉字（18 个字符）。' });
+      return;
+    }
+
+    const nextTagKey = `${trimmedContent}::${draftAccessType}`;
     const conflictingTag = mergedTags.find((tag) => tag.key !== selectedTag.key && tag.key === nextTagKey);
     if (conflictingTag) {
       setMessage({ type: 'error', text: '已存在同名觉察标签，请更换名称。' });
@@ -384,7 +469,8 @@ const AwarenessTagSettings = ({
             fromKey: selectedTag.key,
             toKey: nextTagKey,
             toContent: trimmedContent,
-            accessType: selectedTag.accessType
+            fromAccessType: selectedTag.accessType,
+            toAccessType: draftAccessType
           }
         : null
     });
@@ -552,16 +638,19 @@ const AwarenessTagSettings = ({
       <AwarenessTagDetailModal
         tag={selectedTag}
         draftContent={draftContent}
+        draftAccessType={draftAccessType}
         draftDescription={draftDescription}
         draftRewardPoints={draftRewardPoints}
         saving={saving}
         onClose={() => {
           setSelectedTagKey('');
           setDraftContent('');
+          setDraftAccessType('public');
           setDraftDescription('');
           setDraftRewardPoints('0');
         }}
         onContentChange={setDraftContent}
+        onAccessTypeChange={setDraftAccessType}
         onDescriptionChange={setDraftDescription}
         onRewardPointsChange={setDraftRewardPoints}
         onSave={handleSave}

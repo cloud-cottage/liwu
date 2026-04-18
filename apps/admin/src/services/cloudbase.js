@@ -233,10 +233,54 @@ const getOrCreateAwarenessAuthorKey = () => {
   return nextKey;
 };
 
-const buildDefaultUserName = (authUid = '') => `用户${(authUid || '0000').slice(-4)}`;
+const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴';
 
-const generateInviteCode = (authUid = '') =>
-  `LW${(authUid || '000000').slice(-6).toUpperCase()}${Date.now().toString(36).slice(-4).toUpperCase()}`;
+const parseNaturalNumber = (value = '') => {
+  const normalizedValue = String(value || '').trim();
+  if (!/^\d+$/.test(normalizedValue)) {
+    return 0;
+  }
+
+  const parsedValue = Number(normalizedValue);
+  if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) {
+    return 0;
+  }
+
+  return parsedValue;
+};
+
+const formatNaturalNumber = (value) => String(Math.max(1, Number(value) || 1));
+
+const buildDefaultUserName = (uid = '') => `${DEFAULT_USER_NAME_PREFIX}${formatNaturalNumber(uid)}`;
+
+const isSystemGeneratedUserName = (value = '') => {
+  const normalizedValue = String(value || '').trim();
+
+  return (
+    !normalizedValue ||
+    /^用户\d*$/.test(normalizedValue) ||
+    /^小悟[\da-z]+$/i.test(normalizedValue) ||
+    /^觉醒伙伴\d+$/.test(normalizedValue)
+  );
+};
+
+const getUserUid = (document = {}) => (
+  parseNaturalNumber(document.uid)
+);
+
+const getUserInviteCode = (document = {}) => {
+  const existingUid = getUserUid(document);
+  return existingUid ? formatNaturalNumber(existingUid) : '';
+};
+
+const getNextUserUid = async () => {
+  const usersResult = await db.collection(collections.users).limit(2000).get();
+  const maxUserUid = getResponseData(usersResult, collections.users).reduce((currentMax, document) => (
+    Math.max(currentMax, getUserUid(document))
+  ), 0);
+
+  return Number(formatNaturalNumber(maxUserUid + 1));
+};
 
 const normalizeAccessType = (value) => (value === 'student' ? 'student' : 'public');
 
@@ -314,15 +358,16 @@ const normalizeRewardClaims = (value) => {
 
 const normalizeCurrentUserProfile = (document = {}) => ({
   id: getDocumentId(document),
+  uid: getUserUid(document) || 0,
   authUid: document.auth_uid || document.authUid || '',
-  name: document.name || buildDefaultUserName(document.auth_uid || document.authUid || ''),
+  name: document.name || buildDefaultUserName(getUserUid(document) || 1),
   email: document.email || '',
   phone: document.phone || '',
   status: document.status || 'active',
   level: Number(document.level ?? 1),
   experience: Number(document.experience ?? 0),
   isStudent: Boolean(document.is_student ?? document.isStudent),
-  inviteCode: document.invite_code || document.inviteCode || '',
+  inviteCode: getUserInviteCode(document),
   inviterUserId: document.inviter_user_id || document.inviterUserId || '',
   balance: Number(document.balance || 0),
   wealthHistory: normalizeWealthHistory(document.wealth_history || document.wealthHistory),
@@ -599,30 +644,46 @@ export const userProfileService = {
         return null;
       }
 
-      const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
-      const existingDocument = getFirstDocument(existingResult, collections.users);
+      const normalizedPhoneNumber = normalizePhone(authStatus.phoneNumber);
+      let existingDocument = null;
+
+      if (authUid) {
+        const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
+        existingDocument = getFirstDocument(existingResult, collections.users);
+      }
+
+      if (!existingDocument && normalizedPhoneNumber) {
+        const phoneMatchedResult = await db.collection(collections.users).where({ phone: normalizedPhoneNumber }).limit(1).get();
+        existingDocument = getFirstDocument(phoneMatchedResult, collections.users);
+      }
 
       if (existingDocument) {
         const existingProfile = normalizeCurrentUserProfile(existingDocument);
+        const rawExistingUid = getUserUid(existingDocument);
+        const resolvedUid = existingProfile.uid || await getNextUserUid();
         const updatePayload = {
           last_active: nowIso,
           updated_at: new Date()
         };
 
-        if (authStatus.displayName && (!existingProfile.name || existingProfile.name.startsWith('用户'))) {
-          updatePayload.name = authStatus.displayName;
+        if (authUid && existingProfile.authUid !== authUid) {
+          updatePayload.auth_uid = authUid;
         }
 
         if (authStatus.email && existingProfile.email !== authStatus.email) {
           updatePayload.email = authStatus.email;
         }
 
-        if (authStatus.phoneNumber && existingProfile.phone !== authStatus.phoneNumber) {
-          updatePayload.phone = authStatus.phoneNumber;
+        if (normalizedPhoneNumber && existingProfile.phone !== normalizedPhoneNumber) {
+          updatePayload.phone = normalizedPhoneNumber;
         }
 
-        if (!existingProfile.inviteCode) {
-          updatePayload.invite_code = generateInviteCode(authUid);
+        if (rawExistingUid !== resolvedUid) {
+          updatePayload.uid = resolvedUid;
+        }
+
+        if (!existingProfile.name || isSystemGeneratedUserName(existingProfile.name)) {
+          updatePayload.name = buildDefaultUserName(resolvedUid);
         }
 
         if (!Array.isArray(existingDocument.wealth_history)) {
@@ -650,9 +711,10 @@ export const userProfileService = {
       let inviterUserId = '';
 
       if (pendingInviteCode) {
+        const inviterUid = parseNaturalNumber(pendingInviteCode);
         const inviterResult = await db
           .collection(collections.users)
-          .where({ invite_code: pendingInviteCode })
+          .where({ uid: inviterUid })
           .limit(1)
           .get();
         const inviterDocument = getFirstDocument(inviterResult, collections.users);
@@ -663,15 +725,15 @@ export const userProfileService = {
       }
 
       const newUserPayload = {
+        uid: await getNextUserUid(),
         auth_uid: authUid,
-        name: authStatus.displayName || buildDefaultUserName(authUid),
+        name: '',
         email: authStatus.email,
-        phone: authStatus.phoneNumber,
+        phone: normalizedPhoneNumber,
         status: 'active',
         level: 1,
         experience: 0,
         is_student: false,
-        invite_code: generateInviteCode(authUid),
         inviter_user_id: inviterUserId,
         balance: 0,
         wealth_history: [],
@@ -681,6 +743,8 @@ export const userProfileService = {
         created_at: new Date(),
         updated_at: new Date()
       };
+
+      newUserPayload.name = buildDefaultUserName(newUserPayload.uid);
 
       const createResult = await db.collection(collections.users).add(newUserPayload);
       clearPendingInviteCode();

@@ -263,7 +263,7 @@ const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
           </label>
 
           <div style={{ marginBottom: '24px', padding: '12px 14px', borderRadius: '10px', backgroundColor: '#f8fafc', color: '#64748b', fontSize: '12px', lineHeight: 1.6 }}>
-            <div>邀请口令：{user?.inviteCode || '尚未生成'}</div>
+            <div>邀请口令：{user?.uid || '尚未生成'}</div>
             <div>云端 UID：{user?.authUid || '未绑定匿名登录'}</div>
           </div>
 

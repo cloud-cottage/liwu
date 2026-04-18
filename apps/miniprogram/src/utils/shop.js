@@ -41,7 +41,7 @@ const isSystemGeneratedUserName = (value = '') => {
 }
 
 const getUserUid = (user = {}) => (
-  parseNaturalNumber(user.uid) || parseNaturalNumber(user.invite_code || user.inviteCode || '')
+  parseNaturalNumber(user.uid)
 )
 
 const normalizeCategory = (category = {}) => ({
@@ -130,10 +130,6 @@ const getOrCreateCurrentUser = async () => {
       updatePayload.uid = resolvedUid
     }
 
-    if ((existingUser.invite_code || '') !== formatNaturalNumber(resolvedUid)) {
-      updatePayload.invite_code = formatNaturalNumber(resolvedUid)
-    }
-
     if (isSystemGeneratedUserName(existingUser.name)) {
       updatePayload.name = buildDefaultUserName(resolvedUid)
     }
@@ -150,7 +146,7 @@ const getOrCreateCurrentUser = async () => {
       ...profile,
       id: existingUser._id || existingUser.id || '',
       uid: getUserUid(existingUser) || resolvedUid,
-      inviteCode: existingUser.invite_code || formatNaturalNumber(resolvedUid),
+      inviteCode: formatNaturalNumber(getUserUid(existingUser) || resolvedUid),
       name: existingUser.name || buildDefaultUserName(resolvedUid),
       balance: Number(existingUser.balance || 0),
       wealthHistory: existingUser.wealth_history || []
@@ -168,7 +164,6 @@ const getOrCreateCurrentUser = async () => {
     level: 1,
     experience: 0,
     is_student: false,
-    invite_code: formatNaturalNumber(nextUid),
     inviter_user_id: '',
     balance: 0,
     wealth_history: [],

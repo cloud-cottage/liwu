@@ -4,6 +4,13 @@ const { getLocalProfile } = require('./storage')
 const AWARENESS_RECORDS = 'awareness_records'
 const APP_SETTINGS = 'app_settings'
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings'
+const AWARENESS_TAG_REUSE_MAX_LENGTH = 18
+
+const getAwarenessTagLength = (value = '') => (
+  Array.from(String(value || '')).reduce((total, character) => (
+    total + (/[\u3400-\u9FFF\uF900-\uFAFF]/u.test(character) ? 2 : 1)
+  ), 0)
+)
 
 const getTimestamp = (record = {}) =>
   record.created_at_client || record.timestamp || record.created_at || record.createdAt || ''
@@ -103,8 +110,8 @@ const publishAwareTag = async ({ content, accessType = 'public' }) => {
     throw new Error('请输入标签内容')
   }
 
-  if (trimmedContent.length > 6) {
-    throw new Error('标签长度不能超过 6 个字')
+  if (getAwarenessTagLength(trimmedContent) > AWARENESS_TAG_REUSE_MAX_LENGTH) {
+    throw new Error('标签长度不能超过 9 个汉字')
   }
 
   const db = getDb()
