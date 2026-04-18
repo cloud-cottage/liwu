@@ -292,6 +292,22 @@ const Record = () => {
     setShareStatus(`请手动复制：${sharePayload.url}`);
   };
 
+  const handleCopyForPlatform = async (platformName) => {
+    if (!sharePayload) {
+      return;
+    }
+
+    const shareContent = `${sharePayload.text}\n${sharePayload.url}`;
+
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareContent);
+      setShareStatus(`已复制分享内容，可直接粘贴到${platformName}`);
+      return;
+    }
+
+    setShareStatus(`请手动复制到${platformName}：${sharePayload.url}`);
+  };
+
   const openPlatformShare = (url) => {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -663,11 +679,8 @@ const Record = () => {
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
               <button type="button" onClick={() => openPlatformShare(sharePayload.links.weibo)} style={platformButtonStyle}>微博</button>
-              <button type="button" onClick={() => openPlatformShare(sharePayload.links.x)} style={platformButtonStyle}>X</button>
-              <button type="button" onClick={() => openPlatformShare(sharePayload.links.facebook)} style={platformButtonStyle}>Facebook</button>
-              <button type="button" onClick={() => openPlatformShare(sharePayload.links.whatsapp)} style={platformButtonStyle}>WhatsApp</button>
-              <button type="button" onClick={() => openPlatformShare(sharePayload.links.telegram)} style={platformButtonStyle}>Telegram</button>
-              <button type="button" onClick={() => openPlatformShare(sharePayload.links.linkedIn)} style={platformButtonStyle}>LinkedIn</button>
+              <button type="button" onClick={() => handleCopyForPlatform('小红书')} style={platformButtonStyle}>小红书</button>
+              <button type="button" onClick={() => handleCopyForPlatform('抖音')} style={platformButtonStyle}>抖音</button>
             </div>
 
             {shareStatus && (
@@ -685,24 +698,6 @@ const Record = () => {
                 {shareStatus}
               </div>
             )}
-
-            <button
-              type="button"
-              onClick={() => setSharePayload(null)}
-              style={{
-                width: '100%',
-                border: '1px solid #cbd5e1',
-                backgroundColor: '#fff',
-                color: '#334155',
-                borderRadius: '12px',
-                padding: '12px 14px',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              继续觉察
-            </button>
           </div>
         </div>
       )}

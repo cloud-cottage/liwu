@@ -285,7 +285,24 @@ const getNextUserUid = async () => {
 
 const normalizeAccessType = (value) => (value === 'student' ? 'student' : 'public');
 
-const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, '');
+const normalizePhone = (value = '') => {
+  const digitsOnlyValue = String(value || '').replace(/[^\d]/g, '');
+
+  if (/^00861\d{10}$/.test(digitsOnlyValue)) {
+    return digitsOnlyValue.slice(4);
+  }
+
+  if (/^861\d{10}$/.test(digitsOnlyValue)) {
+    return digitsOnlyValue.slice(2);
+  }
+
+  return digitsOnlyValue;
+};
+
+const buildPhoneAuthUid = (phoneNumber = '') => {
+  const normalizedPhoneNumber = normalizePhone(phoneNumber);
+  return normalizedPhoneNumber ? `mock_phone_${normalizedPhoneNumber}` : '';
+};
 
 const getAuthProviderLabel = (provider = '') => {
   const normalizedProvider = String(provider || '').toLowerCase();
@@ -311,12 +328,44 @@ const isAnonymousDisplayName = (value = '') => {
 };
 
 const buildMockPhoneSession = ({ phoneNumber, authUid = '', displayName = '' }) => ({
-  authUid: authUid || `mock_phone_${phoneNumber}`,
-  phoneNumber,
-  displayName: displayName || `用户${phoneNumber.slice(-4)}`,
+  authUid: buildPhoneAuthUid(phoneNumber) || authUid || `mock_phone_${normalizePhone(phoneNumber)}`,
+  phoneNumber: normalizePhone(phoneNumber),
+  displayName: displayName || `用户${normalizePhone(phoneNumber).slice(-4)}`,
   loginMethod: 'phone',
   signedInAt: new Date().toISOString()
 });
+
+const getDocumentTimestamp = (document = {}) => {
+  const rawTimestamp =
+    document.created_at?.$date ||
+    document.created_at ||
+    document.updated_at?.$date ||
+    document.updated_at ||
+    document.join_date ||
+    0;
+  const parsedTimestamp = new Date(rawTimestamp).getTime();
+  return Number.isNaN(parsedTimestamp) ? 0 : parsedTimestamp;
+};
+
+const selectCanonicalUserDocument = (documents = []) => (
+  [...documents]
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftUid = getUserUid(left) || Number.MAX_SAFE_INTEGER;
+      const rightUid = getUserUid(right) || Number.MAX_SAFE_INTEGER;
+      if (leftUid !== rightUid) {
+        return leftUid - rightUid;
+      }
+
+      const leftTimestamp = getDocumentTimestamp(left);
+      const rightTimestamp = getDocumentTimestamp(right);
+      if (leftTimestamp !== rightTimestamp) {
+        return leftTimestamp - rightTimestamp;
+      }
+
+      return String(getDocumentId(left)).localeCompare(String(getDocumentId(right)));
+    })[0] || null
+);
 
 const getAwarenessTagLength = (value = '') => (
   Array.from(String(value || '')).reduce((total, character) => (
@@ -640,11 +689,6 @@ const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
     return baseStatus;
   }
 
-  if (mockPhoneAuthSession.authUid && baseStatus.authUid && mockPhoneAuthSession.authUid !== baseStatus.authUid) {
-    clearMockPhoneAuthSession();
-    return baseStatus;
-  }
-
   return {
     ...baseStatus,
     hasSession: true,
@@ -753,17 +797,22 @@ export const userProfileService = {
         return null;
       }
 
-      let existingDocument = null;
+      let authUidDocument = null;
+      let phoneMatchedDocuments = [];
 
       if (authUid) {
         const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
-        existingDocument = getFirstDocument(existingResult, collections.users);
+        authUidDocument = getFirstDocument(existingResult, collections.users);
       }
 
-      if (!existingDocument && normalizedPhoneNumber) {
-        const phoneMatchedResult = await db.collection(collections.users).where({ phone: normalizedPhoneNumber }).limit(1).get();
-        existingDocument = getFirstDocument(phoneMatchedResult, collections.users);
+      if (normalizedPhoneNumber) {
+        const phoneMatchedResult = await db.collection(collections.users).where({ phone: normalizedPhoneNumber }).limit(20).get();
+        phoneMatchedDocuments = getResponseData(phoneMatchedResult, collections.users);
       }
+
+      const existingDocument = phoneMatchedDocuments.length > 0
+        ? selectCanonicalUserDocument([authUidDocument, ...phoneMatchedDocuments])
+        : authUidDocument;
 
       if (existingDocument) {
         const existingProfile = normalizeCurrentUserProfile(existingDocument);
