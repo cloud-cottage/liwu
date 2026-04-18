@@ -1,0 +1,28 @@
+<view class="page-shell">
+  <view class="section-card">
+    <view class="section-title">我的订单</view>
+    <view class="section-subtitle">这里展示当前小程序账号发起的工坊订单。</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="section-card">
+    <view class="empty-text">正在加载订单...</view>
+  </view>
+
+  <view wx:elif="{{orders.length}}" class="order-list">
+    <view class="section-card order-card" wx:for="{{orders}}" wx:key="id">
+      <view class="order-no">{{item.orderNo}}</view>
+      <view class="order-meta">状态：{{item.status}} · {{item.createdAt}}</view>
+      <view class="order-meta">合计：{{item.totalPoints}} 福豆{{item.totalCash ? ' + ¥' + item.totalCash : ''}}</view>
+      <view class="order-items">
+        <view class="order-item" wx:for="{{item.items}}" wx:key="id">
+          <view class="order-item-name">{{item.productName}}</view>
+          <view class="order-item-subtitle">{{item.skuName || '默认规格'}} · x{{item.quantity}} · {{item.subtotalPoints}} 福豆</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:else class="section-card">
+    <view class="empty-text">还没有工坊订单。</view>
+  </view>
+</view>

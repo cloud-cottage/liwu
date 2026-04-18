@@ -1,0 +1,25 @@
+<view class="page-shell">
+  <view class="section-card">
+    <view class="section-title">地址管理</view>
+    <view class="section-subtitle">保存默认收货地址，工坊兑换时会直接复用。</view>
+  </view>
+
+  <view class="address-list" wx:if="{{addresses.length}}">
+    <view class="section-card address-card" wx:for="{{addresses}}" wx:key="id" data-address="{{item}}" bindtap="handleAddressTap">
+      <view class="address-name">{{item.receiverName}} · {{item.phone}}</view>
+      <view class="address-detail">{{item.province}} {{item.city}} {{item.district}} {{item.detailAddress}}</view>
+    </view>
+  </view>
+
+  <view class="section-card">
+    <view class="section-title">编辑地址</view>
+    <input class="address-input" placeholder="收件人" data-field="receiverName" value="{{draft.receiverName}}" bindinput="handleInput" />
+    <input class="address-input" placeholder="手机号" data-field="phone" value="{{draft.phone}}" bindinput="handleInput" />
+    <input class="address-input" placeholder="省份" data-field="province" value="{{draft.province}}" bindinput="handleInput" />
+    <input class="address-input" placeholder="城市" data-field="city" value="{{draft.city}}" bindinput="handleInput" />
+    <input class="address-input" placeholder="区县" data-field="district" value="{{draft.district}}" bindinput="handleInput" />
+    <input class="address-input" placeholder="详细地址" data-field="detailAddress" value="{{draft.detailAddress}}" bindinput="handleInput" />
+    <input class="address-input" placeholder="邮编" data-field="postalCode" value="{{draft.postalCode}}" bindinput="handleInput" />
+    <button class="primary-button save-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存地址</button>
+  </view>
+</view>

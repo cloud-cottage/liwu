@@ -84,6 +84,10 @@ Page({
     openMiniRoute('/pages/shop/index')
   },
 
+  handleGoAddresses() {
+    openMiniRoute('/pages/profile/addresses/index')
+  },
+
   onShareAppMessage() {
     return {
       title: '我的理悟小程序',

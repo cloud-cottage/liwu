@@ -128,6 +128,49 @@ const normalizeShopOrderItem = (item = {}) => ({
   productType: item.product_type || item.productType || 'physical'
 });
 
+const toShopProductPayload = (productData = {}) => ({
+  name: productData.name || '',
+  subtitle: productData.subtitle || '',
+  category_id: productData.categoryId || '',
+  product_type: productData.productType || 'physical',
+  cover_image: productData.coverImage || '',
+  gallery: productData.gallery || [],
+  description: productData.description || '',
+  detail_blocks: productData.detailBlocks || [],
+  status: productData.status || 'draft',
+  sku_mode: productData.skuMode || 'single',
+  price_points_from: Number(productData.pricePointsFrom || 0),
+  price_cash_from: Number(productData.priceCashFrom || 0),
+  stock_total: Number(productData.stockTotal || 0),
+  sales_count: Number(productData.salesCount || 0),
+  limit_per_user: Number(productData.limitPerUser || 0),
+  sort_order: Number(productData.sortOrder || 0),
+  tags: productData.tags || []
+});
+
+const toShopSkuPayload = (skuData = {}, productId) => ({
+  product_id: productId,
+  sku_name: skuData.skuName || '',
+  sku_code: skuData.skuCode || '',
+  attrs: skuData.attrs || {},
+  price_points: Number(skuData.pricePoints || 0),
+  price_cash: Number(skuData.priceCash || 0),
+  stock: Number(skuData.stock || 0),
+  lock_stock: Number(skuData.lockStock || 0),
+  status: skuData.status || 'active',
+  weight: Number(skuData.weight || 0)
+});
+
+const createWealthHistoryEntry = ({ amount, description, source, relatedUserId = '' }) => ({
+  id: `admin_${Date.now()}`,
+  amount,
+  description,
+  date: new Date().toISOString(),
+  type: amount >= 0 ? 'EARN' : 'SPEND',
+  source,
+  relatedUserId
+});
+
 const normalizeUser = (user) => ({
   id: getDocumentId(user),
   name: user.name || '',
@@ -321,6 +364,108 @@ class DatabaseService {
       };
     } catch (error) {
       console.error('Error fetching shop management data:', error);
+      throw error;
+    }
+  }
+
+  static async saveShopProduct(productData) {
+    try {
+      await ensureAnonymousLogin();
+
+      const productPayload = {
+        ...toShopProductPayload(productData),
+        updated_at: new Date()
+      };
+
+      let productId = productData.id;
+
+      if (productId) {
+        await db.collection(collections.shopProducts).doc(productId).update(productPayload);
+        await db.collection(collections.shopProductSkus).where({ product_id: productId }).remove();
+      } else {
+        const result = await db.collection(collections.shopProducts).add({
+          ...productPayload,
+          created_at: new Date()
+        });
+        productId = result.id || result._id;
+      }
+
+      const skus = Array.isArray(productData.skus) ? productData.skus : [];
+      for (const sku of skus) {
+        await db.collection(collections.shopProductSkus).add({
+          ...toShopSkuPayload(sku, productId),
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+      }
+
+      return productId;
+    } catch (error) {
+      console.error('Error saving shop product:', error);
+      throw error;
+    }
+  }
+
+  static async updateShopOrderStatus(orderId, nextStatus) {
+    try {
+      await ensureAnonymousLogin();
+
+      const orderResult = await db.collection(collections.shopOrders).doc(orderId).get();
+      const orderDocument = getDocumentId(orderResult?.data || {}) ? orderResult.data : null;
+      if (!orderDocument) {
+        throw new Error('订单不存在');
+      }
+
+      const order = normalizeShopOrder(orderDocument);
+      const nowIso = new Date().toISOString();
+      const updatePayload = {
+        status: nextStatus,
+        updated_at: nowIso
+      };
+
+      if (nextStatus === 'shipped') {
+        updatePayload.shipped_at = nowIso;
+      }
+
+      if (nextStatus === 'completed') {
+        updatePayload.completed_at = nowIso;
+      }
+
+      if ((nextStatus === 'cancelled' || nextStatus === 'refunded') && order.totalPoints > 0 && order.status !== 'cancelled' && order.status !== 'refunded') {
+        const userResult = await db.collection(collections.users).doc(order.userId).get();
+        const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
+
+        if (userDocument) {
+          const nextBalance = Number(userDocument.balance || 0) + order.totalPoints;
+          const wealthHistoryEntry = createWealthHistoryEntry({
+            amount: order.totalPoints,
+            description: `工坊退款：${order.orderNo}`,
+            source: 'shop_refund',
+            relatedUserId: order.userId
+          });
+
+          await db.collection(collections.pointLedger).add({
+            user_id: order.userId,
+            delta: order.totalPoints,
+            balance_after: nextBalance,
+            biz_type: 'shop_refund',
+            biz_id: order.id,
+            description: `工坊退款：${order.orderNo}`,
+            operator_id: 'admin',
+            created_at: nowIso
+          });
+
+          await db.collection(collections.users).doc(order.userId).update({
+            balance: nextBalance,
+            wealth_history: [wealthHistoryEntry].concat(userDocument.wealth_history || []),
+            updated_at: nowIso
+          });
+        }
+      }
+
+      await db.collection(collections.shopOrders).doc(orderId).update(updatePayload);
+    } catch (error) {
+      console.error('Error updating shop order status:', error);
       throw error;
     }
   }

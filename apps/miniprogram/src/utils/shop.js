@@ -332,11 +332,48 @@ const createPointsOrder = async ({ productId, skuId, quantity = 1, addressId = '
   }
 }
 
+const listUserOrders = async () => {
+  const db = getDb()
+  const currentUser = await getOrCreateCurrentUser()
+  const [ordersResult, itemsResult] = await Promise.all([
+    db.collection(SHOP_ORDERS).where({ user_id: currentUser.id }).limit(100).get(),
+    db.collection(SHOP_ORDER_ITEMS).limit(500).get()
+  ])
+
+  const itemsByOrderId = {}
+  ;(itemsResult.data || []).forEach((item) => {
+    const orderId = item.order_id || item.orderId || ''
+    if (!itemsByOrderId[orderId]) {
+      itemsByOrderId[orderId] = []
+    }
+    itemsByOrderId[orderId].push(item)
+  })
+
+  return (ordersResult.data || [])
+    .map((order) => ({
+      id: order._id || order.id || '',
+      orderNo: order.order_no || order.orderNo || '',
+      status: order.status || 'pending_payment',
+      totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
+      totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+      createdAt: order.created_at || order.createdAt || '',
+      items: (itemsByOrderId[order._id || order.id || ''] || []).map((item) => ({
+        id: item._id || item.id || '',
+        productName: item.product_name_snapshot || item.productNameSnapshot || '',
+        skuName: item.sku_name_snapshot || item.skuNameSnapshot || '',
+        quantity: Number(item.quantity ?? 0),
+        subtotalPoints: Number(item.subtotal_points ?? item.subtotalPoints ?? 0)
+      }))
+    }))
+    .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())
+}
+
 module.exports = {
   listShopCategories,
   listShopProducts,
   getShopProductDetail,
   listUserAddresses,
   saveUserAddress,
-  createPointsOrder
+  createPointsOrder,
+  listUserOrders
 }

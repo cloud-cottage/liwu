@@ -2,8 +2,10 @@
   "pages": [
     "pages/home/index",
     "pages/shop/index",
+    "pages/shop/orders/index",
     "pages/aware/index",
-    "pages/profile/index"
+    "pages/profile/index",
+    "pages/profile/addresses/index"
   ],
   "window": {
     "navigationBarTitleText": "理悟",

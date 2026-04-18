@@ -2,6 +2,10 @@
   <view class="section-card hero-card">
     <view class="section-title">工坊</view>
     <view class="section-subtitle">这里已经接上线上店铺集合，先联调分类、商品和规格读取。</view>
+    <view class="toolbar-row">
+      <button class="ghost-button toolbar-button" bindtap="handleGoOrders">我的订单</button>
+      <button class="ghost-button toolbar-button" bindtap="handleGoAddresses">地址管理</button>
+    </view>
   </view>
 
   <view class="category-row">

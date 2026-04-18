@@ -1,4 +1,5 @@
 const { listShopCategories, listShopProducts, getShopProductDetail, listUserAddresses, saveUserAddress, createPointsOrder } = require('../../utils/shop')
+const { openMiniRoute } = require('../../utils/navigation')
 
 Page({
   data: {
@@ -190,6 +191,14 @@ Page({
         icon: 'none'
       })
     }
+  },
+
+  handleGoOrders() {
+    openMiniRoute('/pages/shop/orders/index')
+  },
+
+  handleGoAddresses() {
+    openMiniRoute('/pages/profile/addresses/index')
   },
 
   noop() {}

@@ -1,0 +1,48 @@
+.order-list {
+  display: grid;
+  gap: 18rpx;
+}
+
+.order-card {
+  display: grid;
+  gap: 10rpx;
+}
+
+.order-no {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.order-meta {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.order-items {
+  display: grid;
+  gap: 10rpx;
+}
+
+.order-item {
+  padding: 16rpx 18rpx;
+  border-radius: 18rpx;
+  background: #f8fafc;
+}
+
+.order-item-name {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.order-item-subtitle {
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  color: #64748b;
+}
+
+.empty-text {
+  font-size: 24rpx;
+  color: #94a3b8;
+}

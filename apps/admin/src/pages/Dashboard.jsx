@@ -61,7 +61,9 @@ const Dashboard = () => {
     createTag,
     updateUserTags,
     updateMeditationSettings,
-    updateAwarenessTagSettings
+    updateAwarenessTagSettings,
+    saveShopProduct,
+    updateShopOrderStatus
   } = useDatabase();
 
   const handleRefreshCloudbase = () => {
@@ -131,6 +133,22 @@ const Dashboard = () => {
       await updateAwarenessTagSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update awareness tag settings:', err);
+    }
+  };
+
+  const handleSaveShopProduct = async (productDraft) => {
+    try {
+      await saveShopProduct(productDraft);
+    } catch (err) {
+      console.error('Failed to save shop product:', err);
+    }
+  };
+
+  const handleUpdateShopOrderStatus = async (orderId, nextStatus) => {
+    try {
+      await updateShopOrderStatus(orderId, nextStatus);
+    } catch (err) {
+      console.error('Failed to update shop order status:', err);
     }
   };
 
@@ -541,6 +559,8 @@ const Dashboard = () => {
             skus={shopSkus}
             orders={shopOrders}
             orderItems={shopOrderItems}
+            onSaveProduct={handleSaveShopProduct}
+            onUpdateOrderStatus={handleUpdateShopOrderStatus}
           />
         )}
       </div>

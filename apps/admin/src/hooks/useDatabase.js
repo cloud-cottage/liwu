@@ -239,6 +239,28 @@ export const useDatabase = () => {
     }
   };
 
+  const saveShopProduct = async (productData) => {
+    try {
+      await DatabaseService.saveShopProduct(productData);
+      await loadData();
+    } catch (err) {
+      console.error('Error saving shop product:', err);
+      setError(getSetupErrorMessage(err));
+      throw err;
+    }
+  };
+
+  const updateShopOrderStatus = async (orderId, nextStatus) => {
+    try {
+      await DatabaseService.updateShopOrderStatus(orderId, nextStatus);
+      await loadData();
+    } catch (err) {
+      console.error('Error updating shop order status:', err);
+      setError(getSetupErrorMessage(err));
+      throw err;
+    }
+  };
+
   // Initialize on mount
   useEffect(() => {
     void initializeDatabase();
@@ -274,6 +296,8 @@ export const useDatabase = () => {
     getUserTags,
     updateMeditationSettings,
     updateAwarenessTagSettings,
+    saveShopProduct,
+    updateShopOrderStatus,
     initializeDatabase,
     
     // Utility

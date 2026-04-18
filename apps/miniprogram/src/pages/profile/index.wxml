@@ -38,4 +38,10 @@
     <view class="section-subtitle">工坊暂未接入商品与订单，先保留入口页。</view>
     <button class="ghost-button shop-button" bindtap="handleGoShop">进入工坊</button>
   </view>
+
+  <view class="section-card shop-entry">
+    <view class="section-title">地址管理</view>
+    <view class="section-subtitle">这里维护工坊兑换使用的默认收货地址。</view>
+    <button class="ghost-button shop-button" bindtap="handleGoAddresses">管理地址</button>
+  </view>
 </view>
