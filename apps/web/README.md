@@ -1,8 +1,10 @@
 # @liwu/web
 
-This package is reserved for the future dedicated web client.
+This is the dedicated user-facing web client.
 
-Recommended next step:
+Current relationship with `apps/app`:
 
-1. Confirm whether this should be an H5 React app or another web-native runtime.
-2. Once confirmed, replace the placeholder scripts in `package.json`.
+- `apps/web` runs as a web shell
+- It reuses feature modules from `apps/app/src`
+- Changes to shared modules in `apps/app` are immediately reflected in `apps/web`
+- Admin functionality is not implemented here and should live in `apps/admin`
