@@ -15,7 +15,9 @@ const normalizeCategory = (category = {}) => ({
   name: category.name || '',
   slug: category.slug || '',
   sortOrder: Number(category.sort_order ?? category.sortOrder ?? 0),
-  status: category.status || 'active'
+  status: category.status || 'active',
+  description: category.description || '',
+  coverImage: category.cover_image || category.coverImage || ''
 })
 
 const normalizeProduct = (product = {}) => ({
@@ -101,6 +103,16 @@ const getOrCreateCurrentUser = async () => {
     balance: 0,
     wealthHistory: [],
     ...profile
+  }
+}
+
+const getCurrentShopProfile = async () => {
+  const currentUser = await getOrCreateCurrentUser()
+
+  return {
+    id: currentUser.id,
+    name: currentUser.name || '',
+    balance: Number(currentUser.balance || 0)
   }
 }
 
@@ -375,5 +387,6 @@ module.exports = {
   listUserAddresses,
   saveUserAddress,
   createPointsOrder,
-  listUserOrders
+  listUserOrders,
+  getCurrentShopProfile
 }

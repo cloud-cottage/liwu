@@ -1,7 +1,66 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Coins, MapPin, Package, X } from 'lucide-react';
+import { ArrowUpRight, Coins, Layers3, MapPin, Sparkles, X } from 'lucide-react';
 import { shopService } from '../../services/cloudbase';
 import { useWealth } from '../../context/WealthContext';
+import './ShopScreen.css';
+
+const EMPTY_ADDRESS = {
+  receiverName: '',
+  phone: '',
+  province: '',
+  city: '',
+  district: '',
+  detailAddress: '',
+  postalCode: '',
+  label: '家',
+  isDefault: true
+};
+
+const PRODUCT_TYPE_LABELS = {
+  physical: '实物寄送',
+  digital: '数字内容',
+  service: '服务体验'
+};
+
+const PRODUCT_STATUS_LABELS = {
+  active: '可兑换',
+  draft: '待上架',
+  archived: '已归档',
+  sold_out: '已售罄'
+};
+
+const SHOP_TONES = [
+  {
+    gradient: 'linear-gradient(135deg, #f8d8b8 0%, #f0a271 100%)',
+    accent: '#8f4d28',
+    surface: '#fff3e4',
+    shadow: 'rgba(201, 111, 39, 0.24)'
+  },
+  {
+    gradient: 'linear-gradient(135deg, #d9e7f2 0%, #8eb6cd 100%)',
+    accent: '#365e73',
+    surface: '#edf6fb',
+    shadow: 'rgba(54, 94, 115, 0.22)'
+  },
+  {
+    gradient: 'linear-gradient(135deg, #e7decc 0%, #bca781 100%)',
+    accent: '#695237',
+    surface: '#f6f0e5',
+    shadow: 'rgba(105, 82, 55, 0.2)'
+  },
+  {
+    gradient: 'linear-gradient(135deg, #e1ecd6 0%, #92ab7e 100%)',
+    accent: '#4f6742',
+    surface: '#f0f6eb',
+    shadow: 'rgba(79, 103, 66, 0.22)'
+  }
+];
+
+const hashValue = (value = '') => (
+  Array.from(String(value)).reduce((sum, char) => sum + char.charCodeAt(0), 0)
+);
+
+const getShopTone = (seed = '') => SHOP_TONES[hashValue(seed) % SHOP_TONES.length];
 
 const formatCash = (value) => {
   if (!value) {
@@ -10,6 +69,26 @@ const formatCash = (value) => {
 
   return `¥${Number(value).toFixed(2)}`;
 };
+
+const formatPriceLabel = (points, cash) => (
+  `${Number(points || 0)} 福豆${cash ? ` + ${formatCash(cash)}` : ''}`
+);
+
+const getProductSynopsis = (product = {}) => (
+  product.subtitle || product.description || '等待补充商品描述'
+);
+
+const getProductVisualStyle = (product = {}, tone) => (
+  product.coverImage
+    ? {
+        backgroundImage: `linear-gradient(180deg, rgba(15, 23, 42, 0.08) 0%, rgba(15, 23, 42, 0.34) 100%), url("${product.coverImage}")`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center'
+      }
+    : {
+        backgroundImage: tone.gradient
+      }
+);
 
 const ProductModal = ({
   product,
@@ -23,25 +102,32 @@ const ProductModal = ({
     skus: [],
     productType: 'physical'
   };
-  const defaultSkuId = fallbackProduct.skus[0]?.id || '';
-  const defaultAddress = addresses.find((item) => item.isDefault) || addresses[0] || {
-    receiverName: '',
-    phone: '',
-    province: '',
-    city: '',
-    district: '',
-    detailAddress: '',
-    postalCode: '',
-    label: '家',
-    isDefault: true
-  };
+  const defaultSkuId = useMemo(() => fallbackProduct.skus[0]?.id || '', [fallbackProduct.skus]);
+  const defaultAddress = useMemo(
+    () => addresses.find((item) => item.isDefault) || addresses[0] || EMPTY_ADDRESS,
+    [addresses]
+  );
   const [selectedSkuId, setSelectedSkuId] = useState(defaultSkuId);
   const [addressDraft, setAddressDraft] = useState(defaultAddress);
   const [savingAddress, setSavingAddress] = useState(false);
+  const [addressError, setAddressError] = useState('');
+  const tone = useMemo(
+    () => getShopTone(product?.categoryId || product?.category?.slug || product?.name || ''),
+    [product?.category?.slug, product?.categoryId, product?.name]
+  );
+
+  useEffect(() => {
+    setSelectedSkuId(defaultSkuId);
+    setAddressDraft(defaultAddress);
+    setSavingAddress(false);
+    setAddressError('');
+  }, [defaultAddress, defaultSkuId, product?.id]);
 
   if (!product) {
     return null;
   }
+
+  const selectedSku = fallbackProduct.skus.find((item) => item.id === selectedSkuId) || fallbackProduct.skus[0] || null;
 
   const handleAddressChange = (field, value) => {
     setAddressDraft((current) => ({
@@ -52,162 +138,145 @@ const ProductModal = ({
 
   const handleSaveAddress = async () => {
     setSavingAddress(true);
-    const nextAddress = await onSaveAddress(addressDraft);
-    setAddressDraft(nextAddress);
-    setSavingAddress(false);
+    setAddressError('');
+
+    try {
+      const nextAddress = await onSaveAddress(addressDraft);
+      setAddressDraft(nextAddress);
+    } catch (error) {
+      setAddressError(error.message || '收货地址保存失败');
+    } finally {
+      setSavingAddress(false);
+    }
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(15, 23, 42, 0.45)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '20px',
-        zIndex: 40
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '480px',
-          backgroundColor: '#fff',
-          borderRadius: '20px',
-          padding: '24px',
-          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.2)'
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-          <div>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-              shop_item
-            </div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: '#0f172a', marginTop: '6px' }}>{product.name}</div>
+    <div className="shop-modal-backdrop" onClick={onClose}>
+      <div className="shop-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+        <button type="button" onClick={onClose} className="shop-modal__close" aria-label="关闭商品详情">
+          <X size={18} />
+        </button>
+
+        <div className="shop-modal__hero" style={getProductVisualStyle(product, tone)}>
+          <div className="shop-modal__chips">
+            <span className="shop-chip shop-chip--light">{product.category?.name || '工坊'}</span>
+            <span className="shop-chip shop-chip--light-muted">
+              {PRODUCT_STATUS_LABELS[product.status] || PRODUCT_STATUS_LABELS.active}
+            </span>
           </div>
+          {!product.coverImage && (
+            <div className="shop-modal__monogram" style={{ color: tone.accent }}>
+              {(product.name || '礼').slice(0, 1)}
+            </div>
+          )}
+        </div>
+
+        <div className="shop-modal__content">
+          <div className="shop-modal__eyebrow">shop_item</div>
+          <div className="shop-modal__title-row">
+            <div>
+              <h2 className="shop-modal__title">{product.name}</h2>
+              <p className="shop-modal__intro">{product.description || product.subtitle || '商品详情待补充'}</p>
+            </div>
+            {selectedSku && (
+              <div className="shop-modal__price-tag">{formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash)}</div>
+            )}
+          </div>
+
+          <div className="shop-modal__metrics">
+            <div className="shop-modal__metric">
+              <span>销量</span>
+              <strong>{product.salesCount}</strong>
+            </div>
+            <div className="shop-modal__metric">
+              <span>库存</span>
+              <strong>{product.stockTotal}</strong>
+            </div>
+            <div className="shop-modal__metric">
+              <span>限购</span>
+              <strong>{product.limitPerUser || '不限'}</strong>
+            </div>
+          </div>
+
+          {product.skus.length > 0 && (
+            <section className="shop-modal__section">
+              <div className="shop-modal__section-head">
+                <Layers3 size={16} />
+                <span>规格选择</span>
+              </div>
+              <div className="shop-sku-list">
+                {product.skus.map((sku) => (
+                  <button
+                    key={sku.id}
+                    type="button"
+                    onClick={() => setSelectedSkuId(sku.id)}
+                    className={`shop-sku-card ${selectedSkuId === sku.id ? 'shop-sku-card--active' : ''}`}
+                  >
+                    <div className="shop-sku-card__title">{sku.skuName || '默认规格'}</div>
+                    <div className="shop-sku-card__subtitle">
+                      {formatPriceLabel(sku.pricePoints, sku.priceCash)} · 库存 {sku.stock}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {product.productType === 'physical' && (
+            <section className="shop-modal__section">
+              <div className="shop-modal__section-head">
+                <MapPin size={16} />
+                <span>收货地址</span>
+              </div>
+              <div className="shop-address-grid">
+                <input value={addressDraft.receiverName || ''} onChange={(event) => handleAddressChange('receiverName', event.target.value)} placeholder="收件人" style={inputStyle} />
+                <input value={addressDraft.phone || ''} onChange={(event) => handleAddressChange('phone', event.target.value)} placeholder="手机号" style={inputStyle} />
+                <input value={addressDraft.province || ''} onChange={(event) => handleAddressChange('province', event.target.value)} placeholder="省份" style={inputStyle} />
+                <input value={addressDraft.city || ''} onChange={(event) => handleAddressChange('city', event.target.value)} placeholder="城市" style={inputStyle} />
+                <input value={addressDraft.district || ''} onChange={(event) => handleAddressChange('district', event.target.value)} placeholder="区县" style={inputStyle} />
+                <input value={addressDraft.detailAddress || ''} onChange={(event) => handleAddressChange('detailAddress', event.target.value)} placeholder="详细地址" style={inputStyle} />
+                <input value={addressDraft.postalCode || ''} onChange={(event) => handleAddressChange('postalCode', event.target.value)} placeholder="邮编（可选）" style={inputStyle} />
+                <input value={addressDraft.label || ''} onChange={(event) => handleAddressChange('label', event.target.value)} placeholder="标签（家/公司）" style={inputStyle} />
+              </div>
+              {addressError && <div className="shop-modal__feedback shop-modal__feedback--error">{addressError}</div>}
+              <button
+                type="button"
+                onClick={handleSaveAddress}
+                disabled={savingAddress}
+                className="shop-modal__secondary-action"
+              >
+                {savingAddress ? '保存中...' : '保存收货地址'}
+              </button>
+            </section>
+          )}
+
           <button
             type="button"
-            onClick={onClose}
-            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}
+            onClick={() => onCreateOrder({
+              productId: product.id,
+              skuId: selectedSkuId,
+              addressId: addressDraft.id || ''
+            })}
+            disabled={orderSubmitting}
+            className="shop-modal__primary-action"
           >
-            <X size={18} />
+            {orderSubmitting ? '提交中...' : `立即兑换${selectedSku ? ` · ${formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash)}` : ''}`}
           </button>
         </div>
-
-        <div style={{ fontSize: '14px', color: '#475569', lineHeight: 1.7, marginBottom: '16px' }}>
-          {product.description || product.subtitle || '商品详情待补充'}
-        </div>
-
-        <div style={{ display: 'grid', gap: '10px', marginBottom: '18px' }}>
-          <div style={{ fontSize: '13px', color: '#475569' }}>分类：{product.category?.name || '未分类'}</div>
-          <div style={{ fontSize: '13px', color: '#475569' }}>销量：{product.salesCount}</div>
-          <div style={{ fontSize: '13px', color: '#475569' }}>库存：{product.stockTotal}</div>
-          <div style={{ fontSize: '13px', color: '#475569' }}>限购：{product.limitPerUser || '不限'}</div>
-        </div>
-
-        {product.skus.length > 0 && (
-          <div style={{ marginBottom: '18px' }}>
-            <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>规格</div>
-            <div style={{ display: 'grid', gap: '10px' }}>
-              {product.skus.map((sku) => (
-                <button
-                  key={sku.id}
-                  type="button"
-                  onClick={() => setSelectedSkuId(sku.id)}
-                  style={{
-                    borderRadius: '14px',
-                    border: selectedSkuId === sku.id ? '1px solid #111827' : '1px solid #e2e8f0',
-                    padding: '14px 16px',
-                    backgroundColor: selectedSkuId === sku.id ? '#f1f5f9' : '#f8fafc',
-                    textAlign: 'left',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a' }}>{sku.skuName || '默认规格'}</div>
-                  <div style={{ marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
-                    {sku.pricePoints} 福豆{sku.priceCash ? ` + ${formatCash(sku.priceCash)}` : ''} · 库存 {sku.stock}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {product.productType === 'physical' && (
-          <div style={{ marginBottom: '18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', color: '#0f172a' }}>
-              <MapPin size={16} />
-              <span style={{ fontSize: '14px', fontWeight: 700 }}>收货地址</span>
-            </div>
-            <div style={{ display: 'grid', gap: '10px' }}>
-              <input value={addressDraft.receiverName || ''} onChange={(event) => handleAddressChange('receiverName', event.target.value)} placeholder="收件人" style={inputStyle} />
-              <input value={addressDraft.phone || ''} onChange={(event) => handleAddressChange('phone', event.target.value)} placeholder="手机号" style={inputStyle} />
-              <input value={addressDraft.province || ''} onChange={(event) => handleAddressChange('province', event.target.value)} placeholder="省份" style={inputStyle} />
-              <input value={addressDraft.city || ''} onChange={(event) => handleAddressChange('city', event.target.value)} placeholder="城市" style={inputStyle} />
-              <input value={addressDraft.district || ''} onChange={(event) => handleAddressChange('district', event.target.value)} placeholder="区县" style={inputStyle} />
-              <input value={addressDraft.detailAddress || ''} onChange={(event) => handleAddressChange('detailAddress', event.target.value)} placeholder="详细地址" style={inputStyle} />
-              <input value={addressDraft.postalCode || ''} onChange={(event) => handleAddressChange('postalCode', event.target.value)} placeholder="邮编（可选）" style={inputStyle} />
-              <input value={addressDraft.label || ''} onChange={(event) => handleAddressChange('label', event.target.value)} placeholder="标签（家/公司）" style={inputStyle} />
-            </div>
-            <button
-              type="button"
-              onClick={handleSaveAddress}
-              disabled={savingAddress}
-              style={{
-                width: '100%',
-                marginTop: '12px',
-                border: '1px solid #cbd5e1',
-                borderRadius: '12px',
-                backgroundColor: '#fff',
-                color: '#334155',
-                padding: '12px 16px',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: savingAddress ? 'default' : 'pointer'
-              }}
-            >
-              {savingAddress ? '保存中...' : '保存收货地址'}
-            </button>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={() => onCreateOrder({
-            productId: product.id,
-            skuId: selectedSkuId,
-            addressId: addressDraft.id || ''
-          })}
-          disabled={orderSubmitting}
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: '12px',
-            backgroundColor: orderSubmitting ? '#cbd5e1' : '#111827',
-            color: '#fff',
-            padding: '12px 16px',
-            fontSize: '14px',
-            fontWeight: 600
-          }}
-        >
-          {orderSubmitting ? '提交中...' : '立即兑换'}
-        </button>
       </div>
     </div>
   );
 };
 
 const ShopScreen = () => {
-  const { balance } = useWealth();
+  const { balance, syncWalletFromCloud } = useWealth();
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [addresses, setAddresses] = useState([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [activeProduct, setActiveProduct] = useState(null);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -215,17 +284,25 @@ const ShopScreen = () => {
 
     const loadPageData = async () => {
       setLoading(true);
-      const [nextCategories, nextProducts, nextAddresses] = await Promise.all([
-        shopService.getCategories(),
-        shopService.getProducts(),
-        shopService.getUserAddresses()
-      ]);
+      try {
+        const [nextCategories, nextProducts, nextAddresses] = await Promise.all([
+          shopService.getCategories(),
+          shopService.getProducts(),
+          shopService.getUserAddresses(),
+          syncWalletFromCloud({ refresh: true, allowAnonymous: true })
+        ]);
 
-      if (!cancelled) {
-        setCategories(nextCategories);
-        setProducts(nextProducts);
-        setAddresses(nextAddresses);
-        setLoading(false);
+        if (!cancelled) {
+          setCategories(nextCategories);
+          setProducts(nextProducts);
+          setAddresses(nextAddresses);
+          setLoading(false);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoading(false);
+          setNotice({ type: 'error', text: error.message || '工坊加载失败' });
+        }
       }
     };
 
@@ -234,7 +311,19 @@ const ShopScreen = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [syncWalletFromCloud]);
+
+  useEffect(() => {
+    if (!notice?.text) {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setNotice(null);
+    }, 3200);
+
+    return () => window.clearTimeout(timerId);
+  }, [notice]);
 
   const filteredProducts = useMemo(() => (
     selectedCategoryId
@@ -242,87 +331,104 @@ const ShopScreen = () => {
       : products
   ), [products, selectedCategoryId]);
 
+  const selectedCategory = useMemo(
+    () => categories.find((item) => item.id === selectedCategoryId) || null,
+    [categories, selectedCategoryId]
+  );
+
+  const highlightedCategoryDescription = selectedCategory?.description
+    || '从日常仪式、空间器物到心意礼物，挑一件适合此刻练习的物品。';
+
   const handleOpenProduct = async (productId) => {
-    const detail = await shopService.getProductDetail(productId);
-    if (detail) {
-      setActiveProduct(detail);
+    try {
+      const detail = await shopService.getProductDetail(productId);
+      if (detail) {
+        setActiveProduct(detail);
+        return;
+      }
+
+      setNotice({ type: 'error', text: '商品详情暂不可用' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || '商品详情加载失败' });
     }
   };
 
   const handleSaveAddress = async (addressDraft) => {
     const nextAddress = await shopService.saveUserAddress(addressDraft);
     setAddresses(await shopService.getUserAddresses());
-    setNotice('收货地址已保存');
+    setNotice({ type: 'success', text: '收货地址已保存' });
     return nextAddress;
   };
 
   const handleCreateOrder = async (payload) => {
     setOrderSubmitting(true);
+
     try {
       const result = await shopService.createPointsOrder(payload);
-      setNotice(`兑换成功，订单号 ${result.order.orderNo}`);
+      await syncWalletFromCloud({ refresh: true, allowAnonymous: true });
+      setNotice({ type: 'success', text: `兑换成功，订单号 ${result.order.orderNo}` });
       setActiveProduct(null);
     } catch (error) {
-      setNotice(error.message || '兑换失败');
+      setNotice({ type: 'error', text: error.message || '兑换失败' });
     } finally {
       setOrderSubmitting(false);
     }
   };
 
   return (
-    <div className="page-container" style={{ padding: '20px', paddingBottom: '90px' }}>
-      <header style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>工坊</h1>
-        <p style={{ color: 'var(--color-text-secondary)', margin: 0 }}>
-          线上店铺第一版已接入分类、商品和规格读取。
-        </p>
-      </header>
-
-      <section
-        style={{
-          backgroundColor: '#fff',
-          borderRadius: '16px',
-          padding: '20px',
-          boxShadow: 'var(--shadow-sm)',
-          marginBottom: '20px'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-accent-clay)', marginBottom: '8px' }}>
-          <Coins size={18} />
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>当前福豆</span>
+    <div className="page-container shop-page">
+      <section className="shop-hero-card">
+        <div className="shop-hero-card__top">
+          <div>
+            <div className="shop-hero-card__label">LIWU SHOP</div>
+            <h1 className="shop-hero-card__title">工坊</h1>
+            <p className="shop-hero-card__subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</p>
+          </div>
+          <div className="shop-balance-card">
+            <div className="shop-balance-card__label">
+              <Coins size={16} />
+              <span>当前福豆</span>
+            </div>
+            <div className="shop-balance-card__value">{balance}</div>
+          </div>
         </div>
-        <div style={{ fontSize: '28px', fontWeight: 700 }}>{balance}</div>
+
+        <div className="shop-hero-card__stats">
+          <div className="shop-stat-chip">
+            <span>当前商品</span>
+            <strong>{products.length}</strong>
+          </div>
+          <div className="shop-stat-chip">
+            <span>精选分类</span>
+            <strong>{categories.length}</strong>
+          </div>
+          <div className="shop-stat-chip">
+            <span>当前视图</span>
+            <strong>{selectedCategory?.name || '全部'}</strong>
+          </div>
+        </div>
       </section>
 
-      {notice && (
-        <div
-          style={{
-            marginBottom: '20px',
-            borderRadius: '12px',
-            backgroundColor: '#eff6ff',
-            color: '#1d4ed8',
-            padding: '12px 14px',
-            fontSize: '13px'
-          }}
-        >
-          {notice}
+      {notice?.text && (
+        <div className={`shop-notice ${notice.type === 'error' ? 'shop-notice--error' : ''}`}>
+          {notice.text}
         </div>
       )}
 
-      <section style={{ marginBottom: '20px' }}>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+      <section className="shop-category-card">
+        <div className="shop-section-head">
+          <div>
+            <div className="shop-section-head__kicker">{selectedCategory?.name || '全部陈列'}</div>
+            <h2 className="shop-section-head__title">按分类浏览</h2>
+          </div>
+          <div className="shop-section-head__count">{filteredProducts.length} 件</div>
+        </div>
+        <p className="shop-category-card__description">{highlightedCategoryDescription}</p>
+        <div className="shop-category-pill-list">
           <button
             type="button"
             onClick={() => setSelectedCategoryId('')}
-            style={{
-              border: 'none',
-              borderRadius: '999px',
-              padding: '10px 14px',
-              backgroundColor: selectedCategoryId ? '#fff' : '#111827',
-              color: selectedCategoryId ? '#475569' : '#fff',
-              boxShadow: 'var(--shadow-sm)',
-              cursor: 'pointer'
-            }}
+            className={`shop-category-pill ${selectedCategoryId ? '' : 'shop-category-pill--active'}`}
           >
             全部
           </button>
@@ -331,15 +437,7 @@ const ShopScreen = () => {
               key={category.id}
               type="button"
               onClick={() => setSelectedCategoryId(category.id)}
-              style={{
-                border: 'none',
-                borderRadius: '999px',
-                padding: '10px 14px',
-                backgroundColor: selectedCategoryId === category.id ? '#111827' : '#fff',
-                color: selectedCategoryId === category.id ? '#fff' : '#475569',
-                boxShadow: 'var(--shadow-sm)',
-                cursor: 'pointer'
-              }}
+              className={`shop-category-pill ${selectedCategoryId === category.id ? 'shop-category-pill--active' : ''}`}
             >
               {category.name}
             </button>
@@ -347,55 +445,80 @@ const ShopScreen = () => {
         </div>
       </section>
 
-      {loading ? (
-        <div style={{ color: 'var(--color-text-secondary)' }}>正在加载工坊数据...</div>
-      ) : filteredProducts.length === 0 ? (
-        <div
-          style={{
-            backgroundColor: '#fff',
-            borderRadius: '16px',
-            padding: '24px',
-            boxShadow: 'var(--shadow-sm)',
-            color: 'var(--color-text-secondary)'
-          }}
-        >
-          当前分类下还没有商品。
+      <section className="shop-gallery-section">
+        <div className="shop-section-head">
+          <div>
+            <div className="shop-section-head__kicker">礼物陈列</div>
+            <h2 className="shop-section-head__title">可兑换清单</h2>
+          </div>
+          <div className="shop-gallery-section__hint">
+            <Sparkles size={16} />
+            <span>点击查看详情</span>
+          </div>
         </div>
-      ) : (
-        <div style={{ display: 'grid', gap: '16px' }}>
-          {filteredProducts.map((product) => (
-            <button
-              key={product.id}
-              type="button"
-              onClick={() => handleOpenProduct(product.id)}
-              style={{
-                border: 'none',
-                borderRadius: '18px',
-                padding: '20px',
-                backgroundColor: '#fff',
-                boxShadow: 'var(--shadow-sm)',
-                textAlign: 'left',
-                cursor: 'pointer'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-                <div>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>{product.name}</div>
-                  <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
-                    {product.subtitle || product.description || '等待补充商品描述'}
+
+        {loading ? (
+          <div className="shop-empty-card">正在加载工坊数据...</div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="shop-empty-card">当前分类下还没有商品。</div>
+        ) : (
+          <div className="shop-product-list">
+            {filteredProducts.map((product) => {
+              const category = categories.find((item) => item.id === product.categoryId) || null;
+              const tone = getShopTone(product.categoryId || product.name);
+
+              return (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => handleOpenProduct(product.id)}
+                  className="shop-product-card"
+                >
+                  <div className="shop-product-card__visual" style={getProductVisualStyle(product, tone)}>
+                    <div className="shop-product-card__badges">
+                      <span className="shop-chip shop-chip--light">{category?.name || '工坊'}</span>
+                      <span className="shop-chip shop-chip--light-muted">
+                        {product.limitPerUser ? `限兑 ${product.limitPerUser}` : PRODUCT_TYPE_LABELS[product.productType] || '福豆兑换'}
+                      </span>
+                    </div>
+                    {!product.coverImage && (
+                      <div className="shop-product-card__monogram" style={{ color: tone.accent }}>
+                        {(product.name || '礼').slice(0, 1)}
+                      </div>
+                    )}
+                    <div className="shop-product-card__visual-shadow" style={{ background: tone.surface, boxShadow: `0 24px 40px ${tone.shadow}` }} />
                   </div>
-                </div>
-                <div style={{ color: '#cbd5e1' }}>
-                  <Package size={20} />
-                </div>
-              </div>
-              <div style={{ marginTop: '14px', fontSize: '13px', color: '#0f172a', fontWeight: 600 }}>
-                {product.pricePointsFrom} 福豆{product.priceCashFrom ? ` + ${formatCash(product.priceCashFrom)}` : ''}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
+
+                  <div className="shop-product-card__body">
+                    <div className="shop-product-card__header">
+                      <div>
+                        <div className="shop-product-card__title">{product.name}</div>
+                        <div className="shop-product-card__subtitle">{getProductSynopsis(product)}</div>
+                      </div>
+                      <div className="shop-product-card__link">
+                        <ArrowUpRight size={18} />
+                      </div>
+                    </div>
+
+                    <div className="shop-product-card__meta">
+                      <span>库存 {product.stockTotal}</span>
+                      <span>已兑 {product.salesCount}</span>
+                      <span>{PRODUCT_STATUS_LABELS[product.status] || PRODUCT_STATUS_LABELS.active}</span>
+                    </div>
+
+                    <div className="shop-product-card__footer">
+                      <div className="shop-product-card__price">
+                        {formatPriceLabel(product.pricePointsFrom, product.priceCashFrom)}
+                      </div>
+                      <div className="shop-product-card__action">查看详情</div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <ProductModal
         product={activeProduct}
@@ -412,10 +535,10 @@ const ShopScreen = () => {
 const inputStyle = {
   width: '100%',
   boxSizing: 'border-box',
-  borderRadius: '12px',
-  border: '1px solid #dbe4ee',
+  borderRadius: '16px',
+  border: '1px solid #e2e8f0',
   padding: '12px 14px',
   fontSize: '14px'
 };
 
-export default ShopScreen
+export default ShopScreen;

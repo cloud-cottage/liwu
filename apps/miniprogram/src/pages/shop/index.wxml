@@ -1,26 +1,73 @@
-<view class="page-shell">
-  <view class="section-card hero-card">
-    <view class="section-title">工坊</view>
-    <view class="section-subtitle">这里已经接上线上店铺集合，先联调分类、商品和规格读取。</view>
+<view class="page-shell shop-page-shell">
+  <view class="section-card shop-hero-card">
+    <view class="shop-hero-head">
+      <view>
+        <view class="shop-hero-label">LIWU SHOP</view>
+        <view class="section-title">工坊</view>
+        <view class="section-subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</view>
+      </view>
+      <view class="shop-balance-card">
+        <view class="shop-balance-label">当前福豆</view>
+        <view class="shop-balance-value">{{walletBalance}}</view>
+      </view>
+    </view>
+
+    <view class="shop-stat-grid">
+      <view class="shop-stat-item">
+        <view class="shop-stat-label">当前商品</view>
+        <view class="shop-stat-value">{{products.length}}</view>
+      </view>
+      <view class="shop-stat-item">
+        <view class="shop-stat-label">精选分类</view>
+        <view class="shop-stat-value">{{categories.length}}</view>
+      </view>
+      <view class="shop-stat-item">
+        <view class="shop-stat-label">当前视图</view>
+        <view class="shop-stat-value">{{selectedCategoryName}}</view>
+      </view>
+    </view>
+
     <view class="toolbar-row">
       <button class="ghost-button toolbar-button" bindtap="handleGoOrders">我的订单</button>
       <button class="ghost-button toolbar-button" bindtap="handleGoAddresses">地址管理</button>
     </view>
   </view>
 
-  <view class="category-row">
-    <view class="category-pill {{activeCategoryId === '' ? 'category-pill-active' : ''}}" data-category-id="" bindtap="handleCategoryTap">
-      全部
+  <view class="section-card shop-category-card">
+    <view class="shop-section-head">
+      <view>
+        <view class="shop-section-kicker">{{selectedCategoryName}}</view>
+        <view class="section-title shop-section-title">按分类浏览</view>
+      </view>
+      <view class="shop-section-count">{{products.length}} 件</view>
     </view>
-    <view
-      class="category-pill {{activeCategoryId === item.id ? 'category-pill-active' : ''}}"
-      wx:for="{{categories}}"
-      wx:key="id"
-      data-category-id="{{item.id}}"
-      bindtap="handleCategoryTap"
-    >
-      {{item.name}}
+
+    <view class="section-subtitle shop-category-description">{{selectedCategoryDescription}}</view>
+
+    <scroll-view scroll-x enable-flex="true" show-scrollbar="false" class="category-scroll">
+      <view class="category-row">
+        <view class="category-pill {{activeCategoryId === '' ? 'category-pill-active' : ''}}" data-category-id="" bindtap="handleCategoryTap">
+          全部
+        </view>
+        <view
+          class="category-pill {{activeCategoryId === item.id ? 'category-pill-active' : ''}}"
+          wx:for="{{categories}}"
+          wx:key="id"
+          data-category-id="{{item.id}}"
+          bindtap="handleCategoryTap"
+        >
+          {{item.name}}
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <view class="shop-section-head shop-section-head-list">
+    <view>
+      <view class="shop-section-kicker">礼物陈列</view>
+      <view class="section-title shop-section-title">可兑换清单</view>
     </view>
+    <view class="shop-section-hint">点击查看详情</view>
   </view>
 
   <view wx:if="{{loading}}" class="section-card empty-card">
@@ -35,9 +82,35 @@
       data-product-id="{{item.id}}"
       bindtap="handleProductTap"
     >
-      <view class="product-title">{{item.name}}</view>
-      <view class="product-subtitle">{{item.subtitle || item.description || '等待补充商品描述'}}</view>
-      <view class="product-price">{{item.pricePointsFrom}} 福豆{{item.priceCashFrom ? ' + ¥' + item.priceCashFrom : ''}}</view>
+      <view class="product-visual" style="{{item.coverStyle}}">
+        <view class="product-badge-row">
+          <view class="product-badge">{{item.categoryName}}</view>
+          <view class="product-badge product-badge-soft">{{item.badgeLabel}}</view>
+        </view>
+        <view wx:if="{{!item.coverImage}}" class="product-monogram" style="color: {{item.accentColor}};">{{item.monogram}}</view>
+        <view class="product-shadow" style="box-shadow: 0 24rpx 40rpx {{item.shadowColor}};"></view>
+      </view>
+
+      <view class="product-body">
+        <view class="product-header">
+          <view class="product-title-block">
+            <view class="product-title">{{item.name}}</view>
+            <view class="product-subtitle">{{item.subtitleText}}</view>
+          </view>
+          <view class="product-link">查看</view>
+        </view>
+
+        <view class="product-meta">
+          <view class="product-meta-pill">库存 {{item.stockTotal}}</view>
+          <view class="product-meta-pill">已兑 {{item.salesCount}}</view>
+          <view class="product-meta-pill">{{item.statusLabel}}</view>
+        </view>
+
+        <view class="product-footer">
+          <view class="product-price">{{item.priceLabel}}</view>
+          <view class="product-action">查看详情</view>
+        </view>
+      </view>
     </view>
   </view>
 
@@ -47,23 +120,57 @@
 
   <view class="modal-mask" wx:if="{{showProductModal}}" bindtap="handleCloseProductModal">
     <view class="modal-card" catchtap="noop">
-      <view class="modal-label">shop_item</view>
-      <view class="modal-title">{{activeProduct.name}}</view>
-      <view class="modal-intro">{{activeProduct.description || activeProduct.subtitle || '商品详情待补充'}}</view>
-      <view class="modal-meta">分类：{{activeProduct.category ? activeProduct.category.name : '未分类'}}</view>
-      <view class="modal-meta">销量：{{activeProduct.salesCount}}</view>
-      <view class="modal-meta">库存：{{activeProduct.stockTotal}}</view>
-      <view class="modal-meta">限购：{{activeProduct.limitPerUser || '不限'}}</view>
+      <view class="modal-close" bindtap="handleCloseProductModal">关闭</view>
 
-      <view class="sku-list" wx:if="{{activeProduct.skus.length}}">
-        <view class="sku-card" wx:for="{{activeProduct.skus}}" wx:key="id">
-          <view class="sku-title {{selectedSkuId === item.id ? 'sku-title-active' : ''}}" data-sku-id="{{item.id}}" bindtap="handleSkuTap">{{item.skuName || '默认规格'}}</view>
-          <view class="sku-subtitle">{{item.pricePoints}} 福豆{{item.priceCash ? ' + ¥' + item.priceCash : ''}} · 库存 {{item.stock}}</view>
+      <view class="modal-hero" style="{{activeProduct.coverStyle}}">
+        <view class="product-badge-row">
+          <view class="product-badge">{{activeProduct.categoryName}}</view>
+          <view class="product-badge product-badge-soft">{{activeProduct.statusLabel}}</view>
+        </view>
+        <view wx:if="{{activeProduct && !activeProduct.coverImage}}" class="product-monogram" style="color: {{activeProduct.accentColor}};">{{activeProduct.monogram}}</view>
+      </view>
+
+      <view class="modal-label">shop_item</view>
+      <view class="modal-title-row">
+        <view>
+          <view class="modal-title">{{activeProduct.name}}</view>
+          <view class="modal-intro">{{activeProduct.description || activeProduct.subtitle || '商品详情待补充'}}</view>
         </view>
       </view>
 
-      <view class="address-box" wx:if="{{activeProduct.productType === 'physical'}}">
-        <view class="address-title">收货地址</view>
+      <view class="modal-metrics">
+        <view class="modal-metric">
+          <view class="modal-metric-label">销量</view>
+          <view class="modal-metric-value">{{activeProduct.salesCount}}</view>
+        </view>
+        <view class="modal-metric">
+          <view class="modal-metric-label">库存</view>
+          <view class="modal-metric-value">{{activeProduct.stockTotal}}</view>
+        </view>
+        <view class="modal-metric">
+          <view class="modal-metric-label">限购</view>
+          <view class="modal-metric-value">{{activeProduct.limitPerUser || '不限'}}</view>
+        </view>
+      </view>
+
+      <view class="modal-section" wx:if="{{activeProduct.skus.length}}">
+        <view class="modal-section-title">规格选择</view>
+        <view class="sku-list">
+          <view
+            class="sku-card {{selectedSkuId === item.id ? 'sku-card-active' : ''}}"
+            wx:for="{{activeProduct.skus}}"
+            wx:key="id"
+            data-sku-id="{{item.id}}"
+            bindtap="handleSkuTap"
+          >
+            <view class="sku-title">{{item.skuName || '默认规格'}}</view>
+            <view class="sku-subtitle">{{item.priceLabel}} · 库存 {{item.stock}}</view>
+          </view>
+        </view>
+      </view>
+
+      <view class="modal-section" wx:if="{{activeProduct.productType === 'physical'}}">
+        <view class="modal-section-title">收货地址</view>
         <input class="address-input" placeholder="收件人" data-field="receiverName" value="{{addressDraft.receiverName}}" bindinput="handleAddressInput" />
         <input class="address-input" placeholder="手机号" data-field="phone" value="{{addressDraft.phone}}" bindinput="handleAddressInput" />
         <input class="address-input" placeholder="省份" data-field="province" value="{{addressDraft.province}}" bindinput="handleAddressInput" />
@@ -71,11 +178,10 @@
         <input class="address-input" placeholder="区县" data-field="district" value="{{addressDraft.district}}" bindinput="handleAddressInput" />
         <input class="address-input" placeholder="详细地址" data-field="detailAddress" value="{{addressDraft.detailAddress}}" bindinput="handleAddressInput" />
         <input class="address-input" placeholder="邮编" data-field="postalCode" value="{{addressDraft.postalCode}}" bindinput="handleAddressInput" />
-        <button class="ghost-button modal-button" bindtap="handleSaveAddress">保存收货地址</button>
+        <button class="ghost-button modal-button modal-secondary-button" bindtap="handleSaveAddress">保存收货地址</button>
       </view>
 
       <button class="primary-button modal-button" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handleCreateOrder">立即兑换</button>
-      <button class="ghost-button close-button" bindtap="handleCloseProductModal">关闭</button>
     </view>
   </view>
 </view>
