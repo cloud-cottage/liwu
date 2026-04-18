@@ -205,9 +205,20 @@ const normalizeMeditationSettings = (settings = {}) => ({
   missingCollection: false
 });
 
+const normalizeAwarenessTagSettingEntry = (entry = {}) => ({
+  description: entry.description || '',
+  rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0))
+});
+
+const normalizeAwarenessTagSettingsMap = (tagsByKey = {}) => (
+  Object.fromEntries(
+    Object.entries(tagsByKey || {}).map(([tagKey, entry]) => [tagKey, normalizeAwarenessTagSettingEntry(entry)])
+  )
+);
+
 const normalizeAwarenessTagSettings = (settings = {}) => ({
   documentId: getDocumentId(settings) || null,
-  tagsByKey: settings.tags_by_key || settings.tagsByKey || {},
+  tagsByKey: normalizeAwarenessTagSettingsMap(settings.tags_by_key || settings.tagsByKey || {}),
   missingCollection: false
 });
 
@@ -286,7 +297,12 @@ const toMeditationSettingsPayload = (settingsData) => ({
 
 const toAwarenessTagSettingsPayload = (settingsData) => ({
   key: AWARENESS_TAG_SETTINGS_KEY,
-  tags_by_key: settingsData.tagsByKey || {}
+  tags_by_key: Object.fromEntries(
+    Object.entries(settingsData.tagsByKey || {}).map(([tagKey, entry]) => [
+      tagKey,
+      normalizeAwarenessTagSettingEntry(entry)
+    ])
+  )
 });
 
 const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
@@ -579,12 +595,24 @@ class DatabaseService {
           content,
           accessType,
           totalCount: 0,
+          rewardPoints: settings.tagsByKey?.[tagKey]?.rewardPoints || 0,
+          totalRewardPoints: 0,
           lastUsedAt: timestamp,
           lastUserName: record.user_name || record.userName || '匿名用户',
           description: settings.tagsByKey?.[tagKey]?.description || ''
         };
 
         existingTag.totalCount += 1;
+        existingTag.totalRewardPoints += Math.max(
+          0,
+          Number(
+            record.reward_points_awarded ??
+            record.rewardPointsAwarded ??
+            record.reward_points_setting_snapshot ??
+            record.rewardPointsSettingSnapshot ??
+            0
+          )
+        );
 
         if (new Date(timestamp || 0).getTime() >= new Date(existingTag.lastUsedAt || 0).getTime()) {
           existingTag.lastUsedAt = timestamp;
@@ -592,6 +620,7 @@ class DatabaseService {
         }
 
         existingTag.description = settings.tagsByKey?.[tagKey]?.description || '';
+        existingTag.rewardPoints = settings.tagsByKey?.[tagKey]?.rewardPoints || 0;
         tagMap.set(tagKey, existingTag);
       });
 

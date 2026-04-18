@@ -308,7 +308,8 @@ export const CloudAwarenessProvider = ({ children }) => {
       return {
         success: true,
         record: result.record,
-        sharePayload
+        sharePayload,
+        reward: result.reward
       };
     } catch (submitError) {
       console.error('提交觉察失败:', submitError);

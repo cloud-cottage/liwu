@@ -291,7 +291,7 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>觉察标签</span>
+              <span>觉察</span>
             </button>
             <button
               onClick={() => setActiveTab('shop')}

@@ -347,7 +347,8 @@ const normalizeAwarenessRecord = (record = {}) => {
     content,
     accessType,
     tagKey: record.tag_key || `${content}::${accessType}`,
-    timestamp: getRecordTimestamp(record)
+    timestamp: getRecordTimestamp(record),
+    rewardPointsAwarded: Math.max(0, Number(record.reward_points_awarded ?? record.rewardPointsAwarded ?? 0))
   };
 };
 
@@ -421,6 +422,17 @@ const normalizeShopOrder = (order = {}) => ({
   createdAt: order.created_at || order.createdAt || ''
 });
 
+const normalizeAwarenessTagSettingEntry = (entry = {}) => ({
+  description: entry.description || '',
+  rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0))
+});
+
+const normalizeAwarenessTagSettingsMap = (tagsByKey = {}) => (
+  Object.fromEntries(
+    Object.entries(tagsByKey || {}).map(([tagKey, entry]) => [tagKey, normalizeAwarenessTagSettingEntry(entry)])
+  )
+);
+
 const toAddressPayload = (addressData = {}, userId) => ({
   user_id: userId,
   receiver_name: addressData.receiverName || '',
@@ -449,12 +461,15 @@ const groupAwarenessTags = (records, countField, tagSettingsByKey = {}) => {
       content: record.content,
       accessType: record.accessType,
       [countField]: 0,
+      rewardPoints: tagSettingsByKey[record.tagKey]?.rewardPoints || 0,
+      totalRewardPoints: 0,
       lastUsedAt: record.timestamp,
       lastUserName: record.userName || '匿名用户',
       description: tagSettingsByKey[record.tagKey]?.description || ''
     };
 
     existingTag[countField] += 1;
+    existingTag.totalRewardPoints += Math.max(0, Number(record.rewardPointsAwarded || 0));
 
     if (new Date(record.timestamp || 0).getTime() >= new Date(existingTag.lastUsedAt || 0).getTime()) {
       existingTag.lastUsedAt = record.timestamp;
@@ -462,6 +477,7 @@ const groupAwarenessTags = (records, countField, tagSettingsByKey = {}) => {
     }
 
     existingTag.description = tagSettingsByKey[record.tagKey]?.description || '';
+    existingTag.rewardPoints = tagSettingsByKey[record.tagKey]?.rewardPoints || 0;
 
     tagMap.set(record.tagKey, existingTag);
   });
@@ -490,7 +506,7 @@ const getAwarenessTagSettings = async () => {
 
     const document = getFirstDocument(result, collections.appSettings);
     return {
-      tagsByKey: document?.tags_by_key || document?.tagsByKey || {}
+      tagsByKey: normalizeAwarenessTagSettingsMap(document?.tags_by_key || document?.tagsByKey || {})
     };
   } catch (error) {
     console.error('获取觉察标签配置失败:', error);
@@ -829,7 +845,7 @@ export const userProfileService = {
 export const awarenessService = {
   async getTagMetadata(tagKey) {
     const settings = await getAwarenessTagSettings();
-    return settings.tagsByKey?.[tagKey] || {};
+    return normalizeAwarenessTagSettingEntry(settings.tagsByKey?.[tagKey] || {});
   },
 
   async addRecord(content, options = {}) {
@@ -851,6 +867,9 @@ export const awarenessService = {
       }
 
       const nowIso = new Date().toISOString();
+      const tagKey = `${trimmedContent}::${accessType}`;
+      const tagMetadata = await this.getTagMetadata(tagKey);
+      const configuredRewardPoints = Math.max(0, Number(tagMetadata.rewardPoints || 0));
       const basePayload = {
         author_key: awarenessIdentity.authorKey,
         user_id: awarenessIdentity.userId,
@@ -858,9 +877,11 @@ export const awarenessService = {
         user_name: awarenessIdentity.userName,
         content: trimmedContent,
         access_type: accessType,
-        tag_key: `${trimmedContent}::${accessType}`,
+        tag_key: tagKey,
         timestamp: nowIso,
-        created_at_client: nowIso
+        created_at_client: nowIso,
+        reward_points_setting_snapshot: configuredRewardPoints,
+        reward_points_awarded: 0
       };
 
       let result;
@@ -884,13 +905,42 @@ export const awarenessService = {
         throw new Error(result?.message || '添加觉察记录失败');
       }
 
+      let rewardResult = {
+        rewarded: false,
+        rewardAmount: 0,
+        inviterBonusAmount: 0
+      };
+
+      if (configuredRewardPoints > 0) {
+        try {
+          rewardResult = await wealthService.awardCurrentUser({
+            amount: configuredRewardPoints,
+            description: `觉察奖励：${trimmedContent}`,
+            source: 'awareness_tag',
+            rewardKey: `${tagKey}::${result.id}`,
+            allowRepeatReward: true
+          });
+
+          if (rewardResult.rewardAmount > 0) {
+            await db.collection(collections.awarenessRecords).doc(result.id).update({
+              reward_points_awarded: rewardResult.rewardAmount,
+              updated_at: new Date()
+            });
+          }
+        } catch (rewardError) {
+          console.error('发放觉察标签奖励失败:', rewardError);
+        }
+      }
+
       return {
         success: true,
         id: result.id,
         record: normalizeAwarenessRecord({
           ...basePayload,
+          reward_points_awarded: rewardResult.rewardAmount || 0,
           _id: result.id
-        })
+        }),
+        reward: rewardResult
       };
     } catch (error) {
       console.error('添加觉察记录失败:', error);
