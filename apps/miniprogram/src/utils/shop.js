@@ -108,22 +108,22 @@ const generateOrderNo = () => `MP${new Date().toISOString().slice(0, 10).replace
 
 const listShopCategories = async () => {
   const db = getDb()
-  const result = await db.collection(SHOP_CATEGORIES).where({ status: 'active' }).limit(50).get()
+  const result = await db.collection(SHOP_CATEGORIES).limit(50).get()
 
   return (result.data || [])
     .map(normalizeCategory)
+    .filter((category) => category.status === 'active')
     .sort((left, right) => left.sortOrder - right.sortOrder)
 }
 
 const listShopProducts = async ({ categoryId = '', limit = 100 } = {}) => {
   const db = getDb()
-  const query = categoryId
-    ? { status: 'active', category_id: categoryId }
-    : { status: 'active' }
-  const result = await db.collection(SHOP_PRODUCTS).where(query).limit(limit).get()
+  const result = await db.collection(SHOP_PRODUCTS).limit(limit).get()
 
   return (result.data || [])
     .map(normalizeProduct)
+    .filter((product) => product.status === 'active')
+    .filter((product) => (categoryId ? product.categoryId === categoryId : true))
     .sort((left, right) => {
       if (left.sortOrder !== right.sortOrder) {
         return left.sortOrder - right.sortOrder

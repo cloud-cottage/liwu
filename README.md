@@ -43,7 +43,7 @@ npm run build:server
 ## Notes
 
 - `apps/app` keeps the current production client and Vercel proxy logic.
-- `apps/web` is a reserved package for the future standalone web client.
+- `apps/web` is a runnable web client package that currently reuses `apps/app` feature modules for fast iteration.
 - `apps/admin` is a dedicated admin panel package with its own source tree.
 - `apps/miniprogram` now includes runnable `home / aware / profile / shop` page scaffolds for WeChat DevTools.
 - `apps/server` is a TypeScript-oriented backend skeleton ready for module expansion.

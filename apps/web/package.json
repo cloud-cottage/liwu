@@ -2,8 +2,10 @@
   "name": "@liwu/web",
   "private": true,
   "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "dev": "echo \"Decide web client direction before wiring a runtime for apps/web\"",
-    "build": "echo \"No build configured for apps/web yet\""
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   }
 }

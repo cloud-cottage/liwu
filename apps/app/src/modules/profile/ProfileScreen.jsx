@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Award, LogOut, MessageSquareText, ShieldCheck, Smartphone, UserRound, Wallet, X } from 'lucide-react';
+import { Award, LogOut, MessageSquareText, ShieldCheck, ShoppingBag, Smartphone, UserRound, Wallet, X } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { authService } from '../../services/cloudbase';
@@ -668,34 +668,45 @@ const Profile = () => {
           <Wallet size={16} color="var(--color-accent-ink)" />
           <h3 style={{ fontSize: '16px', margin: 0 }}>工坊入口</h3>
         </div>
-        <div
+        <button
+          type="button"
+          onClick={() => navigate('/shop')}
           style={{
+            width: '100%',
+            border: 'none',
             backgroundColor: '#fff',
             padding: '18px',
-            borderRadius: '12px',
-            boxShadow: 'var(--shadow-sm)'
+            borderRadius: '16px',
+            boxShadow: 'var(--shadow-sm)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '14px',
+            textAlign: 'left'
           }}
         >
-          <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7, marginBottom: '14px' }}>
-            已接入分类、商品和规格读取。现在可以从这里进入工坊联调线上店铺。
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate('/shop')}
+          <div
             style={{
-              border: 'none',
-              borderRadius: '12px',
-              backgroundColor: '#111827',
-              color: '#fff',
-              padding: '12px 16px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: 'pointer'
+              width: '52px',
+              height: '52px',
+              borderRadius: '16px',
+              backgroundColor: '#eef2ff',
+              color: '#312e81',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
             }}
           >
-            进入工坊
-          </button>
-        </div>
+            <ShoppingBag size={22} />
+          </div>
+          <div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a' }}>工坊</div>
+            <div style={{ marginTop: '6px', fontSize: '13px', color: '#64748b', lineHeight: 1.6 }}>
+              查看线上店铺、福豆兑换与订单流程
+            </div>
+          </div>
+        </button>
       </section>
 
       <section>
