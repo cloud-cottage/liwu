@@ -7,6 +7,8 @@ import Community from './pages/Community';
 import Profile from './modules/profile';
 import Challenges from './pages/Challenges';
 import ChallengeDetail from './pages/ChallengeDetail';
+import FortuneLedger from './pages/FortuneLedger';
+import Album from './pages/Album';
 import MeditationHome from './modules/meditate';
 import MeditationPlayer from './modules/meditate/player';
 import Shop from './modules/shop';
@@ -41,6 +43,8 @@ function App() {
               <Route path="shop" element={<Shop />} />
               <Route path="challenges" element={<Challenges />} />
               <Route path="challenges/:id" element={<ChallengeDetail />} />
+              <Route path="fortune-ledger" element={<FortuneLedger />} />
+              <Route path="album" element={<Album />} />
             </Route>
             <Route path="/meditation" element={<MeditationPlayer />} />
           </Routes>

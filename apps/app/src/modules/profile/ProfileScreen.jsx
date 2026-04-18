@@ -45,22 +45,31 @@ const getAuthHeadline = (authStatus) => {
   return '登录你的账号';
 };
 
-const InfoCard = ({ icon, label, value, accent }) => (
-  <div
-    style={{
-      backgroundColor: '#fff',
-      padding: '16px',
-      borderRadius: '12px',
-      boxShadow: 'var(--shadow-sm)'
-    }}
-  >
+const InfoCard = ({ icon, label, value, accent, onClick }) => {
+  const Element = onClick ? 'button' : 'div';
+
+  return (
+    <Element
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      style={{
+        backgroundColor: '#fff',
+        padding: '16px',
+        borderRadius: '12px',
+        boxShadow: 'var(--shadow-sm)',
+        border: 'none',
+        textAlign: 'left',
+        cursor: onClick ? 'pointer' : 'default'
+      }}
+    >
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', color: accent }}>
       {React.createElement(icon, { size: 18, style: { marginRight: '8px' } })}
       <span style={{ fontSize: '12px', fontWeight: '500' }}>{label}</span>
     </div>
     <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{value}</div>
-  </div>
-);
+    </Element>
+  );
+};
 
 const LoginModal = ({
   open,
@@ -633,8 +642,20 @@ const Profile = () => {
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '30px' }}>
-        <InfoCard icon={BookOpen} label="花开纪念册" value="敬请期待" accent="var(--color-accent-clay)" />
-        <InfoCard icon={Award} label="福豆" value={balance} accent="var(--color-text-secondary)" />
+        <InfoCard
+          icon={BookOpen}
+          label="花开纪念册"
+          value="进入查看"
+          accent="var(--color-accent-clay)"
+          onClick={() => navigate('/album')}
+        />
+        <InfoCard
+          icon={Award}
+          label="福豆"
+          value={balance}
+          accent="var(--color-text-secondary)"
+          onClick={() => navigate('/fortune-ledger')}
+        />
       </div>
 
       <section style={{ marginBottom: '24px' }}>

@@ -9,6 +9,40 @@ const SHOP_ORDER_ITEMS = 'shop_order_items'
 const USER_ADDRESSES = 'user_addresses'
 const USERS = 'users'
 const POINT_LEDGER = 'point_ledger'
+const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴'
+
+const parseNaturalNumber = (value = '') => {
+  const normalizedValue = String(value || '').trim()
+  if (!/^\d+$/.test(normalizedValue)) {
+    return 0
+  }
+
+  const parsedValue = Number(normalizedValue)
+  if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) {
+    return 0
+  }
+
+  return parsedValue
+}
+
+const formatNaturalNumber = (value) => String(Math.max(1, Number(value) || 1))
+
+const buildDefaultUserName = (uid = '') => `${DEFAULT_USER_NAME_PREFIX}${formatNaturalNumber(uid)}`
+
+const isSystemGeneratedUserName = (value = '') => {
+  const normalizedValue = String(value || '').trim()
+
+  return (
+    !normalizedValue ||
+    /^用户\d*$/.test(normalizedValue) ||
+    /^小悟[\da-z]+$/i.test(normalizedValue) ||
+    /^觉醒伙伴\d+$/.test(normalizedValue)
+  )
+}
+
+const getUserUid = (user = {}) => (
+  parseNaturalNumber(user.uid) || parseNaturalNumber(user.invite_code || user.inviteCode || '')
+)
 
 const normalizeCategory = (category = {}) => ({
   id: category._id || category.id || '',
@@ -65,28 +99,76 @@ const normalizeAddress = (address = {}) => ({
 const getOrCreateCurrentUser = async () => {
   const db = getDb()
   const profile = getLocalProfile()
-  const result = await db.collection(USERS).where({ auth_uid: profile.authorKey }).limit(1).get()
-  const existingUser = (result.data || [])[0]
+  let existingUser = null
+
+  if (profile.authorKey) {
+    const result = await db.collection(USERS).where({ auth_uid: profile.authorKey }).limit(1).get()
+    existingUser = (result.data || [])[0] || null
+  }
+
+  if (!existingUser && profile.phone) {
+    const phoneResult = await db.collection(USERS).where({ phone: profile.phone }).limit(1).get()
+    existingUser = (phoneResult.data || [])[0] || null
+  }
 
   if (existingUser) {
+    const resolvedUid = getUserUid(existingUser) || await getNextUserUid(db)
+    const updatePayload = {
+      updated_at: new Date().toISOString(),
+      last_active: new Date().toISOString()
+    }
+
+    if (profile.authorKey && (existingUser.auth_uid || '') !== profile.authorKey) {
+      updatePayload.auth_uid = profile.authorKey
+    }
+
+    if (profile.phone && (existingUser.phone || '') !== profile.phone) {
+      updatePayload.phone = profile.phone
+    }
+
+    if (Number(existingUser.uid || 0) !== resolvedUid) {
+      updatePayload.uid = resolvedUid
+    }
+
+    if ((existingUser.invite_code || '') !== formatNaturalNumber(resolvedUid)) {
+      updatePayload.invite_code = formatNaturalNumber(resolvedUid)
+    }
+
+    if (isSystemGeneratedUserName(existingUser.name)) {
+      updatePayload.name = buildDefaultUserName(resolvedUid)
+    }
+
+    if (Object.keys(updatePayload).length > 2) {
+      await db.collection(USERS).doc(existingUser._id || existingUser.id || '').update({ data: updatePayload })
+      existingUser = {
+        ...existingUser,
+        ...updatePayload
+      }
+    }
+
     return {
+      ...profile,
       id: existingUser._id || existingUser.id || '',
+      uid: getUserUid(existingUser) || resolvedUid,
+      inviteCode: existingUser.invite_code || formatNaturalNumber(resolvedUid),
+      name: existingUser.name || buildDefaultUserName(resolvedUid),
       balance: Number(existingUser.balance || 0),
-      wealthHistory: existingUser.wealth_history || [],
-      ...profile
+      wealthHistory: existingUser.wealth_history || []
     }
   }
 
+  const nextUid = await getNextUserUid(db)
   const now = new Date().toISOString()
   const payload = {
+    uid: nextUid,
     auth_uid: profile.authorKey,
-    name: profile.name,
+    name: buildDefaultUserName(nextUid),
     phone: profile.phone,
     status: 'active',
     level: 1,
     experience: 0,
     is_student: false,
-    invite_code: `MP${Date.now().toString(36).toUpperCase()}`,
+    invite_code: formatNaturalNumber(nextUid),
     inviter_user_id: '',
     balance: 0,
     wealth_history: [],
@@ -99,11 +181,23 @@ const getOrCreateCurrentUser = async () => {
 
   const createResult = await db.collection(USERS).add({ data: payload })
   return {
+    ...profile,
     id: createResult._id || createResult.id || '',
+    uid: nextUid,
+    inviteCode: formatNaturalNumber(nextUid),
     balance: 0,
     wealthHistory: [],
-    ...profile
+    name: payload.name
   }
+}
+
+const getNextUserUid = async (dbInstance = getDb()) => {
+  const result = await dbInstance.collection(USERS).limit(2000).get()
+  const maxUserUid = (result.data || []).reduce((currentMax, user) => (
+    Math.max(currentMax, getUserUid(user))
+  ), 0)
+
+  return Number(formatNaturalNumber(maxUserUid + 1))
 }
 
 const getCurrentShopProfile = async () => {

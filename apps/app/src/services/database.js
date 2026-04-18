@@ -67,6 +67,7 @@ const normalizeTag = (tag, categoriesById = new Map()) => {
 
 const normalizeUser = (user) => ({
   id: getDocumentId(user),
+  uid: Number(user.uid || 0),
   name: user.name || '',
   avatar: user.avatar || '',
   email: user.email || '',
@@ -116,6 +117,7 @@ const toUserPayload = (userData) => {
   delete rest.joinDate;
   delete rest.lastActive;
   delete rest.authUid;
+  delete rest.uid;
   delete rest.isStudent;
   delete rest.inviteCode;
   delete rest.inviterUserId;
@@ -125,6 +127,7 @@ const toUserPayload = (userData) => {
 
   return {
     ...rest,
+    ...(userData.uid !== undefined ? { uid: Math.max(1, Number(userData.uid) || 1) } : {}),
     ...(joinDate !== undefined ? { join_date: joinDate } : {}),
     ...(lastActive !== undefined ? { last_active: lastActive } : {}),
     ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),

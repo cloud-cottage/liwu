@@ -173,6 +173,7 @@ const createWealthHistoryEntry = ({ amount, description, source, relatedUserId =
 
 const normalizeUser = (user) => ({
   id: getDocumentId(user),
+  uid: Number(user.uid || 0),
   name: user.name || '',
   avatar: user.avatar || '',
   email: user.email || '',
@@ -233,6 +234,7 @@ const toUserPayload = (userData) => {
   delete rest.joinDate;
   delete rest.lastActive;
   delete rest.authUid;
+  delete rest.uid;
   delete rest.isStudent;
   delete rest.inviteCode;
   delete rest.inviterUserId;
@@ -242,6 +244,7 @@ const toUserPayload = (userData) => {
 
   return {
     ...rest,
+    ...(userData.uid !== undefined ? { uid: Math.max(1, Number(userData.uid) || 1) } : {}),
     ...(joinDate !== undefined ? { join_date: joinDate } : {}),
     ...(lastActive !== undefined ? { last_active: lastActive } : {}),
     ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),
@@ -526,6 +529,7 @@ class DatabaseService {
   static async saveAwarenessTagSettings(settingsData) {
     try {
       await ensureAnonymousLogin();
+      const rename = settingsData.rename || null;
       const existingResult = await db
         .collection(collections.appSettings)
         .where({ key: AWARENESS_TAG_SETTINGS_KEY })
@@ -539,6 +543,35 @@ class DatabaseService {
       }
 
       const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      if (rename && rename.fromKey && rename.toKey && rename.fromKey !== rename.toKey) {
+        const conflictingResult = await db
+          .collection(collections.awarenessRecords)
+          .where({ tag_key: rename.toKey })
+          .limit(1)
+          .get();
+
+        if (getDocuments(conflictingResult, collections.awarenessRecords).length > 0) {
+          throw new Error('已存在同名觉察标签，请更换名称');
+        }
+
+        const recordsResult = await db
+          .collection(collections.awarenessRecords)
+          .where({ tag_key: rename.fromKey })
+          .limit(2000)
+          .get();
+
+        const records = getDocuments(recordsResult, collections.awarenessRecords);
+        await Promise.all(
+          records.map((record) => (
+            db.collection(collections.awarenessRecords).doc(getDocumentId(record)).update({
+              content: rename.toContent,
+              tag_key: rename.toKey,
+              updated_at: new Date()
+            })
+          ))
+        );
+      }
+
       const payload = {
         ...toAwarenessTagSettingsPayload(settingsData),
         updated_at: new Date()

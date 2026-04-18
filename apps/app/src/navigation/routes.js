@@ -3,5 +3,7 @@ export const appRoutes = {
   meditate: '/meditation-tab',
   aware: '/aware',
   profile: '/profile',
-  shop: '/shop'
+  shop: '/shop',
+  fortuneLedger: '/fortune-ledger',
+  album: '/album'
 }

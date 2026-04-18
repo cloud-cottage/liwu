@@ -8,6 +8,8 @@ import Shop from '@app/modules/shop'
 import Community from '@app/pages/Community.jsx'
 import Challenges from '@app/pages/Challenges.jsx'
 import ChallengeDetail from '@app/pages/ChallengeDetail.jsx'
+import FortuneLedger from '@app/pages/FortuneLedger.jsx'
+import Album from '@app/pages/Album.jsx'
 import MeditationHome from '@app/modules/meditate'
 import MeditationPlayer from '@app/modules/meditate/player'
 import { CloudAwarenessProvider } from '@app/context/CloudAwarenessContext.jsx'
@@ -38,6 +40,8 @@ const App = () => (
             <Route path="shop" element={<Shop />} />
             <Route path="challenges" element={<Challenges />} />
             <Route path="challenges/:id" element={<ChallengeDetail />} />
+            <Route path="fortune-ledger" element={<FortuneLedger />} />
+            <Route path="album" element={<Album />} />
           </Route>
           <Route path="/meditation" element={<MeditationPlayer />} />
         </Routes>

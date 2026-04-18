@@ -58,10 +58,12 @@ const SortButton = ({ label, active, direction, onClick, align = 'left' }) => (
 
 const AwarenessTagDetailModal = ({
   tag,
+  draftContent,
   draftDescription,
   draftRewardPoints,
   saving,
   onClose,
+  onContentChange,
   onDescriptionChange,
   onRewardPointsChange,
   onSave
@@ -107,7 +109,7 @@ const AwarenessTagDetailModal = ({
           </div>
           <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: '28px', color: '#111827' }}>{tag.content}</h3>
+              <h3 style={{ margin: 0, fontSize: '28px', color: '#111827' }}>{draftContent || tag.content}</h3>
               <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
                 最近标记者：{tag.lastUserName || '匿名用户'}<br />
                 最近标记时间：{formatDateTime(tag.lastUsedAt)}
@@ -150,6 +152,30 @@ const AwarenessTagDetailModal = ({
           </div>
 
           <div style={{ display: 'grid', gap: '18px' }}>
+            <div>
+              <label htmlFor="awareness-tag-name" style={fieldLabelStyle}>标签名称</label>
+              <input
+                id="awareness-tag-name"
+                type="text"
+                maxLength="6"
+                value={draftContent}
+                onChange={(event) => onContentChange(event.target.value)}
+                placeholder="请输入标签名称"
+                style={{
+                  width: '100%',
+                  borderRadius: '14px',
+                  border: '1px solid #dbe4ee',
+                  padding: '12px 14px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  color: '#334155'
+                }}
+              />
+              <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                修改后会同步更新此觉察标签的历史记录名称。
+              </div>
+            </div>
+
             <div>
               <label htmlFor="awareness-tag-description" style={fieldLabelStyle}>标签简介</label>
               <textarea
@@ -259,9 +285,10 @@ const AwarenessTagSettings = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'totalCount', direction: 'desc' });
   const [selectedTagKey, setSelectedTagKey] = useState('');
+  const [draftContent, setDraftContent] = useState('');
   const [draftDescription, setDraftDescription] = useState('');
   const [draftRewardPoints, setDraftRewardPoints] = useState('0');
-  const [successMessage, setSuccessMessage] = useState('');
+  const [message, setMessage] = useState({ type: '', text: '' });
 
   const mergedTags = useMemo(() => (
     tags.map((tag) => {
@@ -313,9 +340,10 @@ const AwarenessTagSettings = ({
 
   const handleOpenTag = (tag) => {
     setSelectedTagKey(tag.key);
+    setDraftContent(tag.content || '');
     setDraftDescription(tag.description || '');
     setDraftRewardPoints(String(tag.rewardPoints || 0));
-    setSuccessMessage('');
+    setMessage({ type: '', text: '' });
   };
 
   const handleSave = async () => {
@@ -323,17 +351,45 @@ const AwarenessTagSettings = ({
       return;
     }
 
+    const trimmedContent = String(draftContent || '').trim().slice(0, 6);
+    if (!trimmedContent) {
+      setMessage({ type: 'error', text: '请输入觉察标签名称。' });
+      return;
+    }
+
+    const nextTagKey = `${trimmedContent}::${selectedTag.accessType}`;
+    const conflictingTag = mergedTags.find((tag) => tag.key !== selectedTag.key && tag.key === nextTagKey);
+    if (conflictingTag) {
+      setMessage({ type: 'error', text: '已存在同名觉察标签，请更换名称。' });
+      return;
+    }
+
     const nextTagsByKey = {
       ...(settings.tagsByKey || {}),
-      [selectedTag.key]: {
+      [nextTagKey]: {
         ...(settings.tagsByKey?.[selectedTag.key] || {}),
         description: draftDescription.trim(),
         rewardPoints: normalizeRewardPoints(draftRewardPoints)
       }
     };
 
-    await onSave({ tagsByKey: nextTagsByKey });
-    setSuccessMessage(`已保存「${selectedTag.content}」的觉察设置。`);
+    if (nextTagKey !== selectedTag.key) {
+      delete nextTagsByKey[selectedTag.key];
+    }
+
+    await onSave({
+      tagsByKey: nextTagsByKey,
+      rename: nextTagKey !== selectedTag.key
+        ? {
+            fromKey: selectedTag.key,
+            toKey: nextTagKey,
+            toContent: trimmedContent,
+            accessType: selectedTag.accessType
+          }
+        : null
+    });
+
+    setMessage({ type: 'success', text: `已保存「${trimmedContent}」的觉察设置。` });
     setSelectedTagKey('');
   };
 
@@ -363,18 +419,18 @@ const AwarenessTagSettings = ({
         />
       </div>
 
-      {(error || successMessage) && (
+      {(error || message.text) && (
         <div
           style={{
             padding: '12px 14px',
             borderRadius: '10px',
-            backgroundColor: error ? '#fff3f3' : '#f1f8f4',
-            color: error ? '#c62828' : '#2e7d32',
+            backgroundColor: (error || message.type === 'error') ? '#fff3f3' : '#f1f8f4',
+            color: (error || message.type === 'error') ? '#c62828' : '#2e7d32',
             fontSize: '13px',
             lineHeight: 1.6
           }}
         >
-          {error || successMessage}
+          {error || message.text}
         </div>
       )}
 
@@ -495,14 +551,17 @@ const AwarenessTagSettings = ({
 
       <AwarenessTagDetailModal
         tag={selectedTag}
+        draftContent={draftContent}
         draftDescription={draftDescription}
         draftRewardPoints={draftRewardPoints}
         saving={saving}
         onClose={() => {
           setSelectedTagKey('');
+          setDraftContent('');
           setDraftDescription('');
           setDraftRewardPoints('0');
         }}
+        onContentChange={setDraftContent}
         onDescriptionChange={setDraftDescription}
         onRewardPointsChange={setDraftRewardPoints}
         onSave={handleSave}
