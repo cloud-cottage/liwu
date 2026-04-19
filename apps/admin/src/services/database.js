@@ -1,5 +1,13 @@
 import { DATABASE_CONFIG } from '../config/database.js';
 import { db, ensureAnonymousLogin } from './cloudbase.js';
+import {
+  BADGE_ACTIVITY_TYPES,
+  BADGE_BONUS_TYPES,
+  BADGE_SETTINGS_KEY,
+  createDefaultBadgeSettings,
+  flattenBadgeSeries,
+  normalizeBadgeSettings
+} from '@liwu/shared-utils/badge-system.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -16,6 +24,11 @@ export const DEFAULT_MEDITATION_SETTINGS = {
 export const DEFAULT_AWARENESS_TAG_SETTINGS = {
   documentId: null,
   tagsByKey: {},
+  missingCollection: false
+};
+
+export const DEFAULT_BADGE_SETTINGS = {
+  ...normalizeBadgeSettings(createDefaultBadgeSettings()),
   missingCollection: false
 };
 
@@ -86,6 +99,7 @@ const normalizeShopProduct = (product = {}) => ({
   skuMode: product.sku_mode || product.skuMode || 'single',
   pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
   priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
+  rewardPointsReturnFrom: Number(product.reward_points_return_from ?? product.rewardPointsReturnFrom ?? 0),
   stockTotal: Number(product.stock_total ?? product.stockTotal ?? 0),
   salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
   limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
@@ -99,6 +113,7 @@ const normalizeShopSku = (sku = {}) => ({
   skuCode: sku.sku_code || sku.skuCode || '',
   pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
   priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
+  rewardPointsReturn: Number(sku.reward_points_return ?? sku.rewardPointsReturn ?? 0),
   stock: Number(sku.stock ?? 0),
   status: sku.status || 'active'
 });
@@ -111,6 +126,9 @@ const normalizeShopOrder = (order = {}) => ({
   status: order.status || 'pending_payment',
   totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
   totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+  rewardPointsReturnTotal: Number(order.reward_points_return_total ?? order.rewardPointsReturnTotal ?? 0),
+  rewardPointsAwarded: Number(order.reward_points_awarded ?? order.rewardPointsAwarded ?? 0),
+  badgeBonusPointsAwarded: Number(order.badge_bonus_points_awarded ?? order.badgeBonusPointsAwarded ?? 0),
   paidAt: order.paid_at || order.paidAt || '',
   createdAt: order.created_at || order.createdAt || ''
 });
@@ -125,6 +143,7 @@ const normalizeShopOrderItem = (item = {}) => ({
   quantity: Number(item.quantity ?? 0),
   subtotalPoints: Number(item.subtotal_points ?? item.subtotalPoints ?? 0),
   subtotalCash: Number(item.subtotal_cash ?? item.subtotalCash ?? 0),
+  rewardPointsReturn: Number(item.reward_points_return_snapshot ?? item.rewardPointsReturnSnapshot ?? 0),
   productType: item.product_type || item.productType || 'physical'
 });
 
@@ -141,6 +160,7 @@ const toShopProductPayload = (productData = {}) => ({
   sku_mode: productData.skuMode || 'single',
   price_points_from: Number(productData.pricePointsFrom || 0),
   price_cash_from: Number(productData.priceCashFrom || 0),
+  reward_points_return_from: Number(productData.rewardPointsReturnFrom || 0),
   stock_total: Number(productData.stockTotal || 0),
   sales_count: Number(productData.salesCount || 0),
   limit_per_user: Number(productData.limitPerUser || 0),
@@ -155,6 +175,7 @@ const toShopSkuPayload = (skuData = {}, productId) => ({
   attrs: skuData.attrs || {},
   price_points: Number(skuData.pricePoints || 0),
   price_cash: Number(skuData.priceCash || 0),
+  reward_points_return: Number(skuData.rewardPointsReturn || 0),
   stock: Number(skuData.stock || 0),
   lock_stock: Number(skuData.lockStock || 0),
   status: skuData.status || 'active',
@@ -170,6 +191,41 @@ const createWealthHistoryEntry = ({ amount, description, source, relatedUserId =
   source,
   relatedUserId
 });
+
+const getEquippedBadgeBonusForActivity = async ({ userId, activityType, baseAmount = 0 }) => {
+  if (!userId || !activityType) {
+    return { rewardAmount: 0, badgeId: '' };
+  }
+
+  const [settings, badgeProfileResult] = await Promise.all([
+    DatabaseService.getBadgeSettings(),
+    db.collection(collections.badgeProfiles).where({ user_id: userId }).limit(1).get().catch(() => ({ data: [] }))
+  ]);
+
+  const badgeProfile = getDocuments(badgeProfileResult, collections.badgeProfiles)[0] || null;
+  const equippedBadgeId = badgeProfile?.equipped_badge_id || badgeProfile?.equippedBadgeId || '';
+  if (!equippedBadgeId) {
+    return { rewardAmount: 0, badgeId: '' };
+  }
+
+  const badge = flattenBadgeSeries(settings).find((item) => item.badgeId === equippedBadgeId);
+  if (!badge || badge.bonusActivity !== activityType) {
+    return { rewardAmount: 0, badgeId: '' };
+  }
+
+  const normalizedBaseAmount = Math.max(0, Number(baseAmount || 0));
+  const normalizedBonusValue = Math.max(0, Number(badge.bonusValue || 0));
+  if (normalizedBonusValue <= 0) {
+    return { rewardAmount: 0, badgeId: equippedBadgeId };
+  }
+
+  return {
+    badgeId: equippedBadgeId,
+    rewardAmount: badge.bonusType === BADGE_BONUS_TYPES.fixed
+      ? normalizedBonusValue
+      : Math.floor((normalizedBaseAmount * normalizedBonusValue) / 100)
+  };
+};
 
 const normalizeUser = (user) => ({
   id: getDocumentId(user),
@@ -317,6 +373,12 @@ const toAwarenessTagSettingsPayload = (settingsData) => ({
   )
 });
 
+const toBadgeSettingsPayload = (settingsData = {}) => ({
+  key: BADGE_SETTINGS_KEY,
+  version: Math.max(1, Number(settingsData.version || 1)),
+  series: normalizeBadgeSettings(settingsData).series
+});
+
 const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
   const categoriesById = new Map(categories.map((category) => [category.id, category]));
   const normalizedTags = tags.map((tag) => normalizeTag(tag, categoriesById));
@@ -399,9 +461,16 @@ class DatabaseService {
   static async saveShopProduct(productData) {
     try {
       await ensureAnonymousLogin();
+      const skus = Array.isArray(productData.skus) ? productData.skus : [];
+      const derivedRewardPointsReturnFrom = skus.length > 0
+        ? Math.min(...skus.map((sku) => Math.max(0, Number(sku.rewardPointsReturn || 0))))
+        : Math.max(0, Number(productData.rewardPointsReturnFrom || 0));
 
       const productPayload = {
-        ...toShopProductPayload(productData),
+        ...toShopProductPayload({
+          ...productData,
+          rewardPointsReturnFrom: derivedRewardPointsReturnFrom
+        }),
         updated_at: new Date()
       };
 
@@ -418,7 +487,6 @@ class DatabaseService {
         productId = result.id || result._id;
       }
 
-      const skus = Array.isArray(productData.skus) ? productData.skus : [];
       for (const sku of skus) {
         await db.collection(collections.shopProductSkus).add({
           ...toShopSkuPayload(sku, productId),
@@ -451,12 +519,61 @@ class DatabaseService {
         updated_at: nowIso
       };
 
+      if (nextStatus === 'paid') {
+        updatePayload.paid_at = nowIso;
+      }
+
       if (nextStatus === 'shipped') {
         updatePayload.shipped_at = nowIso;
       }
 
       if (nextStatus === 'completed') {
         updatePayload.completed_at = nowIso;
+      }
+
+      if (nextStatus === 'paid' && order.status !== 'paid' && order.totalCash > 0 && (order.rewardPointsAwarded + order.badgeBonusPointsAwarded) === 0) {
+        const userResult = await db.collection(collections.users).doc(order.userId).get();
+        const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
+
+        if (userDocument) {
+          const configuredRewardPoints = Math.max(0, Number(order.rewardPointsReturnTotal || 0));
+          const badgeBonus = await getEquippedBadgeBonusForActivity({
+            userId: order.userId,
+            activityType: BADGE_ACTIVITY_TYPES.shopSpend,
+            baseAmount: order.totalCash
+          });
+          const totalRewardPoints = configuredRewardPoints + Math.max(0, Number(badgeBonus.rewardAmount || 0));
+
+          if (totalRewardPoints > 0) {
+            const nextBalance = Number(userDocument.balance || 0) + totalRewardPoints;
+            const wealthHistoryEntry = createWealthHistoryEntry({
+              amount: totalRewardPoints,
+              description: `工坊消费奖励：${order.orderNo}`,
+              source: 'shop_cash_reward',
+              relatedUserId: order.userId
+            });
+
+            await db.collection(collections.pointLedger).add({
+              user_id: order.userId,
+              delta: totalRewardPoints,
+              balance_after: nextBalance,
+              biz_type: 'shop_cash_reward',
+              biz_id: order.id,
+              description: `工坊消费奖励：${order.orderNo}`,
+              operator_id: 'admin',
+              created_at: nowIso
+            });
+
+            await db.collection(collections.users).doc(order.userId).update({
+              balance: nextBalance,
+              wealth_history: [wealthHistoryEntry].concat(userDocument.wealth_history || []),
+              updated_at: nowIso
+            });
+
+            updatePayload.reward_points_awarded = configuredRewardPoints;
+            updatePayload.badge_bonus_points_awarded = Math.max(0, Number(badgeBonus.rewardAmount || 0));
+          }
+        }
       }
 
       if ((nextStatus === 'cancelled' || nextStatus === 'refunded') && order.totalPoints > 0 && order.status !== 'cancelled' && order.status !== 'refunded') {
@@ -488,6 +605,42 @@ class DatabaseService {
             wealth_history: [wealthHistoryEntry].concat(userDocument.wealth_history || []),
             updated_at: nowIso
           });
+        }
+      }
+
+      if ((nextStatus === 'cancelled' || nextStatus === 'refunded') && (order.rewardPointsAwarded > 0 || order.badgeBonusPointsAwarded > 0) && order.status !== 'cancelled' && order.status !== 'refunded') {
+        const userResult = await db.collection(collections.users).doc(order.userId).get();
+        const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
+
+        if (userDocument) {
+          const totalRewardToRevoke = order.rewardPointsAwarded + order.badgeBonusPointsAwarded;
+          const nextBalance = Number(userDocument.balance || 0) - totalRewardToRevoke;
+          const wealthHistoryEntry = createWealthHistoryEntry({
+            amount: -totalRewardToRevoke,
+            description: `工坊奖励撤回：${order.orderNo}`,
+            source: 'shop_reward_reversal',
+            relatedUserId: order.userId
+          });
+
+          await db.collection(collections.pointLedger).add({
+            user_id: order.userId,
+            delta: -totalRewardToRevoke,
+            balance_after: nextBalance,
+            biz_type: 'shop_reward_reversal',
+            biz_id: order.id,
+            description: `工坊奖励撤回：${order.orderNo}`,
+            operator_id: 'admin',
+            created_at: nowIso
+          });
+
+          await db.collection(collections.users).doc(order.userId).update({
+            balance: nextBalance,
+            wealth_history: [wealthHistoryEntry].concat(userDocument.wealth_history || []),
+            updated_at: nowIso
+          });
+
+          updatePayload.reward_points_awarded = 0;
+          updatePayload.badge_bonus_points_awarded = 0;
         }
       }
 
@@ -771,6 +924,90 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving meditation settings:', error);
+      throw error;
+    }
+  }
+
+  static async getBadgeSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: BADGE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_BADGE_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_BADGE_SETTINGS };
+      }
+
+      return normalizeBadgeSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_BADGE_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching badge settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveBadgeSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: BADGE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toBadgeSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+
+        return normalizeBadgeSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeBadgeSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving badge settings:', error);
       throw error;
     }
   }

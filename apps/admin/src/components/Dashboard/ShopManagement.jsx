@@ -22,6 +22,7 @@ const createEmptySku = () => ({
   skuCode: '',
   pricePoints: 0,
   priceCash: 0,
+  rewardPointsReturn: 0,
   stock: 0,
   status: 'active'
 });
@@ -37,6 +38,7 @@ const createProductDraft = (product = null, skus = []) => ({
   skuMode: product?.skuMode || 'single',
   pricePointsFrom: product?.pricePointsFrom || 0,
   priceCashFrom: product?.priceCashFrom || 0,
+  rewardPointsReturnFrom: product?.rewardPointsReturnFrom || 0,
   stockTotal: product?.stockTotal || 0,
   salesCount: product?.salesCount || 0,
   limitPerUser: product?.limitPerUser || 0,
@@ -98,14 +100,14 @@ const ShopManagement = ({
   };
 
   const handleCreateProduct = () => {
-    setEditingProduct(null);
+    setEditingProduct({});
     setProductDraft(createProductDraft());
   };
 
   const handleProductDraftChange = (field, value) => {
     setProductDraft((currentDraft) => ({
       ...currentDraft,
-      [field]: ['pricePointsFrom', 'priceCashFrom', 'stockTotal', 'salesCount', 'limitPerUser', 'sortOrder'].includes(field)
+      [field]: ['pricePointsFrom', 'priceCashFrom', 'rewardPointsReturnFrom', 'stockTotal', 'salesCount', 'limitPerUser', 'sortOrder'].includes(field)
         ? Number(value || 0)
         : value
     }));
@@ -118,7 +120,7 @@ const ShopManagement = ({
         skuIndex === index
           ? {
               ...sku,
-              [field]: ['pricePoints', 'priceCash', 'stock'].includes(field) ? Number(value || 0) : value
+              [field]: ['pricePoints', 'priceCash', 'rewardPointsReturn', 'stock'].includes(field) ? Number(value || 0) : value
             }
           : sku
       ))
@@ -276,6 +278,7 @@ const ShopManagement = ({
                 <div style={{ display: 'grid', gap: '6px', fontSize: '13px', color: '#475569', marginBottom: '14px' }}>
                   <div>分类：{category?.name || '未分类'}</div>
                   <div>价格：{product.pricePointsFrom} 福豆 · {formatCash(product.priceCashFrom)}</div>
+                  <div>返豆：{product.rewardPointsReturnFrom || 0} 福豆起</div>
                   <div>库存：{product.stockTotal} · 销量：{product.salesCount} · 限购：{product.limitPerUser || '不限'}</div>
                 </div>
 
@@ -293,7 +296,7 @@ const ShopManagement = ({
                       >
                         <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a' }}>{sku.skuName || '默认规格'}</div>
                         <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
-                          {sku.pricePoints} 福豆 · {formatCash(sku.priceCash)} · 库存 {sku.stock}
+                          {sku.pricePoints} 福豆 · {formatCash(sku.priceCash)} · 返 {sku.rewardPointsReturn || 0} 福豆 · 库存 {sku.stock}
                         </div>
                       </div>
                     ))}
@@ -357,6 +360,7 @@ const ShopManagement = ({
                 <div style={{ display: 'grid', gap: '6px', fontSize: '13px', color: '#475569', marginBottom: '14px' }}>
                   <div>订单类型：{order.orderType}</div>
                   <div>总额：{order.totalPoints} 福豆 · {formatCash(order.totalCash)}</div>
+                  <div>返豆：{order.rewardPointsReturnTotal || 0} 福豆 · 已发放：{(order.rewardPointsAwarded || 0) + (order.badgeBonusPointsAwarded || 0)} 福豆</div>
                   <div>支付时间：{order.paidAt || '未支付'}</div>
                 </div>
 
@@ -373,7 +377,7 @@ const ShopManagement = ({
                     >
                       <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a' }}>{item.productName}</div>
                       <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
-                        {item.skuName || '默认规格'} · x{item.quantity} · {item.subtotalPoints} 福豆
+                        {item.skuName || '默认规格'} · x{item.quantity} · {item.subtotalPoints} 福豆 · {formatCash(item.subtotalCash)} · 返 {item.rewardPointsReturn || 0} 福豆
                       </div>
                     </div>
                   ))}
@@ -427,6 +431,19 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
         </button>
         <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'cancelled')}>
           取消并退款
+        </button>
+      </>
+    );
+  }
+
+  if (order.status === 'pending_payment') {
+    return (
+      <>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'paid')}>
+          确认已支付
+        </button>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'cancelled')}>
+          取消订单
         </button>
       </>
     );
@@ -534,11 +551,14 @@ const ProductEditor = ({
           <Field label="现金起价">
             <input type="number" value={draft.priceCashFrom} onChange={(event) => onChange('priceCashFrom', event.target.value)} style={inputStyle} />
           </Field>
-          <Field label="库存总数">
-            <input type="number" value={draft.stockTotal} onChange={(event) => onChange('stockTotal', event.target.value)} style={inputStyle} />
+          <Field label="返豆起始值">
+            <input type="number" value={draft.rewardPointsReturnFrom} onChange={(event) => onChange('rewardPointsReturnFrom', event.target.value)} style={inputStyle} />
           </Field>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
+          <Field label="库存总数">
+            <input type="number" value={draft.stockTotal} onChange={(event) => onChange('stockTotal', event.target.value)} style={inputStyle} />
+          </Field>
           <Field label="限购">
             <input type="number" value={draft.limitPerUser} onChange={(event) => onChange('limitPerUser', event.target.value)} style={inputStyle} />
           </Field>
@@ -563,7 +583,7 @@ const ProductEditor = ({
           <div style={{ display: 'grid', gap: '10px' }}>
             {draft.skus.map((sku, index) => (
               <div key={`${sku.id || 'new'}-${index}`} style={{ borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: '#f8fafc', padding: '14px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
                   <Field label="规格名">
                     <input value={sku.skuName} onChange={(event) => onSkuChange(index, 'skuName', event.target.value)} style={inputStyle} />
                   </Field>
@@ -575,6 +595,9 @@ const ProductEditor = ({
                   </Field>
                   <Field label="现金">
                     <input type="number" value={sku.priceCash} onChange={(event) => onSkuChange(index, 'priceCash', event.target.value)} style={inputStyle} />
+                  </Field>
+                  <Field label="返豆">
+                    <input type="number" value={sku.rewardPointsReturn} onChange={(event) => onSkuChange(index, 'rewardPointsReturn', event.target.value)} style={inputStyle} />
                   </Field>
                   <Field label="库存">
                     <input type="number" value={sku.stock} onChange={(event) => onSkuChange(index, 'stock', event.target.value)} style={inputStyle} />

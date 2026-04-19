@@ -1,5 +1,19 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { DATABASE_CONFIG } from '../config/database.js';
+import {
+  BADGE_ACTIVITY_TYPES,
+  BADGE_BONUS_ACTIVITY_MAP,
+  BADGE_BONUS_TYPES,
+  BADGE_INTERNAL_CATEGORIES,
+  BADGE_METRIC_TYPES,
+  BADGE_PROFILE_COLLECTION,
+  BADGE_SETTINGS_KEY,
+  BADGE_SLOT_KEYS,
+  createDefaultBadgeSettings,
+  flattenBadgeSeries,
+  formatBadgeBonusText,
+  normalizeBadgeSettings
+} from '@liwu/shared-utils/badge-system.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
@@ -13,6 +27,7 @@ const MAX_WEALTH_HISTORY_ITEMS = 50;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
+const SHANGHAI_TIMEZONE = 'Asia/Shanghai';
 
 const shouldUseCloudBaseProxy = () => {
   if (typeof window === 'undefined') {
@@ -448,6 +463,7 @@ const normalizeAwarenessRecord = (record = {}) => {
     content,
     accessType,
     tagKey: record.tag_key || `${content}::${accessType}`,
+    recordSource: record.record_source || record.recordSource || 'manual',
     timestamp: getRecordTimestamp(record),
     rewardPointsAwarded: Math.max(0, Number(record.reward_points_awarded ?? record.rewardPointsAwarded ?? 0))
   };
@@ -477,6 +493,7 @@ const normalizeShopProduct = (product = {}) => ({
   skuMode: product.sku_mode || product.skuMode || 'single',
   pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
   priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
+  rewardPointsReturnFrom: Number(product.reward_points_return_from ?? product.rewardPointsReturnFrom ?? 0),
   stockTotal: Number(product.stock_total ?? product.stockTotal ?? 0),
   salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
   limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
@@ -492,6 +509,7 @@ const normalizeShopSku = (sku = {}) => ({
   attrs: sku.attrs || {},
   pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
   priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
+  rewardPointsReturn: Number(sku.reward_points_return ?? sku.rewardPointsReturn ?? 0),
   stock: Number(sku.stock ?? 0),
   lockStock: Number(sku.lock_stock ?? sku.lockStock ?? 0),
   status: sku.status || 'active',
@@ -520,6 +538,9 @@ const normalizeShopOrder = (order = {}) => ({
   status: order.status || 'pending_payment',
   totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
   totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+  rewardPointsReturnTotal: Number(order.reward_points_return_total ?? order.rewardPointsReturnTotal ?? 0),
+  rewardPointsAwarded: Number(order.reward_points_awarded ?? order.rewardPointsAwarded ?? 0),
+  badgeBonusPointsAwarded: Number(order.badge_bonus_points_awarded ?? order.badgeBonusPointsAwarded ?? 0),
   createdAt: order.created_at || order.createdAt || ''
 });
 
@@ -613,6 +634,607 @@ const getAwarenessTagSettings = async () => {
     console.error('获取觉察标签配置失败:', error);
     return { tagsByKey: {} };
   }
+};
+
+const shanghaiDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SHANGHAI_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+const shanghaiHourFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: SHANGHAI_TIMEZONE,
+  hour: '2-digit',
+  hour12: false
+});
+
+const toShanghaiDateKey = (value = new Date()) => (
+  shanghaiDateFormatter.format(new Date(value))
+);
+
+const toShanghaiHour = (value = new Date()) => (
+  Number(shanghaiHourFormatter.format(new Date(value)))
+);
+
+const getMeditationSlotKey = (value = new Date()) => {
+  const hour = toShanghaiHour(value);
+
+  if (hour >= 5 && hour < 11) {
+    return BADGE_SLOT_KEYS.dawn;
+  }
+
+  if (hour >= 11 && hour < 14) {
+    return BADGE_SLOT_KEYS.noon;
+  }
+
+  if (hour >= 14 && hour < 18) {
+    return BADGE_SLOT_KEYS.afternoon;
+  }
+
+  return BADGE_SLOT_KEYS.evening;
+};
+
+const buildStreakStats = (dateKeys = []) => {
+  const uniqueDateKeys = [...new Set(dateKeys.filter(Boolean))].sort();
+  if (uniqueDateKeys.length === 0) {
+    return {
+      totalDays: 0,
+      longestStreak: 0
+    };
+  }
+
+  let longestStreak = 1;
+  let currentStreak = 1;
+
+  for (let index = 1; index < uniqueDateKeys.length; index += 1) {
+    const previousDate = new Date(`${uniqueDateKeys[index - 1]}T00:00:00+08:00`);
+    const currentDate = new Date(`${uniqueDateKeys[index]}T00:00:00+08:00`);
+    const dayDifference = Math.round((currentDate.getTime() - previousDate.getTime()) / 86400000);
+
+    if (dayDifference === 1) {
+      currentStreak += 1;
+      longestStreak = Math.max(longestStreak, currentStreak);
+    } else {
+      currentStreak = 1;
+    }
+  }
+
+  return {
+    totalDays: uniqueDateKeys.length,
+    longestStreak
+  };
+};
+
+const normalizeBadgeProfile = (document = {}) => ({
+  id: getDocumentId(document),
+  userId: document.user_id || document.userId || '',
+  equippedBadgeId: document.equipped_badge_id || document.equippedBadgeId || '',
+  unlockedBadgeIds: Array.isArray(document.unlocked_badge_ids || document.unlockedBadgeIds)
+    ? [...new Set((document.unlocked_badge_ids || document.unlockedBadgeIds).filter(Boolean))]
+    : [],
+  unlockedAtMap:
+    document.unlocked_at_map && typeof document.unlocked_at_map === 'object' && !Array.isArray(document.unlocked_at_map)
+      ? document.unlocked_at_map
+      : (document.unlockedAtMap && typeof document.unlockedAtMap === 'object' && !Array.isArray(document.unlockedAtMap)
+          ? document.unlockedAtMap
+          : {}),
+  lastCloudSignDate: document.last_cloud_sign_date || document.lastCloudSignDate || '',
+  updatedAt: document.updated_at || document.updatedAt || '',
+  missingCollection: false
+});
+
+const createEmptyBadgeProfile = (userId = '') => ({
+  id: '',
+  userId,
+  equippedBadgeId: '',
+  unlockedBadgeIds: [],
+  unlockedAtMap: {},
+  lastCloudSignDate: '',
+  updatedAt: '',
+  missingCollection: false
+});
+
+const getBadgeMetricKey = (metricType = '', metricTarget = '') => (
+  metricTarget ? `${metricType}::${metricTarget}` : metricType
+);
+
+const getBadgeMetricValue = (metrics = {}, metricType = '', metricTarget = '') => (
+  Number(metrics[getBadgeMetricKey(metricType, metricTarget)] || 0)
+);
+
+const recordPointLedgerEvent = async ({
+  userId,
+  delta = 0,
+  balanceAfter = 0,
+  bizType = '',
+  bizId = '',
+  description = '',
+  activityDateKey = '',
+  activitySlot = '',
+  meta = {},
+  createdAt = new Date().toISOString()
+}) => {
+  await db.collection(collections.pointLedger).add({
+    user_id: userId,
+    delta: Number(delta || 0),
+    balance_after: Number(balanceAfter || 0),
+    biz_type: bizType,
+    biz_id: bizId,
+    description,
+    activity_date_key: activityDateKey || toShanghaiDateKey(createdAt),
+    activity_slot: activitySlot || '',
+    meta,
+    operator_id: '',
+    created_at: createdAt
+  });
+};
+
+const getBadgeSettings = async () => {
+  try {
+    await ensureAnonymousLogin();
+    const result = await db
+      .collection(collections.appSettings)
+      .where({ key: BADGE_SETTINGS_KEY })
+      .limit(1)
+      .get();
+
+    if (isMissingCollectionResponse(result)) {
+      return {
+        ...normalizeBadgeSettings(createDefaultBadgeSettings()),
+        missingCollection: true
+      };
+    }
+
+    const document = getFirstDocument(result, collections.appSettings);
+    if (!document) {
+      return normalizeBadgeSettings(createDefaultBadgeSettings());
+    }
+
+    return normalizeBadgeSettings(document);
+  } catch (error) {
+    console.error('获取徽章配置失败:', error);
+    return normalizeBadgeSettings(createDefaultBadgeSettings());
+  }
+};
+
+const getBadgeProfileByUserId = async (userId = '') => {
+  if (!userId) {
+    return createEmptyBadgeProfile();
+  }
+
+  try {
+    await ensureAnonymousLogin();
+    const result = await db
+      .collection(collections.badgeProfiles)
+      .where({ user_id: userId })
+      .limit(1)
+      .get();
+
+    if (isMissingCollectionResponse(result)) {
+      return {
+        ...createEmptyBadgeProfile(userId),
+        missingCollection: true
+      };
+    }
+
+    const document = getFirstDocument(result, collections.badgeProfiles);
+    return document ? normalizeBadgeProfile(document) : createEmptyBadgeProfile(userId);
+  } catch (error) {
+    console.error('获取用户徽章档案失败:', error);
+    return createEmptyBadgeProfile(userId);
+  }
+};
+
+const saveBadgeProfileByUserId = async (userId = '', nextProfile = {}) => {
+  if (!userId) {
+    return createEmptyBadgeProfile();
+  }
+
+  const existingProfile = await getBadgeProfileByUserId(userId);
+  if (existingProfile.missingCollection) {
+    return existingProfile;
+  }
+
+  const payload = {
+    user_id: userId,
+    equipped_badge_id: nextProfile.equippedBadgeId || '',
+    unlocked_badge_ids: [...new Set((nextProfile.unlockedBadgeIds || []).filter(Boolean))],
+    unlocked_at_map: nextProfile.unlockedAtMap || {},
+    last_cloud_sign_date: nextProfile.lastCloudSignDate || '',
+    updated_at: new Date()
+  };
+
+  if (existingProfile.id) {
+    await db.collection(collections.badgeProfiles).doc(existingProfile.id).update(payload);
+    return normalizeBadgeProfile({
+      ...existingProfile,
+      ...payload,
+      _id: existingProfile.id
+    });
+  }
+
+  const createResult = await db.collection(collections.badgeProfiles).add({
+    ...payload,
+    created_at: new Date()
+  });
+
+  return normalizeBadgeProfile({
+    ...payload,
+    _id: createResult.id
+  });
+};
+
+const awardUserById = async ({
+  userId,
+  amount,
+  description,
+  source = 'badge_bonus',
+  rewardKey = '',
+  relatedUserId = ''
+}) => {
+  const normalizedAmount = Math.max(0, Number(amount) || 0);
+  if (!userId || normalizedAmount <= 0) {
+    return {
+      rewarded: false,
+      rewardAmount: 0
+    };
+  }
+
+  const userResult = await db.collection(collections.users).doc(userId).get();
+  const userDocument = getFirstDocument(userResult, collections.users);
+  if (!userDocument) {
+    return {
+      rewarded: false,
+      rewardAmount: 0
+    };
+  }
+
+  const targetProfile = normalizeCurrentUserProfile(userDocument);
+  if (rewardKey && targetProfile.rewardClaims[rewardKey]) {
+    return {
+      rewarded: false,
+      rewardAmount: 0,
+      repeatedRewardBlocked: true,
+      balance: targetProfile.balance,
+      history: targetProfile.wealthHistory
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const historyEntry = normalizeWealthEntry({
+    id: `badge_${Date.now()}`,
+    amount: normalizedAmount,
+    description,
+    date: nowIso,
+    type: 'EARN',
+    source,
+    rewardKey,
+    relatedUserId
+  });
+
+  const rewardClaims = rewardKey
+    ? {
+        ...targetProfile.rewardClaims,
+        [rewardKey]: nowIso
+      }
+    : targetProfile.rewardClaims;
+
+  await db.collection(collections.users).doc(userId).update({
+    balance: _.inc(normalizedAmount),
+    wealth_history: _.unshift(historyEntry),
+    ...(rewardKey ? { reward_claims: rewardClaims } : {}),
+    updated_at: new Date()
+  });
+
+  if (currentProfileCache?.id === userId) {
+    updateCurrentProfileCache({
+      ...targetProfile,
+      balance: targetProfile.balance + normalizedAmount,
+      wealthHistory: [historyEntry, ...targetProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS),
+      rewardClaims
+    });
+  }
+
+  return {
+    rewarded: true,
+    rewardAmount: normalizedAmount,
+    repeatedRewardBlocked: false,
+    balance: targetProfile.balance + normalizedAmount,
+    history: [historyEntry, ...targetProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS)
+  };
+};
+
+const computeBadgeMetricsForUser = async (currentProfile = null) => {
+  if (!currentProfile?.id) {
+    return {};
+  }
+
+  const [pointLedgerResult, awarenessResult, inviteUsersResult, shopOrdersResult] = await Promise.all([
+    db.collection(collections.pointLedger).where({ user_id: currentProfile.id }).limit(2000).get().catch(() => ({ data: [] })),
+    db.collection(collections.awarenessRecords).where({ user_id: currentProfile.id }).limit(2000).get().catch(() => ({ data: [] })),
+    db.collection(collections.users).where({ inviter_user_id: currentProfile.id }).limit(1000).get().catch(() => ({ data: [] })),
+    db.collection(collections.shopOrders).where({ user_id: currentProfile.id }).limit(1000).get().catch(() => ({ data: [] }))
+  ]);
+
+  const pointLedgerEntries = getResponseData(pointLedgerResult, collections.pointLedger);
+  const awarenessEntries = getResponseData(awarenessResult, collections.awarenessRecords);
+  const inviteUsers = getResponseData(inviteUsersResult, collections.users);
+  const shopOrders = getResponseData(shopOrdersResult, collections.shopOrders);
+
+  const cloudSignDateKeys = pointLedgerEntries
+    .filter((entry) => entry.biz_type === BADGE_ACTIVITY_TYPES.cloudSign)
+    .map((entry) => entry.activity_date_key || toShanghaiDateKey(entry.created_at || new Date()));
+
+  const cloudSignStats = buildStreakStats(cloudSignDateKeys);
+
+  const meditationEntries = pointLedgerEntries.filter((entry) => entry.biz_type === BADGE_ACTIVITY_TYPES.meditation);
+  const meditationDateKeys = meditationEntries.map((entry) => entry.activity_date_key || toShanghaiDateKey(entry.created_at || new Date()));
+  const meditationStats = buildStreakStats(meditationDateKeys);
+
+  const meditationSlotStats = Object.values(BADGE_SLOT_KEYS).reduce((accumulator, slotKey) => {
+    const slotDateKeys = meditationEntries
+      .filter((entry) => (entry.activity_slot || '') === slotKey)
+      .map((entry) => entry.activity_date_key || toShanghaiDateKey(entry.created_at || new Date()));
+
+    return {
+      ...accumulator,
+      [slotKey]: buildStreakStats(slotDateKeys)
+    };
+  }, {});
+
+  const awarenessDateKeys = awarenessEntries.map((entry) => toShanghaiDateKey(entry.created_at_client || entry.created_at || entry.timestamp || new Date()));
+  const awarenessStats = buildStreakStats(awarenessDateKeys);
+  const awarenessFollowCount = awarenessEntries.filter((entry) => (entry.record_source || entry.recordSource || 'manual') === 'follow').length;
+  const awarenessCreatedCount = Math.max(0, awarenessEntries.length - awarenessFollowCount);
+
+  const inPersonCount = pointLedgerEntries.filter((entry) => entry.biz_type === BADGE_ACTIVITY_TYPES.inPerson).length;
+  const shopSpendTotalAmount = shopOrders
+    .filter((order) => ['paid', 'processing', 'shipped', 'completed'].includes(order.status || ''))
+    .filter((order) => Math.max(0, Number(order.total_cash ?? order.totalCash ?? 0)) > 0)
+    .reduce((total, order) => total + Math.max(0, Number(order.total_cash ?? order.totalCash ?? 0)), 0);
+
+  return {
+    [BADGE_METRIC_TYPES.cloudSignTotalDays]: cloudSignStats.totalDays,
+    [BADGE_METRIC_TYPES.cloudSignStreakDays]: cloudSignStats.longestStreak,
+    [BADGE_METRIC_TYPES.meditationTotalDays]: meditationStats.totalDays,
+    [BADGE_METRIC_TYPES.meditationTotalStreakDays]: meditationStats.longestStreak,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotTotalDays, BADGE_SLOT_KEYS.dawn)]: meditationSlotStats.dawn.totalDays,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotStreakDays, BADGE_SLOT_KEYS.dawn)]: meditationSlotStats.dawn.longestStreak,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotTotalDays, BADGE_SLOT_KEYS.noon)]: meditationSlotStats.noon.totalDays,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotStreakDays, BADGE_SLOT_KEYS.noon)]: meditationSlotStats.noon.longestStreak,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotTotalDays, BADGE_SLOT_KEYS.afternoon)]: meditationSlotStats.afternoon.totalDays,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotStreakDays, BADGE_SLOT_KEYS.afternoon)]: meditationSlotStats.afternoon.longestStreak,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotTotalDays, BADGE_SLOT_KEYS.evening)]: meditationSlotStats.evening.totalDays,
+    [getBadgeMetricKey(BADGE_METRIC_TYPES.meditationSlotStreakDays, BADGE_SLOT_KEYS.evening)]: meditationSlotStats.evening.longestStreak,
+    [BADGE_METRIC_TYPES.awarenessCreatedTotal]: awarenessCreatedCount,
+    [BADGE_METRIC_TYPES.awarenessFollowTotal]: awarenessFollowCount,
+    [BADGE_METRIC_TYPES.awarenessStreakDays]: awarenessStats.longestStreak,
+    [BADGE_METRIC_TYPES.inviteTotal]: inviteUsers.length,
+    [BADGE_METRIC_TYPES.shopSpendTotalAmount]: shopSpendTotalAmount,
+    [BADGE_METRIC_TYPES.inPersonTotalCount]: inPersonCount
+  };
+};
+
+const syncBadgeProfileForCurrentUser = async ({ currentProfile = null, profileOverrides = {} } = {}) => {
+  if (!currentProfile?.id) {
+    return {
+      settings: normalizeBadgeSettings(createDefaultBadgeSettings()),
+      badgeProfile: createEmptyBadgeProfile(),
+      badges: [],
+      groupedBadges: {
+        growth: [],
+        builder: []
+      }
+    };
+  }
+
+  const [settings, existingBadgeProfile, metrics] = await Promise.all([
+    getBadgeSettings(),
+    getBadgeProfileByUserId(currentProfile.id),
+    computeBadgeMetricsForUser(currentProfile)
+  ]);
+
+  const flattenedBadges = flattenBadgeSeries(settings).filter((badge) => badge.enabled !== false);
+  const nowIso = new Date().toISOString();
+  const unlockedBadgeIds = [...new Set([
+    ...existingBadgeProfile.unlockedBadgeIds,
+    ...flattenedBadges
+      .filter((badge) => getBadgeMetricValue(metrics, badge.metricType, badge.metricTarget) >= badge.threshold)
+      .map((badge) => badge.badgeId)
+  ])];
+
+  const unlockedAtMap = { ...existingBadgeProfile.unlockedAtMap };
+  unlockedBadgeIds.forEach((badgeId) => {
+    if (!unlockedAtMap[badgeId]) {
+      unlockedAtMap[badgeId] = nowIso;
+    }
+  });
+
+  const enabledBadgeIds = new Set(flattenedBadges.map((badge) => badge.badgeId));
+  const nextEquippedBadgeId = unlockedBadgeIds.includes(existingBadgeProfile.equippedBadgeId) &&
+    enabledBadgeIds.has(existingBadgeProfile.equippedBadgeId)
+    ? existingBadgeProfile.equippedBadgeId
+    : '';
+
+  const mergedProfile = {
+    ...existingBadgeProfile,
+    ...profileOverrides,
+    equippedBadgeId: profileOverrides.equippedBadgeId !== undefined ? profileOverrides.equippedBadgeId : nextEquippedBadgeId,
+    unlockedBadgeIds,
+    unlockedAtMap
+  };
+
+  const savedProfile = existingBadgeProfile.missingCollection
+    ? {
+        ...normalizeBadgeProfile(mergedProfile),
+        missingCollection: true
+      }
+    : await saveBadgeProfileByUserId(currentProfile.id, mergedProfile);
+
+  const badges = flattenedBadges.map((badge) => ({
+    ...badge,
+    earned: savedProfile.unlockedBadgeIds.includes(badge.badgeId),
+    equipped: savedProfile.equippedBadgeId === badge.badgeId,
+    unlockedAt: savedProfile.unlockedAtMap[badge.badgeId] || '',
+    progressValue: getBadgeMetricValue(metrics, badge.metricType, badge.metricTarget),
+    bonusSummary: formatBadgeBonusText(badge)
+  }));
+
+  return {
+    settings,
+    badgeProfile: savedProfile,
+    badges,
+    groupedBadges: {
+      growth: badges.filter((badge) => badge.visibleGroup === 'growth'),
+      builder: badges.filter((badge) => badge.visibleGroup === 'builder')
+    }
+  };
+};
+
+const calculateBadgeBonusAmount = (badge = {}, baseAmount = 0) => {
+  const normalizedBaseAmount = Math.max(0, Number(baseAmount) || 0);
+  const normalizedBonusValue = Math.max(0, Number(badge.bonusValue || 0));
+
+  if (normalizedBonusValue <= 0) {
+    return 0;
+  }
+
+  if (badge.bonusType === BADGE_BONUS_TYPES.fixed) {
+    return normalizedBonusValue;
+  }
+
+  return Math.floor((normalizedBaseAmount * normalizedBonusValue) / 100);
+};
+
+const applyEquippedBadgeBonusForUser = async ({
+  userId,
+  activityType,
+  baseAmount = 0,
+  eventKey = '',
+  description = ''
+}) => {
+  if (!userId || !activityType || !eventKey) {
+    return {
+      rewarded: false,
+      rewardAmount: 0
+    };
+  }
+
+  const currentProfile = currentProfileCache?.id === userId
+    ? currentProfileCache
+    : normalizeCurrentUserProfile(getFirstDocument(await db.collection(collections.users).doc(userId).get(), collections.users) || {});
+
+  const { badges, badgeProfile } = await syncBadgeProfileForCurrentUser({ currentProfile });
+  const equippedBadge = badges.find((badge) => badge.badgeId === badgeProfile.equippedBadgeId);
+
+  if (!equippedBadge || equippedBadge.bonusActivity !== activityType || !equippedBadge.earned) {
+    return {
+      rewarded: false,
+      rewardAmount: 0
+    };
+  }
+
+  const rewardAmount = calculateBadgeBonusAmount(equippedBadge, baseAmount);
+  if (rewardAmount <= 0) {
+    return {
+      rewarded: false,
+      rewardAmount: 0,
+      badge: equippedBadge
+    };
+  }
+
+  const rewardDescription = description || `${equippedBadge.name}佩戴加成`;
+  const rewardKey = `badge_bonus:${equippedBadge.badgeId}:${eventKey}`;
+
+  const result = await awardUserById({
+    userId,
+    amount: rewardAmount,
+    description: rewardDescription,
+    source: `badge_bonus_${activityType}`,
+    rewardKey
+  });
+
+  return {
+    ...result,
+    badge: equippedBadge
+  };
+};
+
+const claimDailyCloudSign = async () => {
+  const currentProfile = await userProfileService.getCurrentProfile({ refresh: true, allowAnonymous: true });
+  if (!currentProfile?.id) {
+    return {
+      claimed: false,
+      rewardAmount: 0
+    };
+  }
+
+  const existingProfile = await getBadgeProfileByUserId(currentProfile.id);
+  const dateKey = toShanghaiDateKey();
+
+  if (existingProfile.lastCloudSignDate === dateKey) {
+    return {
+      claimed: false,
+      rewardAmount: 0
+    };
+  }
+
+  if (existingProfile.missingCollection) {
+    const existingCloudSignResult = await db
+      .collection(collections.pointLedger)
+      .where({
+        user_id: currentProfile.id,
+        biz_type: BADGE_ACTIVITY_TYPES.cloudSign,
+        activity_date_key: dateKey
+      })
+      .limit(1)
+      .get()
+      .catch(() => ({ data: [] }));
+
+    if (getFirstDocument(existingCloudSignResult, collections.pointLedger)) {
+      return {
+        claimed: false,
+        rewardAmount: 0
+      };
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  await recordPointLedgerEvent({
+    userId: currentProfile.id,
+    delta: 0,
+    balanceAfter: currentProfile.balance,
+    bizType: BADGE_ACTIVITY_TYPES.cloudSign,
+    bizId: `cloud_sign:${currentProfile.id}:${dateKey}`,
+    description: '每日云签',
+    activityDateKey: dateKey,
+    meta: {
+      timezone: SHANGHAI_TIMEZONE
+    },
+    createdAt: nowIso
+  });
+
+  const bonusResult = await applyEquippedBadgeBonusForUser({
+    userId: currentProfile.id,
+    activityType: BADGE_ACTIVITY_TYPES.cloudSign,
+    baseAmount: 0,
+    eventKey: `${currentProfile.id}:${dateKey}`,
+    description: '云签佩戴加成'
+  });
+
+  await syncBadgeProfileForCurrentUser({
+    currentProfile,
+    profileOverrides: {
+      lastCloudSignDate: dateKey
+    }
+  });
+
+  return {
+    claimed: true,
+    rewardAmount: bonusResult.rewardAmount || 0,
+    badge: bonusResult.badge || null
+  };
 };
 
 const buildShareLinks = ({ title, text, url }) => {
@@ -973,6 +1595,7 @@ export const awarenessService = {
       const trimmedContent = content.trim();
       const awarenessIdentity = await resolveAwarenessIdentity();
       const accessType = normalizeAccessType(options.accessType || 'public');
+      const recordSource = options.recordSource === 'follow' ? 'follow' : 'manual';
 
       if (!trimmedContent) {
         throw new Error('请输入标签内容');
@@ -998,6 +1621,7 @@ export const awarenessService = {
         content: trimmedContent,
         access_type: accessType,
         tag_key: tagKey,
+        record_source: recordSource,
         timestamp: nowIso,
         created_at_client: nowIso,
         reward_points_setting_snapshot: configuredRewardPoints,
@@ -1030,6 +1654,10 @@ export const awarenessService = {
         rewardAmount: 0,
         inviterBonusAmount: 0
       };
+      let badgeBonusResult = {
+        rewarded: false,
+        rewardAmount: 0
+      };
 
       if (configuredRewardPoints > 0) {
         try {
@@ -1052,15 +1680,45 @@ export const awarenessService = {
         }
       }
 
+      try {
+        badgeBonusResult = await applyEquippedBadgeBonusForUser({
+          userId: awarenessIdentity.userId,
+          activityType: BADGE_ACTIVITY_TYPES.awareness,
+          baseAmount: rewardResult.rewardAmount || configuredRewardPoints,
+          eventKey: result.id,
+          description: `觉察佩戴加成：${trimmedContent}`
+        });
+      } catch (badgeBonusError) {
+        console.error('发放觉察徽章加成失败:', badgeBonusError);
+      }
+
+      const totalRewardAwarded = Math.max(0, Number(rewardResult.rewardAmount || 0)) + Math.max(0, Number(badgeBonusResult.rewardAmount || 0));
+      if (totalRewardAwarded > 0) {
+        await db.collection(collections.awarenessRecords).doc(result.id).update({
+          reward_points_awarded: totalRewardAwarded,
+          updated_at: new Date()
+        });
+      }
+
+      if (awarenessIdentity.profile?.id) {
+        void syncBadgeProfileForCurrentUser({
+          currentProfile: awarenessIdentity.profile
+        });
+      }
+
       return {
         success: true,
         id: result.id,
         record: normalizeAwarenessRecord({
           ...basePayload,
-          reward_points_awarded: rewardResult.rewardAmount || 0,
+          reward_points_awarded: totalRewardAwarded,
           _id: result.id
         }),
-        reward: rewardResult
+        reward: {
+          ...rewardResult,
+          badgeBonusAmount: badgeBonusResult.rewardAmount || 0,
+          rewardAmount: totalRewardAwarded
+        }
       };
     } catch (error) {
       console.error('添加觉察记录失败:', error);
@@ -1298,6 +1956,7 @@ export const wealthService = {
     });
 
     let inviterBonusAmount = 0;
+    let inviterBadgeBonusAmount = 0;
 
     if (currentProfile.inviterUserId) {
       const rewardSettings = await rewardSettingsService.getSettings();
@@ -1320,6 +1979,15 @@ export const wealthService = {
           wealth_history: _.unshift(inviterEntry),
           updated_at: new Date()
         });
+
+        const inviterBadgeBonusResult = await applyEquippedBadgeBonusForUser({
+          userId: currentProfile.inviterUserId,
+          activityType: BADGE_ACTIVITY_TYPES.invite,
+          baseAmount: inviterBonusAmount,
+          eventKey: rewardKey ? `${rewardKey}__invite_bonus__${currentProfile.id}` : `${currentProfile.inviterUserId}:${currentProfile.id}:${nowIso}`,
+          description: `邀请佩戴加成：${nextProfile.name} 完成奖励`
+        });
+        inviterBadgeBonusAmount = inviterBadgeBonusResult.rewardAmount || 0;
       }
     }
 
@@ -1327,7 +1995,7 @@ export const wealthService = {
       rewarded: true,
       rewardAmount: normalizedAmount,
       repeatedRewardBlocked: false,
-      inviterBonusAmount,
+      inviterBonusAmount: inviterBonusAmount + inviterBadgeBonusAmount,
       balance: nextProfile.balance,
       history: nextProfile.wealthHistory
     };
@@ -1527,10 +2195,8 @@ export const shopService = {
     const normalizedQuantity = Math.max(1, Number(quantity) || 1);
     const totalPoints = sku.pricePoints * normalizedQuantity;
     const totalCash = sku.priceCash * normalizedQuantity;
-
-    if (totalCash > 0) {
-      throw new Error('现金支付链路尚未接入，当前仅支持纯福豆兑换商品');
-    }
+    const totalRewardPointsReturn = Math.max(0, Number(sku.rewardPointsReturn || 0)) * normalizedQuantity;
+    const isCashOrder = totalCash > 0;
 
     if (currentProfile.balance < totalPoints) {
       throw new Error('福豆余额不足');
@@ -1558,23 +2224,27 @@ export const shopService = {
 
     const nowIso = new Date().toISOString();
     const orderNo = generateOrderNo();
+    const orderType = isCashOrder ? (totalPoints > 0 ? 'mixed' : 'cash') : 'points';
     const orderPayload = {
       order_no: orderNo,
       user_id: currentProfile.id,
-      order_type: 'points',
-      status: 'paid',
+      order_type: orderType,
+      status: isCashOrder ? 'pending_payment' : 'paid',
       address_id: addressId || '',
       receiver_snapshot: receiverSnapshot,
       total_points: totalPoints,
-      total_cash: 0,
+      total_cash: totalCash,
+      reward_points_return_total: totalRewardPointsReturn,
+      reward_points_awarded: 0,
+      badge_bonus_points_awarded: 0,
       shipping_fee: 0,
       discount_cash: 0,
       discount_points: 0,
-      pay_channel: 'points',
+      pay_channel: isCashOrder ? 'cash_pending' : 'points',
       pay_transaction_id: '',
       remark: '',
       cancel_reason: '',
-      paid_at: nowIso,
+      paid_at: isCashOrder ? '' : nowIso,
       shipped_at: '',
       completed_at: '',
       created_at: nowIso,
@@ -1594,9 +2264,10 @@ export const shopService = {
       attrs_snapshot: sku.attrs || {},
       price_points_snapshot: sku.pricePoints,
       price_cash_snapshot: sku.priceCash,
+      reward_points_return_snapshot: sku.rewardPointsReturn || 0,
       quantity: normalizedQuantity,
       subtotal_points: totalPoints,
-      subtotal_cash: 0,
+      subtotal_cash: totalCash,
       product_type: product.productType,
       created_at: nowIso
     };
@@ -1604,40 +2275,54 @@ export const shopService = {
     await db.collection(collections.shopOrderItems).add(orderItemPayload);
 
     const nextBalance = currentProfile.balance - totalPoints;
-    const pointLedgerPayload = {
-      user_id: currentProfile.id,
-      delta: -totalPoints,
-      balance_after: nextBalance,
-      biz_type: 'shop_spend',
-      biz_id: orderId,
-      description: `工坊兑换：${product.name}`,
-      operator_id: '',
-      created_at: nowIso
-    };
+    let pointLedgerPayload = null;
 
-    await db.collection(collections.pointLedger).add(pointLedgerPayload);
+    if (totalPoints > 0) {
+      pointLedgerPayload = {
+        user_id: currentProfile.id,
+        delta: -totalPoints,
+        balance_after: nextBalance,
+        biz_type: 'shop_spend',
+        biz_id: orderId,
+        description: isCashOrder ? `工坊下单占用福豆：${product.name}` : `工坊兑换：${product.name}`,
+        activity_date_key: toShanghaiDateKey(nowIso),
+        operator_id: '',
+        created_at: nowIso
+      };
 
-    const wealthHistoryEntry = normalizeWealthEntry({
-      id: `shop_spend_${Date.now()}`,
-      amount: -totalPoints,
-      description: `工坊兑换：${product.name}`,
-      date: nowIso,
-      type: 'SPEND',
-      source: 'shop_spend',
-      relatedUserId: currentProfile.id
-    });
+      await db.collection(collections.pointLedger).add(pointLedgerPayload);
 
-    await db.collection(collections.users).doc(currentProfile.id).update({
-      balance: nextBalance,
-      wealth_history: _.unshift(wealthHistoryEntry),
-      updated_at: new Date()
-    });
+      const wealthHistoryEntry = normalizeWealthEntry({
+        id: `shop_spend_${Date.now()}`,
+        amount: -totalPoints,
+        description: isCashOrder ? `工坊下单占用福豆：${product.name}` : `工坊兑换：${product.name}`,
+        date: nowIso,
+        type: 'SPEND',
+        source: 'shop_spend',
+        relatedUserId: currentProfile.id
+      });
 
-    updateCurrentProfileCache({
-      ...currentProfile,
-      balance: nextBalance,
-      wealthHistory: [wealthHistoryEntry, ...currentProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS)
-    });
+      await db.collection(collections.users).doc(currentProfile.id).update({
+        balance: nextBalance,
+        wealth_history: _.unshift(wealthHistoryEntry),
+        updated_at: new Date()
+      });
+
+      updateCurrentProfileCache({
+        ...currentProfile,
+        balance: nextBalance,
+        wealthHistory: [wealthHistoryEntry, ...currentProfile.wealthHistory].slice(0, MAX_WEALTH_HISTORY_ITEMS)
+      });
+    }
+
+    if (!isCashOrder) {
+      void syncBadgeProfileForCurrentUser({
+        currentProfile: {
+          ...currentProfile,
+          balance: nextBalance
+        }
+      });
+    }
 
     return {
       order: normalizeShopOrder({
@@ -1646,8 +2331,112 @@ export const shopService = {
       }),
       item: orderItemPayload,
       pointLedger: pointLedgerPayload,
-      balance: nextBalance
+      balance: nextBalance,
+      badgeBonusAmount: 0
     };
+  }
+};
+
+export const badgeService = {
+  async getCurrentUserBadgeState(options = {}) {
+    const currentProfile = await userProfileService.getCurrentProfile({
+      refresh: options.refresh ?? false,
+      allowAnonymous: options.allowAnonymous ?? true
+    });
+
+    return syncBadgeProfileForCurrentUser({ currentProfile });
+  },
+
+  async equipBadge(badgeId = '') {
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true, allowAnonymous: true });
+    if (!currentProfile?.id) {
+      throw new Error('请先登录后再佩戴徽章');
+    }
+
+    const syncedState = await syncBadgeProfileForCurrentUser({ currentProfile });
+    if (syncedState.badgeProfile?.missingCollection) {
+      throw new Error(`请先在 CloudBase 创建集合 ${collections.badgeProfiles}`);
+    }
+
+    const targetBadge = syncedState.badges.find((badge) => badge.badgeId === badgeId);
+
+    if (!targetBadge) {
+      throw new Error('未找到该徽章');
+    }
+
+    if (!targetBadge.earned) {
+      throw new Error('尚未获得该徽章，暂时不能佩戴');
+    }
+
+    const nextEquippedBadgeId = syncedState.badgeProfile.equippedBadgeId === badgeId ? '' : badgeId;
+    return syncBadgeProfileForCurrentUser({
+      currentProfile,
+      profileOverrides: {
+        equippedBadgeId: nextEquippedBadgeId
+      }
+    });
+  },
+
+  async claimDailyCloudSign() {
+    return claimDailyCloudSign();
+  },
+
+  async recordMeditationCompletion({
+    duration = 0,
+    rewardAmount = 0,
+    description = '完成一次冥想'
+  } = {}) {
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true, allowAnonymous: true });
+    if (!currentProfile?.id) {
+      return {
+        slot: '',
+        badgeBonusAmount: 0
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const slotKey = getMeditationSlotKey(nowIso);
+    const eventKey = `meditation:${currentProfile.id}:${Date.now()}`;
+
+    await recordPointLedgerEvent({
+      userId: currentProfile.id,
+      delta: 0,
+      balanceAfter: currentProfile.balance,
+      bizType: BADGE_ACTIVITY_TYPES.meditation,
+      bizId: eventKey,
+      description,
+      activityDateKey: toShanghaiDateKey(nowIso),
+      activitySlot: slotKey,
+      meta: {
+        duration
+      },
+      createdAt: nowIso
+    });
+
+    const badgeBonusResult = await applyEquippedBadgeBonusForUser({
+      userId: currentProfile.id,
+      activityType: BADGE_ACTIVITY_TYPES.meditation,
+      baseAmount: rewardAmount,
+      eventKey,
+      description: '冥想佩戴加成'
+    });
+
+    await syncBadgeProfileForCurrentUser({ currentProfile });
+
+    return {
+      slot: slotKey,
+      badgeBonusAmount: badgeBonusResult.rewardAmount || 0,
+      badge: badgeBonusResult.badge || null
+    };
+  },
+
+  async syncCurrentUserBadgeState(options = {}) {
+    const currentProfile = await userProfileService.getCurrentProfile({
+      refresh: options.refresh ?? true,
+      allowAnonymous: options.allowAnonymous ?? true
+    });
+
+    return syncBadgeProfileForCurrentUser({ currentProfile });
   }
 };
 

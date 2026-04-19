@@ -1,22 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Award, BookOpen, Sparkles } from 'lucide-react';
+import { ArrowLeft, Award, BookOpen, Sparkles, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useWealth } from '../context/WealthContext';
-import builderPlaceholderImage from '../assets/badges/builder-placeholder.svg';
 import dawnGuardianImage from '../assets/badges/dawn-guardian.svg';
+import builderPlaceholderImage from '../assets/badges/builder-placeholder.svg';
 import growthPlaceholderImage from '../assets/badges/growth-placeholder.svg';
+import { useBadgeState } from '../hooks/useBadgeState.js';
 
 const TAB_META = {
   growth: {
     label: '成长徽章',
     kicker: 'growth_badges',
-    description: '收纳冥想、练习与日常精进留下的光亮。',
+    description: '成长路径中的练习成果。',
     icon: Sparkles
   },
   builder: {
     label: '建设徽章',
     kicker: 'builder_badges',
-    description: '记录你对社区连接、护持与共建的认定。',
+    description: '你对社区的支持与共建。',
     icon: Award
   }
 };
@@ -95,104 +95,28 @@ const FRAME_STYLES = {
 
 const DIFFICULTY_ORDER = ['gentle', 'steady', 'resolute', 'radiant'];
 
-const hasCompletedChallenge = (challenges, keyword, id) => (
-  challenges.some((challenge) => (
-    challenge.completed &&
-    (challenge.id === id || challenge.title?.includes(keyword))
-  ))
-);
+const getBadgeImage = (badge) => {
+  if (badge.image) {
+    return badge.image;
+  }
 
-const buildGrowthBadges = (challenges, meditationStats) => {
-  const totalDuration = Number(meditationStats?.totalDuration || 0);
-  const sessionCount = Number(meditationStats?.sessionCount || 0);
-  const medals = Number(meditationStats?.medals || 0);
+  if (badge.seriesId?.includes('meditation_dawn') || badge.name?.includes('晨曦')) {
+    return dawnGuardianImage;
+  }
 
-  return [
-    {
-      id: 'dawn-guardian',
-      name: '晨曦守望者',
-      description: '连续 3 天在早晨 8 点前开启冥想。',
-      earned: hasCompletedChallenge(challenges, '晨曦守望者', 3),
-      difficulty: 'radiant',
-      image: dawnGuardianImage
-    },
-    {
-      id: 'silent-start',
-      name: '静心启程',
-      description: '完成第一次安住练习，开启你的内在旅程。',
-      earned: sessionCount >= 1 || totalDuration >= 10,
-      difficulty: 'gentle',
-      image: growthPlaceholderImage
-    },
-    {
-      id: 'breath-archive',
-      name: '呼吸成章',
-      description: '累计冥想 120 分钟，让日常安静成形。',
-      earned: totalDuration >= 120 || medals >= 2,
-      difficulty: 'steady',
-      image: growthPlaceholderImage
-    },
-    {
-      id: 'seven-day-calm',
-      name: '七日静心',
-      description: '连续 7 天完成每日冥想，稳稳地把练习留住。',
-      earned: hasCompletedChallenge(challenges, '七日静心', 1),
-      difficulty: 'resolute',
-      image: growthPlaceholderImage
-    },
-    {
-      id: 'declutter-master',
-      name: '断舍离达人',
-      description: '本周完成 5 次断舍离觉察，给生活留出空处。',
-      earned: hasCompletedChallenge(challenges, '断舍离达人', 2),
-      difficulty: 'steady',
-      image: growthPlaceholderImage
-    },
-    {
-      id: 'steady-light',
-      name: '安住流光',
-      description: '累计冥想 300 分钟，让稳定成为一种气质。',
-      earned: totalDuration >= 300 || medals >= 5,
-      difficulty: 'radiant',
-      image: growthPlaceholderImage
-    }
-  ];
+  return badge.visibleGroup === 'builder' ? builderPlaceholderImage : growthPlaceholderImage;
 };
 
-const buildBuilderBadges = () => [
-  {
-    id: 'invite-builder',
-    name: '同行点灯人',
-    description: '邀请 3 位伙伴加入，让光继续传递。',
-    earned: false,
-    difficulty: 'gentle',
-    image: builderPlaceholderImage
-  },
-  {
-    id: 'workshop-builder',
-    name: '工坊筑梦人',
-    description: '在工坊累计消费满 10000 元，持续支持社区建设。',
-    earned: false,
-    difficulty: 'resolute',
-    image: builderPlaceholderImage
-  },
-  {
-    id: 'circle-keeper',
-    name: '社群共修者',
-    description: '长期投入社区互动与陪伴，守住共同练习的场域。',
-    earned: false,
-    difficulty: 'steady',
-    image: builderPlaceholderImage
-  },
-  {
-    id: 'blossom-patron',
-    name: '花开护持者',
-    description: '完成一次重要支持行动，为社区留下一束真光。',
-    earned: false,
-    difficulty: 'radiant',
-    image: builderPlaceholderImage
+const getProgressText = (badge) => {
+  const progressValue = Math.max(0, Number(badge.progressValue || 0));
+  const unit = badge.unit || '次';
+
+  if (badge.earned) {
+    return `已达成 ${badge.threshold}${unit}`;
   }
-];
+
+  return `当前进度 ${progressValue}/${badge.threshold}${unit}`;
+};
 
 const BadgeArtwork = ({ badge }) => {
   const frame = FRAME_STYLES[badge.difficulty] || FRAME_STYLES.gentle;
@@ -220,7 +144,7 @@ const BadgeArtwork = ({ badge }) => {
         }}
       >
         <img
-          src={badge.image}
+          src={getBadgeImage(badge)}
           alt={badge.name}
           style={{
             width: '100%',
@@ -234,15 +158,143 @@ const BadgeArtwork = ({ badge }) => {
   );
 };
 
+const BadgeDetailModal = ({
+  badge,
+  saving,
+  onClose,
+  onEquip
+}) => {
+  if (!badge) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 60,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        backgroundColor: 'rgba(15, 23, 42, 0.45)'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '460px',
+          borderRadius: '28px',
+          backgroundColor: '#fff',
+          padding: '24px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.24)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px' }}>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94a3b8' }}>
+              badge_detail
+            </div>
+            <h2 style={{ margin: '6px 0 0', fontSize: '24px', color: '#111827' }}>{badge.name}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ border: 'none', background: 'none', color: '#64748b', cursor: 'pointer' }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '18px' }}>
+          <BadgeArtwork badge={{ ...badge, earned: true }} />
+        </div>
+
+        <div
+          style={{
+            borderRadius: '18px',
+            backgroundColor: '#f8fafc',
+            padding: '16px',
+            marginBottom: '14px'
+          }}
+        >
+          <div style={{ fontSize: '14px', color: '#0f172a', lineHeight: 1.75 }}>
+            {badge.description || badge.summary || '这是一枚记录你阶段性成长与投入的徽章。'}
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: '10px', marginBottom: '18px' }}>
+          <div style={modalMetricStyle}>
+            <span>解锁条件</span>
+            <strong>{badge.threshold}{badge.unit || '次'}</strong>
+          </div>
+          <div style={modalMetricStyle}>
+            <span>当前进度</span>
+            <strong>{getProgressText(badge)}</strong>
+          </div>
+          <div style={modalMetricStyle}>
+            <span>佩戴效果</span>
+            <strong>{badge.bonusSummary}</strong>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onEquip(badge)}
+          disabled={saving || !badge.earned}
+          style={{
+            width: '100%',
+            border: 'none',
+            borderRadius: '16px',
+            backgroundColor: badge.earned ? '#111827' : '#cbd5e1',
+            color: '#fff',
+            padding: '14px 16px',
+            fontSize: '14px',
+            fontWeight: 700,
+            cursor: saving || !badge.earned ? 'not-allowed' : 'pointer',
+            opacity: saving ? 0.7 : 1
+          }}
+        >
+          {!badge.earned
+            ? '尚未获得，暂不可佩戴'
+            : saving
+              ? '保存中...'
+              : badge.equipped
+                ? '取消佩戴'
+                : '佩戴这枚徽章'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const Album = () => {
   const navigate = useNavigate();
-  const { challenges, meditationStats } = useWealth();
   const [activeTab, setActiveTab] = useState('growth');
+  const [activeBadge, setActiveBadge] = useState(null);
+  const {
+    loading,
+    saving,
+    error,
+    groupedBadges,
+    equipBadge
+  } = useBadgeState();
 
-  const growthBadges = useMemo(() => buildGrowthBadges(challenges, meditationStats), [challenges, meditationStats]);
-  const builderBadges = useMemo(() => buildBuilderBadges(), []);
+  const badges = groupedBadges[activeTab] || [];
+  const unlockedCount = useMemo(() => badges.filter((badge) => badge.earned).length, [badges]);
 
-  const badges = activeTab === 'growth' ? growthBadges : builderBadges;
+  const handleEquipBadge = async (badge) => {
+    await equipBadge(badge.badgeId);
+    setActiveBadge((currentBadge) => (
+      currentBadge && currentBadge.badgeId === badge.badgeId
+        ? {
+            ...currentBadge,
+            equipped: !currentBadge.equipped
+          }
+        : currentBadge
+    ));
+  };
 
   return (
     <div className="page-container" style={{ padding: '20px', paddingBottom: '96px' }}>
@@ -264,6 +316,23 @@ const Album = () => {
         <ArrowLeft size={18} />
         返回
       </button>
+
+      {(error && !activeBadge) && (
+        <div
+          style={{
+            marginBottom: '16px',
+            padding: '12px 14px',
+            borderRadius: '14px',
+            backgroundColor: '#fff1f2',
+            border: '1px solid #fecdd3',
+            color: '#be123c',
+            fontSize: '13px',
+            lineHeight: 1.6
+          }}
+        >
+          {error}
+        </div>
+      )}
 
       <section
         style={{
@@ -291,8 +360,9 @@ const Album = () => {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
           {Object.entries(TAB_META).map(([key, meta]) => {
             const Icon = meta.icon;
-            const totalCount = key === 'growth' ? growthBadges.length : builderBadges.length;
-            const currentUnlockedCount = (key === 'growth' ? growthBadges : builderBadges).filter((badge) => badge.earned).length;
+            const tabBadges = groupedBadges[key] || [];
+            const currentUnlockedCount = tabBadges.filter((badge) => badge.earned).length;
+            const totalCount = tabBadges.length;
             const isActive = key === activeTab;
 
             return (
@@ -377,7 +447,7 @@ const Album = () => {
         </div>
 
         <p style={{ margin: '0 0 16px', fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.55 }}>
-          {TAB_META[activeTab].description}
+          {loading ? '正在同步你的徽章状态...' : TAB_META[activeTab].description}
         </p>
 
         <div
@@ -388,13 +458,15 @@ const Album = () => {
           }}
         >
           {badges.map((badge) => (
-            <article
-              key={badge.id}
+            <button
+              key={badge.badgeId}
+              type="button"
+              onClick={() => setActiveBadge(badge)}
               style={{
+                border: badge.equipped ? '1px solid rgba(214, 140, 101, 0.28)' : '1px solid rgba(226, 232, 240, 0.88)',
                 background: badge.earned
                   ? 'linear-gradient(180deg, #ffffff 0%, #fff9f3 100%)'
                   : 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
-                border: badge.earned ? '1px solid rgba(214, 140, 101, 0.18)' : '1px solid rgba(226, 232, 240, 0.88)',
                 borderRadius: '24px',
                 padding: '18px 16px',
                 boxShadow: badge.earned
@@ -402,12 +474,30 @@ const Album = () => {
                   : '0 14px 28px rgba(148, 163, 184, 0.08)',
                 display: 'grid',
                 justifyItems: 'center',
-                gap: '14px'
+                gap: '14px',
+                cursor: 'pointer'
               }}
             >
               <BadgeArtwork badge={badge} />
 
               <div style={{ width: '100%' }}>
+                {badge.equipped && (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '8px' }}>
+                    <span
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: '999px',
+                        backgroundColor: 'rgba(214, 140, 101, 0.14)',
+                        color: '#9a3412',
+                        fontSize: '11px',
+                        fontWeight: 700
+                      }}
+                    >
+                      佩戴中
+                    </span>
+                  </div>
+                )}
+
                 <div style={{ fontSize: '16px', fontWeight: 700, color: '#111827', textAlign: 'center' }}>{badge.name}</div>
                 <div
                   style={{
@@ -418,10 +508,10 @@ const Album = () => {
                     textAlign: 'center'
                   }}
                 >
-                  {badge.description}
+                  {badge.summary}
                 </div>
               </div>
-            </article>
+            </button>
           ))}
         </div>
 
@@ -473,9 +563,31 @@ const Album = () => {
             );
           })}
         </div>
+
+        {!loading && badges.length > 0 && (
+          <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '12px', color: '#94a3b8' }}>
+            已点亮 {unlockedCount} 枚，可点击徽章查看详情并佩戴。
+          </div>
+        )}
       </section>
+
+      <BadgeDetailModal
+        badge={activeBadge}
+        saving={saving}
+        onClose={() => setActiveBadge(null)}
+        onEquip={handleEquipBadge}
+      />
     </div>
   );
+};
+
+const modalMetricStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '12px',
+  alignItems: 'center',
+  fontSize: '13px',
+  color: '#475569'
 };
 
 export default Album;

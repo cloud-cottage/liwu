@@ -192,9 +192,9 @@ const Record = () => {
     popularTags.reduce((currentMax, tag) => Math.max(currentMax, tag.totalCount || 0), 0)
   ), [popularTags]);
 
-  const submitAwareness = async ({ content, accessType }) => {
+  const submitAwareness = async ({ content, accessType, recordSource = 'manual' }) => {
     setSubmitting(true);
-    const result = await addAwarenessRecord(content, { accessType });
+    const result = await addAwarenessRecord(content, { accessType, recordSource });
     setSubmitting(false);
 
     if (!result.success) {
@@ -226,7 +226,8 @@ const Record = () => {
 
     await submitAwareness({
       content: trimmedValue,
-      accessType: currentUser?.isStudent ? selectedAccessType : 'public'
+      accessType: currentUser?.isStudent ? selectedAccessType : 'public',
+      recordSource: 'manual'
     });
   };
 
@@ -573,7 +574,7 @@ const Record = () => {
         currentUser={currentUser}
         submitting={submitting}
         onClose={() => setActiveAwareTag(null)}
-        onSubmit={(tag) => submitAwareness({ content: tag.content, accessType: tag.accessType })}
+        onSubmit={(tag) => submitAwareness({ content: tag.content, accessType: tag.accessType, recordSource: 'follow' })}
       />
 
       {sharePayload && (

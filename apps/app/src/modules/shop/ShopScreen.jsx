@@ -74,6 +74,10 @@ const formatPriceLabel = (points, cash) => (
   `${Number(points || 0)} 福豆${cash ? ` + ${formatCash(cash)}` : ''}`
 );
 
+const formatRewardReturnLabel = (value) => (
+  Number(value || 0) > 0 ? `返 ${Number(value || 0)} 福豆` : '默认不返豆'
+);
+
 const getProductSynopsis = (product = {}) => (
   product.subtitle || product.description || '等待补充商品描述'
 );
@@ -196,6 +200,10 @@ const ProductModal = ({
               <span>限购</span>
               <strong>{product.limitPerUser || '不限'}</strong>
             </div>
+            <div className="shop-modal__metric">
+              <span>返豆</span>
+              <strong>{selectedSku?.rewardPointsReturn || 0}</strong>
+            </div>
           </div>
 
           {product.skus.length > 0 && (
@@ -214,7 +222,7 @@ const ProductModal = ({
                   >
                     <div className="shop-sku-card__title">{sku.skuName || '默认规格'}</div>
                     <div className="shop-sku-card__subtitle">
-                      {formatPriceLabel(sku.pricePoints, sku.priceCash)} · 库存 {sku.stock}
+                      {formatPriceLabel(sku.pricePoints, sku.priceCash)} · {formatRewardReturnLabel(sku.rewardPointsReturn)} · 库存 {sku.stock}
                     </div>
                   </button>
                 ))}
@@ -260,7 +268,9 @@ const ProductModal = ({
             disabled={orderSubmitting}
             className="shop-modal__primary-action"
           >
-            {orderSubmitting ? '提交中...' : `立即兑换${selectedSku ? ` · ${formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash)}` : ''}`}
+            {orderSubmitting
+              ? '提交中...'
+              : `${selectedSku?.priceCash > 0 ? '立即下单' : '立即兑换'}${selectedSku ? ` · ${formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash)}` : ''}`}
           </button>
         </div>
       </div>
@@ -366,10 +376,15 @@ const ShopScreen = () => {
     try {
       const result = await shopService.createPointsOrder(payload);
       await syncWalletFromCloud({ refresh: true, allowAnonymous: true });
-      setNotice({ type: 'success', text: `兑换成功，订单号 ${result.order.orderNo}` });
+      setNotice({
+        type: 'success',
+        text: result.order.totalCash > 0
+          ? `订单已创建，等待支付确认，订单号 ${result.order.orderNo}`
+          : `兑换成功，订单号 ${result.order.orderNo}`
+      });
       setActiveProduct(null);
     } catch (error) {
-      setNotice({ type: 'error', text: error.message || '兑换失败' });
+      setNotice({ type: 'error', text: error.message || '下单失败' });
     } finally {
       setOrderSubmitting(false);
     }
@@ -503,6 +518,7 @@ const ShopScreen = () => {
                     <div className="shop-product-card__meta">
                       <span>库存 {product.stockTotal}</span>
                       <span>已兑 {product.salesCount}</span>
+                      <span>{formatRewardReturnLabel(product.rewardPointsReturnFrom)}</span>
                       <span>{PRODUCT_STATUS_LABELS[product.status] || PRODUCT_STATUS_LABELS.active}</span>
                     </div>
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import DatabaseService, { DEFAULT_AWARENESS_TAG_SETTINGS, DEFAULT_MEDITATION_SETTINGS } from '../services/database.js';
+import DatabaseService, { DEFAULT_AWARENESS_TAG_SETTINGS, DEFAULT_BADGE_SETTINGS, DEFAULT_MEDITATION_SETTINGS } from '../services/database.js';
 import DatabaseInitializer from '../services/databaseInit.js';
 
 const getSetupErrorMessage = (error) => {
@@ -22,6 +22,7 @@ export const useDatabase = () => {
   const [categories, setCategories] = useState([]);
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
+  const [badgeSettings, setBadgeSettings] = useState(DEFAULT_BADGE_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [shopCategories, setShopCategories] = useState([]);
   const [shopProducts, setShopProducts] = useState([]);
@@ -31,6 +32,7 @@ export const useDatabase = () => {
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
+  const [savingBadgeSettings, setSavingBadgeSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -40,10 +42,11 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
+        DatabaseService.getBadgeSettings(),
         DatabaseService.getAwarenessTagOverview(),
         DatabaseService.getShopManagementData()
       ]);
@@ -53,6 +56,7 @@ export const useDatabase = () => {
       setCategories(dashboardData.categories);
       setMeditationSettings(nextMeditationSettings);
       setAwarenessTagSettings(nextAwarenessTagSettings);
+      setBadgeSettings(nextBadgeSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
       setShopProducts(nextShopManagementData.products);
@@ -60,7 +64,7 @@ export const useDatabase = () => {
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -72,6 +76,7 @@ export const useDatabase = () => {
       setCategories([]);
       setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
+      setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -103,6 +108,7 @@ export const useDatabase = () => {
       setTags([]);
       setCategories([]);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
+      setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -239,6 +245,23 @@ export const useDatabase = () => {
     }
   };
 
+  const updateBadgeSettings = async (settingsData) => {
+    try {
+      setSavingBadgeSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveBadgeSettings(settingsData);
+      setBadgeSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating badge settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingBadgeSettings(false);
+    }
+  };
+
   const saveShopProduct = async (productData) => {
     try {
       await DatabaseService.saveShopProduct(productData);
@@ -273,6 +296,7 @@ export const useDatabase = () => {
     categories,
     meditationSettings,
     awarenessTagSettings,
+    badgeSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -282,6 +306,7 @@ export const useDatabase = () => {
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
+    savingBadgeSettings,
     loading,
     error,
     
@@ -296,6 +321,7 @@ export const useDatabase = () => {
     getUserTags,
     updateMeditationSettings,
     updateAwarenessTagSettings,
+    updateBadgeSettings,
     saveShopProduct,
     updateShopOrderStatus,
     initializeDatabase,

@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { awarenessService, authService, userProfileService } from '../services/cloudbase';
+import { awarenessService, authService, badgeService, userProfileService } from '../services/cloudbase';
 
 const CloudAwarenessContext = createContext();
 const PUBLIC_CACHE_KEY = 'liwu_awareness_public_cache_v1';
@@ -182,6 +182,10 @@ export const CloudAwarenessProvider = ({ children }) => {
       const nextAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
       setAuthStatus(nextAuthStatus);
       setCurrentUser(nextCurrentUser);
+
+      if (nextCurrentUser?.id) {
+        void badgeService.claimDailyCloudSign();
+      }
 
       const cacheSummary = hydrateCaches(nextCurrentUser?.authUid || nextAuthStatus.authUid || 'guest');
       if (!force && cacheSummary.hasPublicCache && cacheSummary.hasUserCache && !cacheSummary.publicStale && !cacheSummary.userStale) {

@@ -7,6 +7,7 @@ import TagManagement from '../components/Dashboard/TagManagement';
 import DatabaseStatus from '../components/Dashboard/DatabaseStatus';
 import MeditationSettings from '../components/Dashboard/MeditationSettings.jsx';
 import AwarenessTagSettings from '../components/Dashboard/AwarenessTagSettings.jsx';
+import BadgeSettings from '../components/Dashboard/BadgeSettings.jsx';
 import ShopManagement from '../components/Dashboard/ShopManagement.jsx';
 import { useDatabase } from '../hooks/useDatabase.js';
 
@@ -43,6 +44,7 @@ const Dashboard = () => {
     categories,
     meditationSettings,
     awarenessTagSettings,
+    badgeSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -52,6 +54,7 @@ const Dashboard = () => {
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
+    savingBadgeSettings,
     loading,
     error,
     updateUser,
@@ -62,6 +65,7 @@ const Dashboard = () => {
     updateUserTags,
     updateMeditationSettings,
     updateAwarenessTagSettings,
+    updateBadgeSettings,
     saveShopProduct,
     updateShopOrderStatus
   } = useDatabase();
@@ -133,6 +137,14 @@ const Dashboard = () => {
       await updateAwarenessTagSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update awareness tag settings:', err);
+    }
+  };
+
+  const handleSaveBadgeSettings = async (nextSettings) => {
+    try {
+      await updateBadgeSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update badge settings:', err);
     }
   };
 
@@ -292,6 +304,26 @@ const Dashboard = () => {
               }}
             >
               <span>觉察</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('badges')}
+              style={{
+                padding: '12px 16px',
+                border: 'none',
+                borderRadius: '8px',
+                backgroundColor: activeTab === 'badges' ? '#2196F3' : 'transparent',
+                color: activeTab === 'badges' ? '#fff' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 500,
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span>徽章</span>
             </button>
             <button
               onClick={() => setActiveTab('shop')}
@@ -549,6 +581,16 @@ const Dashboard = () => {
             error={settingsError}
             saving={savingAwarenessTagSettings}
             onSave={handleSaveAwarenessTagSettings}
+          />
+        )}
+
+        {!loading && !error && activeTab === 'badges' && (
+          <BadgeSettings
+            key={`${badgeSettings.documentId || 'default'}-${badgeSettings.version || 1}`}
+            settings={badgeSettings}
+            error={settingsError}
+            saving={savingBadgeSettings}
+            onSave={handleSaveBadgeSettings}
           />
         )}
 

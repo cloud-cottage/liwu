@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { wealthService } from '../services/cloudbase';
+import { badgeService, wealthService } from '../services/cloudbase';
 
 const WealthContext = createContext();
 const WALLET_SYNC_INTERVAL_MS = 15000;
@@ -418,6 +418,16 @@ export const WealthProvider = ({ children }) => {
 
     const normalizedRewardAmount = Math.max(0, Number(rewardAmount) || 0);
     if (normalizedRewardAmount <= 0) {
+      try {
+        await badgeService.recordMeditationCompletion({
+          duration,
+          rewardAmount: 0,
+          description: rewardDescription
+        });
+      } catch (badgeError) {
+        console.error('记录冥想徽章进度失败:', badgeError);
+      }
+
       return {
         rewarded: false,
         rewardAmount: 0,
@@ -427,11 +437,28 @@ export const WealthProvider = ({ children }) => {
       };
     }
 
-    return addWealth(normalizedRewardAmount, rewardDescription, {
+    const rewardResult = await addWealth(normalizedRewardAmount, rewardDescription, {
       source: 'meditation',
       rewardKey,
       allowRepeatReward
     });
+
+    try {
+      const badgeResult = await badgeService.recordMeditationCompletion({
+        duration,
+        rewardAmount: rewardResult.rewardAmount ?? normalizedRewardAmount,
+        description: rewardDescription
+      });
+
+      return {
+        ...rewardResult,
+        badgeBonusAmount: badgeResult.badgeBonusAmount || 0,
+        meditationSlot: badgeResult.slot || ''
+      };
+    } catch (badgeError) {
+      console.error('记录冥想徽章进度失败:', badgeError);
+      return rewardResult;
+    }
   }, [addWealth, balance, updateMeditationStats]);
 
   const completeChallenge = useCallback((challengeId) => {

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Award, BookOpen, LogOut, MessageSquareText, ShieldCheck, ShoppingBag, Smartphone, UserRound, Wallet, X } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
+import { useBadgeState } from '../../hooks/useBadgeState.js';
 import { authService } from '../../services/cloudbase';
 
 const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/g, '').trim();
@@ -294,6 +295,7 @@ const Profile = () => {
     refreshData,
     syncAuthState
   } = useCloudAwareness();
+  const { equippedBadge } = useBadgeState();
 
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
@@ -645,7 +647,7 @@ const Profile = () => {
         <InfoCard
           icon={BookOpen}
           label="花开纪念册"
-          value="进入查看"
+          value={equippedBadge?.name || '未佩戴徽章'}
           accent="var(--color-accent-clay)"
           onClick={() => navigate('/album')}
         />

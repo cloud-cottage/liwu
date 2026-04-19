@@ -44,7 +44,8 @@ export const DATABASE_CONFIG = {
     shopOrders: 'shop_orders',
     shopOrderItems: 'shop_order_items',
     userAddresses: 'user_addresses',
-    pointLedger: 'point_ledger'
+    pointLedger: 'point_ledger',
+    badgeProfiles: 'badge_profiles'
   },
   
   // Database options
