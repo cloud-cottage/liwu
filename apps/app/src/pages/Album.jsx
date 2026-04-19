@@ -243,7 +243,6 @@ const Album = () => {
   const builderBadges = useMemo(() => buildBuilderBadges(), []);
 
   const badges = activeTab === 'growth' ? growthBadges : builderBadges;
-  const unlockedCount = badges.filter((badge) => badge.earned).length;
 
   return (
     <div className="page-container" style={{ padding: '20px', paddingBottom: '96px' }}>
@@ -270,26 +269,26 @@ const Album = () => {
         style={{
           backgroundColor: '#fff',
           borderRadius: '28px',
-          padding: '24px',
+          padding: '20px',
           boxShadow: 'var(--shadow-sm)',
-          marginBottom: '20px',
+          marginBottom: '16px',
           background:
             'radial-gradient(circle at top right, rgba(214, 140, 101, 0.18), transparent 34%), linear-gradient(180deg, #fffaf5 0%, #ffffff 100%)'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--color-accent-clay)' }}>
           <BookOpen size={18} />
-          <span style={{ fontSize: '13px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
             blossom_album
           </span>
         </div>
 
-        <h1 style={{ fontSize: '30px', margin: '12px 0 0' }}>花开纪念册</h1>
-        <p style={{ margin: '10px 0 0', color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
+        <h1 style={{ fontSize: '28px', margin: '8px 0 0' }}>花开纪念册</h1>
+        <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
           把成长与共建，收成一册可见的光。
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
           {Object.entries(TAB_META).map(([key, meta]) => {
             const Icon = meta.icon;
             const totalCount = key === 'growth' ? growthBadges.length : builderBadges.length;
@@ -304,19 +303,19 @@ const Album = () => {
                 style={{
                   border: isActive ? '1px solid rgba(214, 140, 101, 0.28)' : '1px solid rgba(226, 232, 240, 0.92)',
                   background: isActive ? 'rgba(255, 249, 244, 0.98)' : 'rgba(255, 255, 255, 0.9)',
-                  borderRadius: '22px',
-                  padding: '16px',
+                  borderRadius: '18px',
+                  padding: '12px 14px',
                   textAlign: 'left',
                   cursor: 'pointer',
-                  boxShadow: isActive ? '0 16px 32px rgba(214, 140, 101, 0.12)' : 'none'
+                  boxShadow: isActive ? '0 12px 24px rgba(214, 140, 101, 0.1)' : 'none'
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                   <div
                     style={{
-                      width: '38px',
-                      height: '38px',
-                      borderRadius: '14px',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '12px',
                       backgroundColor: isActive ? 'rgba(214, 140, 101, 0.12)' : '#f8fafc',
                       color: isActive ? 'var(--color-accent-clay)' : '#64748b',
                       display: 'flex',
@@ -324,36 +323,25 @@ const Album = () => {
                       justifyContent: 'center'
                     }}
                   >
-                    <Icon size={18} />
+                    <Icon size={16} />
                   </div>
                   <div
                     style={{
-                      padding: '5px 10px',
+                      padding: '4px 8px',
                       borderRadius: '999px',
                       backgroundColor: isActive ? 'rgba(214, 140, 101, 0.12)' : '#f1f5f9',
                       color: isActive ? '#9a3412' : '#64748b',
-                      fontSize: '12px',
+                      fontSize: '11px',
                       fontWeight: 700
                     }}
                   >
                     {currentUnlockedCount}/{totalCount}
                   </div>
                 </div>
-                <div style={{ marginTop: '14px', fontSize: '16px', fontWeight: 700, color: '#111827' }}>{meta.label}</div>
+                <div style={{ marginTop: '10px', fontSize: '14px', fontWeight: 700, color: '#111827' }}>{meta.label}</div>
               </button>
             );
           })}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '18px' }}>
-          <div style={summaryCardStyle}>
-            <div style={summaryLabelStyle}>已点亮</div>
-            <div style={summaryValueStyle}>{unlockedCount}</div>
-          </div>
-          <div style={summaryCardStyle}>
-            <div style={summaryLabelStyle}>待点亮</div>
-            <div style={summaryValueStyle}>{Math.max(badges.length - unlockedCount, 0)}</div>
-          </div>
         </div>
       </section>
 
@@ -365,7 +353,7 @@ const Album = () => {
           boxShadow: 'var(--shadow-sm)'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
           <div
             style={{
               width: '40px',
@@ -381,14 +369,14 @@ const Album = () => {
             {activeTab === 'growth' ? <Sparkles size={18} /> : <Award size={18} />}
           </div>
           <div>
-            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94a3b8' }}>
+            <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94a3b8' }}>
               {TAB_META[activeTab].kicker}
             </div>
-            <h2 style={{ margin: '4px 0 0', fontSize: '20px' }}>{TAB_META[activeTab].label}</h2>
+            <h2 style={{ margin: '4px 0 0', fontSize: '18px' }}>{TAB_META[activeTab].label}</h2>
           </div>
         </div>
 
-        <p style={{ margin: '0 0 18px', color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
+        <p style={{ margin: '0 0 16px', fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.55 }}>
           {TAB_META[activeTab].description}
         </p>
 
@@ -420,28 +408,13 @@ const Album = () => {
               <BadgeArtwork badge={badge} />
 
               <div style={{ width: '100%' }}>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-                  <span
-                    style={{
-                      padding: '6px 10px',
-                      borderRadius: '999px',
-                      backgroundColor: badge.earned ? 'rgba(16, 185, 129, 0.12)' : '#f1f5f9',
-                      color: badge.earned ? '#047857' : '#64748b',
-                      fontSize: '12px',
-                      fontWeight: 700
-                    }}
-                  >
-                    {badge.earned ? '已获得' : '未获得'}
-                  </span>
-                </div>
-
                 <div style={{ fontSize: '16px', fontWeight: 700, color: '#111827', textAlign: 'center' }}>{badge.name}</div>
                 <div
                   style={{
-                    marginTop: '8px',
-                    fontSize: '13px',
+                    marginTop: '6px',
+                    fontSize: '12px',
                     color: 'var(--color-text-secondary)',
-                    lineHeight: 1.7,
+                    lineHeight: 1.6,
                     textAlign: 'center'
                   }}
                 >
@@ -503,25 +476,6 @@ const Album = () => {
       </section>
     </div>
   );
-};
-
-const summaryCardStyle = {
-  borderRadius: '20px',
-  backgroundColor: 'rgba(255, 255, 255, 0.82)',
-  padding: '16px',
-  boxShadow: '0 14px 32px rgba(214, 140, 101, 0.08)'
-};
-
-const summaryValueStyle = {
-  marginTop: '8px',
-  fontSize: '28px',
-  fontWeight: 700,
-  color: 'var(--color-text-primary)'
-};
-
-const summaryLabelStyle = {
-  fontSize: '13px',
-  color: 'var(--color-text-secondary)'
 };
 
 export default Album;
