@@ -647,7 +647,7 @@ const Profile = () => {
         <InfoCard
           icon={BookOpen}
           label="花开纪念册"
-          value={equippedBadge?.name || '未佩戴徽章'}
+          value={equippedBadge?.displayName || equippedBadge?.name || '未佩戴徽章'}
           accent="var(--color-accent-clay)"
           onClick={() => navigate('/album')}
         />

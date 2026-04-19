@@ -5,6 +5,8 @@ import { badgeService, wealthService } from '../services/cloudbase';
 const WealthContext = createContext();
 const WALLET_SYNC_INTERVAL_MS = 15000;
 const REWARD_MODAL_MARKER_KEY = 'wealth_reward_modal_marker';
+const MEDITATION_TIMEZONE = 'Asia/Shanghai';
+const MEDITATION_MIN_VALID_SECONDS = 180;
 
 export const useWealth = () => useContext(WealthContext);
 
@@ -40,6 +42,31 @@ const removeSessionValue = (key) => {
   }
 
   window.sessionStorage.removeItem(key);
+};
+
+const meditationDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: MEDITATION_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+const getMeditationDateKey = (value = new Date()) => meditationDateFormatter.format(new Date(value));
+
+const normalizeMeditationStats = (value = {}) => {
+  const todayKey = getMeditationDateKey();
+  const storedTodayKey = value.todayKey || value.todayDate || '';
+  const totalDuration = Math.max(0, Number(value.totalDuration || 0));
+  const sessionCount = Math.max(0, Number(value.sessionCount || 0));
+  const todayCount = storedTodayKey === todayKey ? Math.max(0, Number(value.todayCount || 0)) : 0;
+
+  return {
+    totalDuration,
+    sessionCount,
+    todayCount,
+    todayKey,
+    medals: Math.max(0, Number(value.medals || 0))
+  };
 };
 
 const isRewardEntry = (entry = {}) => entry?.type === 'EARN' && Number(entry.amount || 0) > 0;
@@ -193,12 +220,12 @@ export const WealthProvider = ({ children }) => {
   const [meditationStats, setMeditationStats] = useState(() => {
     const savedMeditationStats = localStorage.getItem('meditation_stats');
     return savedMeditationStats
-      ? JSON.parse(savedMeditationStats)
-      : {
+      ? normalizeMeditationStats(JSON.parse(savedMeditationStats))
+      : normalizeMeditationStats({
           totalDuration: 120,
-          medals: 3,
-          sessionCount: 0
-        };
+          sessionCount: 0,
+          todayCount: 0
+        });
   });
   const [rewardModalQueue, setRewardModalQueue] = useState([]);
   const rewardTrackingReadyRef = useRef(false);
@@ -263,6 +290,19 @@ export const WealthProvider = ({ children }) => {
       writeSessionJSON(REWARD_MODAL_MARKER_KEY, createRewardMarker(latestRewardEntry));
     }
   }, [history]);
+
+  useEffect(() => {
+    const syncMeditationStatsDate = () => {
+      setMeditationStats((currentStats) => normalizeMeditationStats(currentStats));
+    };
+
+    syncMeditationStatsDate();
+    window.addEventListener('focus', syncMeditationStatsDate);
+
+    return () => {
+      window.removeEventListener('focus', syncMeditationStatsDate);
+    };
+  }, []);
 
   const syncWalletFromCloud = useCallback(async (options = {}) => {
     try {
@@ -399,12 +439,25 @@ export const WealthProvider = ({ children }) => {
   }, [dreams]);
 
   const updateMeditationStats = useCallback((duration) => {
-    setMeditationStats((currentStats) => ({
-      ...currentStats,
-      totalDuration: currentStats.totalDuration + duration,
-      sessionCount: currentStats.sessionCount + 1,
-      medals: Math.max(currentStats.medals, Math.floor((currentStats.totalDuration + duration) / 40))
-    }));
+    const normalizedDuration = Math.max(0, Number(duration) || 0);
+    const todayKey = getMeditationDateKey();
+
+    if (normalizedDuration <= 0) {
+      return;
+    }
+
+    setMeditationStats((currentStats) => {
+      const nextStats = normalizeMeditationStats(currentStats);
+      const nextTodayCount = nextStats.todayKey === todayKey ? nextStats.todayCount + 1 : 1;
+
+      return {
+        ...nextStats,
+        totalDuration: nextStats.totalDuration + normalizedDuration,
+        sessionCount: nextStats.sessionCount + 1,
+        todayCount: nextTodayCount,
+        todayKey
+      };
+    });
   }, []);
 
   const completeMeditationSession = useCallback(async ({

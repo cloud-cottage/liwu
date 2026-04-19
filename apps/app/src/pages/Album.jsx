@@ -94,6 +94,55 @@ const FRAME_STYLES = {
 };
 
 const DIFFICULTY_ORDER = ['gentle', 'steady', 'resolute', 'radiant'];
+const DIFFICULTY_LABELS = {
+  gentle: '微光',
+  steady: '进阶',
+  resolute: '砥砺',
+  radiant: '稀有'
+};
+const DIFFICULTY_INDEX = DIFFICULTY_ORDER.reduce((accumulator, key, index) => ({
+  ...accumulator,
+  [key]: index
+}), {});
+
+const sortBadgesByDifficulty = (badges = []) => (
+  [...badges].sort((left, right) => (
+    (DIFFICULTY_INDEX[left.difficulty] ?? 0) - (DIFFICULTY_INDEX[right.difficulty] ?? 0)
+  ))
+);
+
+const buildBadgeSeriesGroups = (badges = []) => (
+  Object.values(
+    badges.reduce((accumulator, badge) => {
+      if (!accumulator[badge.seriesId]) {
+        accumulator[badge.seriesId] = [];
+      }
+
+      accumulator[badge.seriesId].push(badge);
+      return accumulator;
+    }, {})
+  ).map(sortBadgesByDifficulty)
+);
+
+const getVisibleSeriesBadges = (seriesBadges = []) => {
+  const highestEarnedIndex = seriesBadges.reduce((currentHighestIndex, badge, index) => (
+    badge.earned ? index : currentHighestIndex
+  ), -1);
+  const maxVisibleIndex = Math.min(
+    seriesBadges.length - 1,
+    highestEarnedIndex >= 0 ? highestEarnedIndex + 1 : 0
+  );
+
+  return seriesBadges.filter((_, index) => index <= maxVisibleIndex);
+};
+
+const getSeriesProgressSummary = (badges = []) => {
+  const seriesGroups = buildBadgeSeriesGroups(badges);
+  return {
+    totalSeriesCount: seriesGroups.length,
+    unlockedSeriesCount: seriesGroups.filter((seriesBadges) => seriesBadges.some((badge) => badge.earned)).length
+  };
+};
 
 const getBadgeImage = (badge) => {
   if (badge.image) {
@@ -145,7 +194,7 @@ const BadgeArtwork = ({ badge }) => {
       >
         <img
           src={getBadgeImage(badge)}
-          alt={badge.name}
+          alt={badge.displayName || badge.seriesName || badge.name}
           style={{
             width: '100%',
             height: '100%',
@@ -153,6 +202,25 @@ const BadgeArtwork = ({ badge }) => {
             display: 'block'
           }}
         />
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            minWidth: '40px',
+            padding: '4px 8px',
+            borderRadius: '999px',
+            backgroundColor: badge.earned ? 'rgba(17, 24, 39, 0.84)' : 'rgba(71, 85, 105, 0.76)',
+            color: '#fff',
+            fontSize: '11px',
+            fontWeight: 700,
+            letterSpacing: '0.04em',
+            textAlign: 'center',
+            boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)'
+          }}
+        >
+          {DIFFICULTY_LABELS[badge.difficulty] || badge.difficulty}
+        </div>
       </div>
     </div>
   );
@@ -196,7 +264,7 @@ const BadgeDetailModal = ({
             <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94a3b8' }}>
               badge_detail
             </div>
-            <h2 style={{ margin: '6px 0 0', fontSize: '24px', color: '#111827' }}>{badge.name}</h2>
+            <h2 style={{ margin: '6px 0 0', fontSize: '24px', color: '#111827' }}>{badge.displayName || badge.seriesName || badge.name}</h2>
           </div>
           <button
             type="button"
@@ -225,6 +293,10 @@ const BadgeDetailModal = ({
         </div>
 
         <div style={{ display: 'grid', gap: '10px', marginBottom: '18px' }}>
+          <div style={modalMetricStyle}>
+            <span>当前等级</span>
+            <strong>{DIFFICULTY_LABELS[badge.difficulty] || badge.difficulty}</strong>
+          </div>
           <div style={modalMetricStyle}>
             <span>解锁条件</span>
             <strong>{badge.threshold}{badge.unit || '次'}</strong>
@@ -282,7 +354,10 @@ const Album = () => {
   } = useBadgeState();
 
   const badges = groupedBadges[activeTab] || [];
-  const unlockedCount = useMemo(() => badges.filter((badge) => badge.earned).length, [badges]);
+  const visibleBadges = useMemo(() => (
+    buildBadgeSeriesGroups(badges).flatMap(getVisibleSeriesBadges)
+  ), [badges]);
+  const activeTabSeriesProgress = useMemo(() => getSeriesProgressSummary(badges), [badges]);
 
   const handleEquipBadge = async (badge) => {
     await equipBadge(badge.badgeId);
@@ -361,8 +436,7 @@ const Album = () => {
           {Object.entries(TAB_META).map(([key, meta]) => {
             const Icon = meta.icon;
             const tabBadges = groupedBadges[key] || [];
-            const currentUnlockedCount = tabBadges.filter((badge) => badge.earned).length;
-            const totalCount = tabBadges.length;
+            const { unlockedSeriesCount, totalSeriesCount } = getSeriesProgressSummary(tabBadges);
             const isActive = key === activeTab;
 
             return (
@@ -405,7 +479,7 @@ const Album = () => {
                       fontWeight: 700
                     }}
                   >
-                    {currentUnlockedCount}/{totalCount}
+                    {unlockedSeriesCount}/{totalSeriesCount}
                   </div>
                 </div>
                 <div style={{ marginTop: '10px', fontSize: '14px', fontWeight: 700, color: '#111827' }}>{meta.label}</div>
@@ -457,7 +531,7 @@ const Album = () => {
             gap: '16px'
           }}
         >
-          {badges.map((badge) => (
+          {visibleBadges.map((badge) => (
             <button
               key={badge.badgeId}
               type="button"
@@ -498,7 +572,9 @@ const Album = () => {
                   </div>
                 )}
 
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#111827', textAlign: 'center' }}>{badge.name}</div>
+                <div style={{ fontSize: '16px', fontWeight: 700, color: '#111827', textAlign: 'center' }}>
+                  {badge.displayName || badge.seriesName || badge.name}
+                </div>
                 <div
                   style={{
                     marginTop: '6px',
@@ -564,9 +640,9 @@ const Album = () => {
           })}
         </div>
 
-        {!loading && badges.length > 0 && (
+        {!loading && visibleBadges.length > 0 && (
           <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '12px', color: '#94a3b8' }}>
-            已点亮 {unlockedCount} 枚，可点击徽章查看详情并佩戴。
+            已点亮 {activeTabSeriesProgress.unlockedSeriesCount}/{activeTabSeriesProgress.totalSeriesCount} 类徽章，可点击查看详情并佩戴。
           </div>
         )}
       </section>

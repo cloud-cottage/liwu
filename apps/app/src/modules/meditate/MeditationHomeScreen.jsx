@@ -1,11 +1,14 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wind, Clock, Award } from 'lucide-react';
+import { Wind, Clock } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 
 const MeditationHome = () => {
     const navigate = useNavigate();
     const { meditationStats } = useWealth();
+    const totalCount = Math.max(0, Number(meditationStats.sessionCount || 0));
+    const todayCount = Math.max(0, Number(meditationStats.todayCount || 0));
+    const pastCount = Math.max(0, totalCount - todayCount);
 
     return (
         <div className="page-container" style={{ padding: '20px' }}>
@@ -59,16 +62,13 @@ const MeditationHome = () => {
                 </button>
             </section>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '16px', textAlign: 'center' }}>
-                    <Clock size={20} style={{ color: 'var(--color-accent-clay)', marginBottom: '8px' }} />
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>累计时长</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{meditationStats.totalDuration} min</div>
-                </div>
-                <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '16px', textAlign: 'center' }}>
-                    <Award size={20} style={{ color: 'var(--color-accent-clay)', marginBottom: '8px' }} />
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>获得勋章</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{meditationStats.medals} 枚</div>
+            <div style={{ backgroundColor: '#fff', padding: '22px', borderRadius: '18px', textAlign: 'center', boxShadow: 'var(--shadow-sm)' }}>
+                <Clock size={20} style={{ color: 'var(--color-accent-clay)', marginBottom: '10px' }} />
+                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>累计次数</div>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: 'var(--color-text-primary)', lineHeight: '1.8' }}>
+                    往日已冥想 {pastCount} 次；<br />
+                    今日冥想 {todayCount} 次；<br />
+                    来日将冥想♾️次！
                 </div>
             </div>
         </div>

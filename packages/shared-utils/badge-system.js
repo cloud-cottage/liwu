@@ -323,6 +323,7 @@ export const flattenBadgeSeries = (settings = {}) => (
       key: level.id || `${series.id}:${level.difficulty}`,
       badgeId: level.id || `${series.id}:${level.difficulty}`,
       seriesId: series.id,
+      displayName: series.seriesName,
       visibleGroup: series.visibleGroup,
       internalCategory: series.internalCategory,
       seriesName: series.seriesName,

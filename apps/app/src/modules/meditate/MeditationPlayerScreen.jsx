@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Play, Pause } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWealth } from '../../context/WealthContext';
@@ -10,11 +10,14 @@ const AUDIO_LIBRARY = [
   '/audio/meditation/sea_wave2.mp3',
   '/audio/meditation/sea_wave_seagull.mp3',
 ];
+const MIN_VALID_MEDITATION_SECONDS = 180;
 
 const createSessionSegments = () =>
   Array.from({ length: SEGMENT_COUNT }, () => ({
     url: AUDIO_LIBRARY[Math.floor(Math.random() * AUDIO_LIBRARY.length)],
   }));
+
+const toMeditationMinutes = (seconds) => Number((Math.max(0, Number(seconds) || 0) / 60).toFixed(1));
 
 const MeditationPlayer = () => {
   const navigate = useNavigate();
@@ -28,6 +31,9 @@ const MeditationPlayer = () => {
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const audioRef = useRef(new Audio());
   const handleSegmentCompleteRef = useRef(() => {});
+  const sessionPersistedRef = useRef(false);
+  const listenedSecondsRef = useRef(0);
+  const lastAudioTimeRef = useRef(0);
   const [segments] = useState(createSessionSegments);
 
   const elapsedTime = duration > 0 ? Math.max(duration - timeLeft, 0) : 0;
@@ -54,6 +60,30 @@ const MeditationPlayer = () => {
     };
   }, []);
 
+  const persistMeditationSession = useCallback(async ({
+    durationMinutes,
+    rewardAmount = 0,
+    allowRepeatReward = true,
+    rewardKey = 'default_meditation_program',
+    rewardDescription = '完成一次冥想'
+  }) => {
+    if (sessionPersistedRef.current || listenedSecondsRef.current <= MIN_VALID_MEDITATION_SECONDS) {
+      return {
+        rewarded: false,
+        rewardAmount: 0
+      };
+    }
+
+    sessionPersistedRef.current = true;
+    return completeMeditationSession({
+      duration: Math.max(1, Number(durationMinutes) || 0),
+      rewardAmount,
+      allowRepeatReward,
+      rewardKey,
+      rewardDescription
+    });
+  }, [completeMeditationSession]);
+
   useEffect(() => {
     handleSegmentCompleteRef.current = async () => {
       if (currentSegmentIndex < SEGMENT_COUNT - 1) {
@@ -65,14 +95,16 @@ const MeditationPlayer = () => {
         setIsBuffering(true);
         setDuration(0);
         setTimeLeft(0);
+        lastAudioTimeRef.current = 0;
         audio.src = segments[nextIndex].url;
         audio.load();
         return;
       }
 
       setIsPlaying(false);
-      const rewardResult = await completeMeditationSession({
-        duration: 30,
+      const sessionMinutes = toMeditationMinutes(listenedSecondsRef.current);
+      const rewardResult = await persistMeditationSession({
+        durationMinutes: sessionMinutes,
         rewardAmount: meditationSettings.rewardPoints,
         allowRepeatReward: meditationSettings.allowRepeatRewards,
         rewardKey: 'default_meditation_program',
@@ -80,15 +112,15 @@ const MeditationPlayer = () => {
       });
 
       const completionMessage = rewardResult.error
-        ? '冥想完成，累计时长增加 30 分钟。云端福豆暂未到账。'
+        ? '本次冥想已记入，云端福豆暂未到账。'
         : rewardResult.repeatedRewardBlocked && meditationSettings.rewardPoints > 0
-          ? '冥想完成，本次不重复发放福豆，累计时长增加 30 分钟。'
-          : '冥想完成，累计时长增加 30 分钟。';
+          ? '本次冥想已记入，本次不重复发放福豆。'
+          : '本次冥想已记入。';
 
       window.alert(completionMessage);
       navigate('/');
     };
-  }, [completeMeditationSession, currentSegmentIndex, meditationSettings, navigate, segments]);
+  }, [currentSegmentIndex, meditationSettings, navigate, persistMeditationSession, segments]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -115,9 +147,17 @@ const MeditationPlayer = () => {
         return;
       }
 
+      const currentTime = audio.currentTime;
+      if (currentTime < lastAudioTimeRef.current) {
+        lastAudioTimeRef.current = currentTime;
+      } else {
+        listenedSecondsRef.current += currentTime - lastAudioTimeRef.current;
+        lastAudioTimeRef.current = currentTime;
+      }
+
       const nextDuration = Math.ceil(audio.duration);
       setDuration(nextDuration);
-      setTimeLeft(Math.max(0, Math.ceil(audio.duration - audio.currentTime)));
+      setTimeLeft(Math.max(0, Math.ceil(audio.duration - currentTime)));
     };
 
     const handleWaiting = () => {
@@ -154,8 +194,15 @@ const MeditationPlayer = () => {
       audio.removeEventListener('waiting', handleWaiting);
       audio.removeEventListener('playing', handlePlaying);
       audio.removeEventListener('error', handleError);
+      if (!sessionPersistedRef.current && listenedSecondsRef.current > MIN_VALID_MEDITATION_SECONDS) {
+        void persistMeditationSession({
+          durationMinutes: toMeditationMinutes(listenedSecondsRef.current),
+          rewardAmount: 0,
+          rewardDescription: '中断后保存一次冥想'
+        });
+      }
     };
-  }, [segments]);
+  }, [persistMeditationSession, segments]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -176,8 +223,15 @@ const MeditationPlayer = () => {
   };
 
   const handleClose = () => {
-    if (window.confirm('确定要结束冥想吗？当前进度将不会保存。')) {
-      navigate('/');
+    if (window.confirm('确定要结束冥想吗？单次冥想超过 3 分钟会自动记入一次。')) {
+      void (async () => {
+        await persistMeditationSession({
+          durationMinutes: toMeditationMinutes(listenedSecondsRef.current),
+          rewardAmount: 0,
+          rewardDescription: '中断后保存一次冥想'
+        });
+        navigate('/');
+      })();
     }
   };
 
