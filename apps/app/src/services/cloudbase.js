@@ -314,6 +314,8 @@ const normalizePhone = (value = '') => {
   return digitsOnlyValue;
 };
 
+const normalizeProfileName = (value = '') => String(value || '').trim().slice(0, 16);
+
 const buildPhoneAuthUid = (phoneNumber = '') => {
   const normalizedPhoneNumber = normalizePhone(phoneNumber);
   return normalizedPhoneNumber ? `mock_phone_${normalizedPhoneNumber}` : '';
@@ -1362,6 +1364,7 @@ const resolveAwarenessIdentity = async () => {
     userId,
     authUid,
     userName,
+    isAuthenticated: Boolean(authStatus.isAuthenticated),
     isStudent: Boolean(currentProfile?.isStudent),
     profile: currentProfile
   };
@@ -1546,7 +1549,12 @@ export const userProfileService = {
   },
 
   async updateCurrentProfile(profilePatch) {
-    const currentProfile = await this.ensureCurrentProfile();
+    const authStatus = await resolveAuthStatus({ allowAnonymous: false });
+    if (!authStatus.isAuthenticated) {
+      throw new Error('请先登录后再修改资料');
+    }
+
+    const currentProfile = await this.ensureCurrentProfile({ allowAnonymous: false });
     if (!currentProfile) {
       return null;
     }
@@ -1554,6 +1562,15 @@ export const userProfileService = {
       ...profilePatch,
       updated_at: new Date()
     };
+
+    if (Object.prototype.hasOwnProperty.call(updatePayload, 'name')) {
+      const normalizedName = normalizeProfileName(updatePayload.name);
+      if (!normalizedName) {
+        throw new Error('请输入用户名');
+      }
+
+      updatePayload.name = normalizedName;
+    }
 
     await db.collection(collections.users).doc(currentProfile.id).update(updatePayload);
 
@@ -1590,12 +1607,65 @@ export const awarenessService = {
     return normalizeAwarenessTagSettingEntry(settings.tagsByKey?.[tagKey] || {});
   },
 
+  async findExistingTagByContent(content) {
+    try {
+      const normalizedContent = String(content || '').trim();
+      if (!normalizedContent) {
+        return { success: true, data: null };
+      }
+
+      const [recordsResult, awarenessTagSettings] = await Promise.all([
+        db.collection(collections.awarenessRecords).where({ content: normalizedContent }).limit(500).get(),
+        getAwarenessTagSettings()
+      ]);
+
+      const tags = groupAwarenessTags(
+        getResponseData(recordsResult, collections.awarenessRecords).map(normalizeAwarenessRecord),
+        'totalCount',
+        awarenessTagSettings.tagsByKey
+      );
+
+      if (tags.length === 0) {
+        return { success: true, data: null };
+      }
+
+      const sortedTags = [...tags].sort((left, right) => {
+        if (left.accessType !== right.accessType) {
+          if (left.accessType === 'public') {
+            return -1;
+          }
+          if (right.accessType === 'public') {
+            return 1;
+          }
+        }
+
+        if ((right.totalCount || 0) !== (left.totalCount || 0)) {
+          return (right.totalCount || 0) - (left.totalCount || 0);
+        }
+
+        return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
+      });
+
+      return {
+        success: true,
+        data: sortedTags[0]
+      };
+    } catch (error) {
+      console.error('查询既有觉察标签失败:', error);
+      return { success: false, error };
+    }
+  },
+
   async addRecord(content, options = {}) {
     try {
       const trimmedContent = content.trim();
       const awarenessIdentity = await resolveAwarenessIdentity();
       const accessType = normalizeAccessType(options.accessType || 'public');
       const recordSource = options.recordSource === 'follow' ? 'follow' : 'manual';
+
+      if (!awarenessIdentity.isAuthenticated || !awarenessIdentity.profile?.id) {
+        throw new Error('请先登录后再发布觉察标签');
+      }
 
       if (!trimmedContent) {
         throw new Error('请输入标签内容');

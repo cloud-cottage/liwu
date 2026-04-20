@@ -100,7 +100,7 @@ const getNewRewardEntries = (entries = [], marker = createRewardMarker()) => (
     .sort((left, right) => getEntryTimestamp(left) - getEntryTimestamp(right))
 );
 
-const RewardArrivalModal = ({ entry, balance, onClose }) => {
+const RewardArrivalToast = ({ entry, balance, onClose }) => {
   if (!entry) {
     return null;
   }
@@ -109,86 +109,88 @@ const RewardArrivalModal = ({ entry, balance, onClose }) => {
     <div
       style={{
         position: 'fixed',
-        inset: 0,
+        top: '18px',
+        left: '50%',
+        transform: 'translateX(-50%)',
         zIndex: 70,
         display: 'flex',
-        alignItems: 'center',
         justifyContent: 'center',
-        padding: '20px',
-        backgroundColor: 'rgba(15, 23, 42, 0.45)'
+        width: 'calc(100% - 32px)',
+        maxWidth: '420px',
+        pointerEvents: 'none'
       }}
     >
       <div
         style={{
           width: '100%',
-          maxWidth: '420px',
-          backgroundColor: '#fff',
-          borderRadius: '24px',
-          padding: '24px',
-          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)',
-          textAlign: 'center'
+          backgroundColor: 'rgba(15, 23, 42, 0.94)',
+          borderRadius: '20px',
+          padding: '14px 16px',
+          boxShadow: '0 18px 44px rgba(15, 23, 42, 0.28)',
+          color: '#fff',
+          pointerEvents: 'auto',
+          backdropFilter: 'blur(14px)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
         }}
       >
         <div
           style={{
-            width: '72px',
-            height: '72px',
+            width: '48px',
+            height: '48px',
             borderRadius: '50%',
-            margin: '0 auto 18px',
             background: 'linear-gradient(135deg, rgba(214, 140, 101, 0.18) 0%, rgba(214, 140, 101, 0.32) 100%)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '30px',
+            fontSize: '22px',
             fontWeight: 700,
-            color: '#9a3412'
+            color: '#f6caa9',
+            flexShrink: 0
           }}
         >
           福
         </div>
 
-        <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-          reward_notice
-        </div>
-        <h3 style={{ margin: '10px 0 0', fontSize: '26px', color: '#111827' }}>福豆到账</h3>
-        <div style={{ marginTop: '14px', fontSize: '40px', fontWeight: 700, color: '#9a3412', lineHeight: 1 }}>
-          +{entry.amount}
-        </div>
-        <div style={{ marginTop: '8px', fontSize: '15px', fontWeight: 600, color: '#334155' }}>
-          当前福豆 {balance}
-        </div>
-
         <div
           style={{
-            marginTop: '18px',
-            borderRadius: '16px',
-            backgroundColor: '#f8fafc',
-            padding: '16px',
-            color: '#475569',
-            fontSize: '14px',
-            lineHeight: 1.7
+            flex: 1,
+            minWidth: 0
           }}
         >
-          {entry.description || '你获得了一笔新的福豆奖励。'}
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#cbd5e1', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            reward_notice
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '24px', fontWeight: 700, color: '#f6caa9', lineHeight: 1 }}>
+              +{entry.amount}
+            </div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+              当前福豆 {balance}
+            </div>
+          </div>
+          <div style={{ marginTop: '6px', fontSize: '13px', color: '#cbd5e1', lineHeight: 1.5 }}>
+            {entry.description || '你获得了一笔新的福豆奖励。'}
+          </div>
         </div>
 
         <button
           type="button"
           onClick={onClose}
           style={{
-            width: '100%',
-            marginTop: '18px',
             border: 'none',
-            borderRadius: '14px',
-            backgroundColor: '#111827',
+            borderRadius: '12px',
+            backgroundColor: 'rgba(255, 255, 255, 0.14)',
             color: '#fff',
-            padding: '13px 16px',
-            fontSize: '14px',
+            padding: '10px 12px',
+            fontSize: '12px',
             fontWeight: 600,
-            cursor: 'pointer'
+            cursor: 'pointer',
+            flexShrink: 0
           }}
         >
-          我知道了
+          收起
         </button>
       </div>
     </div>
@@ -229,6 +231,18 @@ export const WealthProvider = ({ children }) => {
   });
   const [rewardModalQueue, setRewardModalQueue] = useState([]);
   const rewardTrackingReadyRef = useRef(false);
+
+  useEffect(() => {
+    if (rewardModalQueue.length === 0) {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setRewardModalQueue((currentQueue) => currentQueue.slice(1));
+    }, 3200);
+
+    return () => window.clearTimeout(timerId);
+  }, [rewardModalQueue]);
 
   const enqueueRewardEntries = useCallback((entries = []) => {
     if (entries.length === 0) {
@@ -543,7 +557,7 @@ export const WealthProvider = ({ children }) => {
       }}
     >
       {children}
-      <RewardArrivalModal
+      <RewardArrivalToast
         entry={rewardModalQueue[0] || null}
         balance={balance}
         onClose={closeRewardModal}

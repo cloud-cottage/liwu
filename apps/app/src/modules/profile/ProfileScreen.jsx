@@ -4,11 +4,12 @@ import { Award, BookOpen, LogOut, MessageSquareText, ShieldCheck, ShoppingBag, S
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useBadgeState } from '../../hooks/useBadgeState.js';
-import { authService } from '../../services/cloudbase';
+import { authService, userProfileService } from '../../services/cloudbase';
 
 const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/g, '').trim();
 
 const isValidPhoneNumber = (value = '') => /^(?:\+?86)?1\d{10}$/.test(normalizePhoneInput(value));
+const MAX_PROFILE_NAME_LENGTH = 16;
 
 const getLoginMethodLabel = (loginMethod = '') => {
   if (loginMethod === 'phone') {
@@ -70,6 +71,28 @@ const InfoCard = ({ icon, label, value, accent, onClick }) => {
     <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{value}</div>
     </Element>
   );
+};
+
+const inlinePrimaryButtonStyle = {
+  border: 'none',
+  borderRadius: '10px',
+  backgroundColor: '#0f172a',
+  color: '#fff',
+  padding: '8px 12px',
+  fontSize: '12px',
+  fontWeight: 600,
+  cursor: 'pointer'
+};
+
+const inlineSecondaryButtonStyle = {
+  border: '1px solid #dbe4ee',
+  borderRadius: '10px',
+  backgroundColor: '#fff',
+  color: '#334155',
+  padding: '8px 12px',
+  fontSize: '12px',
+  fontWeight: 600,
+  cursor: 'pointer'
 };
 
 const LoginModal = ({
@@ -307,8 +330,15 @@ const Profile = () => {
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   const recentEntries = useMemo(() => history.slice(0, 5), [history]);
+
+  useEffect(() => {
+    setNameDraft(currentUser?.name || '');
+  }, [currentUser?.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -465,6 +495,33 @@ const Profile = () => {
     setFeedbackMessage('已退出登录');
   };
 
+  const handleSaveName = async () => {
+    const normalizedName = String(nameDraft || '').trim();
+
+    if (!normalizedName) {
+      setErrorMessage('请输入用户名');
+      return;
+    }
+
+    setSavingName(true);
+    setErrorMessage('');
+    setFeedbackMessage('');
+
+    try {
+      await userProfileService.updateCurrentProfile({ name: normalizedName });
+      await Promise.all([
+        syncAuthState({ allowAnonymous: false }),
+        refreshData({ force: true, allowAnonymous: true })
+      ]);
+      setFeedbackMessage('用户名已更新');
+      setIsEditingName(false);
+    } catch (error) {
+      setErrorMessage(error.message || '用户名更新失败');
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   return (
     <div style={{ padding: '20px', paddingBottom: '80px' }}>
       <div style={{ marginBottom: '24px' }}>
@@ -502,6 +559,58 @@ const Profile = () => {
             <h2 style={{ fontSize: '20px', margin: 0, fontFamily: 'var(--font-serif)' }}>
               {getDisplayName(authStatus, currentUser)}
             </h2>
+            {authStatus.isAuthenticated && (
+              <div style={{ marginTop: '8px' }}>
+                {isEditingName ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      maxLength={MAX_PROFILE_NAME_LENGTH}
+                      onChange={(event) => setNameDraft(event.target.value)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: '10px',
+                        border: '1px solid #dbe4ee',
+                        fontSize: '13px',
+                        minWidth: '180px'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveName}
+                      disabled={savingName}
+                      style={inlinePrimaryButtonStyle}
+                    >
+                      {savingName ? '保存中...' : '保存用户名'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingName(false);
+                        setNameDraft(currentUser?.name || '');
+                      }}
+                      disabled={savingName}
+                      style={inlineSecondaryButtonStyle}
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMessage('');
+                      setFeedbackMessage('');
+                      setIsEditingName(true);
+                    }}
+                    style={inlineSecondaryButtonStyle}
+                  >
+                    修改用户名
+                  </button>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
               <span
                 style={{
@@ -676,7 +785,7 @@ const Profile = () => {
             lineHeight: 1.8
           }}
         >
-          <div>1. 游客模式下仍可浏览和使用基础功能。</div>
+          <div>1. 游客模式下可浏览首页、冥想、觉察三个页面内容，但不能播放冥想或发布觉察标签。</div>
           <div>2. 手机号登录通过短信验证码完成，不需要设置密码。</div>
           <div>3. 微信登录会走 CloudBase OAuth，并在回跳后记录你填写的手机号。</div>
         </div>

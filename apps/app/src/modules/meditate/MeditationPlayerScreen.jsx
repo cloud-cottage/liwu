@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Play, Pause } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWealth } from '../../context/WealthContext';
+import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import DatabaseService, { DEFAULT_MEDITATION_SETTINGS } from '../../services/database.js';
 
 const SEGMENT_COUNT = 5;
@@ -22,6 +23,7 @@ const toMeditationMinutes = (seconds) => Number((Math.max(0, Number(seconds) || 
 const MeditationPlayer = () => {
   const navigate = useNavigate();
   const { completeMeditationSession } = useWealth();
+  const { authStatus, loading: authLoading } = useCloudAwareness();
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -35,12 +37,62 @@ const MeditationPlayer = () => {
   const listenedSecondsRef = useRef(0);
   const lastAudioTimeRef = useRef(0);
   const [segments] = useState(createSessionSegments);
+  const canPlayMeditation = !authLoading && Boolean(authStatus?.isAuthenticated);
 
   const elapsedTime = duration > 0 ? Math.max(duration - timeLeft, 0) : 0;
   const segmentProgress = duration > 0 ? Math.min((elapsedTime / duration) * 100, 100) : 0;
   const tonearmRotation = 8 + segmentProgress * 0.04 + (isPlaying ? 0 : -16);
   const timeLabel = !isLoaded ? '加载中...' : formatTime(timeLeft);
   const footerLabel = isBuffering && isPlaying ? '缓冲中...' : '吸气，感受当下；呼气，放下杂念。';
+
+  if (!authLoading && !authStatus?.isAuthenticated) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px',
+          background: 'linear-gradient(180deg, #f6f1e8 0%, #efe7da 52%, #e4d8c7 100%)'
+        }}
+      >
+        <div
+          style={{
+            width: '100%',
+            maxWidth: '420px',
+            borderRadius: '24px',
+            backgroundColor: 'rgba(255, 255, 255, 0.92)',
+            padding: '24px',
+            boxShadow: '0 24px 60px rgba(53, 40, 27, 0.12)',
+            textAlign: 'center'
+          }}
+        >
+          <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--color-accent-ink)' }}>游客模式不可播放冥想</div>
+          <div style={{ marginTop: '10px', fontSize: '14px', lineHeight: 1.7, color: 'var(--color-text-secondary)' }}>
+            你可以继续浏览冥想页面内容，登录后即可开始播放与累计记录。
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/profile')}
+            style={{
+              marginTop: '18px',
+              border: 'none',
+              borderRadius: '14px',
+              backgroundColor: 'var(--color-accent-ink)',
+              color: '#fff',
+              padding: '12px 18px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            前往登录
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     let active = true;
@@ -207,7 +259,7 @@ const MeditationPlayer = () => {
   useEffect(() => {
     const audio = audioRef.current;
 
-    if (isPlaying && isLoaded) {
+    if (isPlaying && isLoaded && canPlayMeditation) {
       audio.play().catch((error) => {
         console.error('Audio playback failed:', error);
         setIsPlaying(false);
@@ -216,9 +268,14 @@ const MeditationPlayer = () => {
     }
 
     audio.pause();
-  }, [isPlaying, isLoaded]);
+  }, [canPlayMeditation, isPlaying, isLoaded]);
 
   const togglePlay = () => {
+    if (!canPlayMeditation) {
+      navigate('/profile');
+      return;
+    }
+
     setIsPlaying((previousValue) => !previousValue);
   };
 
@@ -402,7 +459,7 @@ const MeditationPlayer = () => {
                 <button
                   aria-label={isPlaying ? '暂停冥想' : '继续冥想'}
                   onClick={togglePlay}
-                  disabled={!isLoaded}
+                  disabled={!isLoaded || !canPlayMeditation}
                   style={{
                     position: 'absolute',
                     top: '50%',
@@ -416,9 +473,10 @@ const MeditationPlayer = () => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: isLoaded ? 'pointer' : 'default',
+                    cursor: isLoaded && canPlayMeditation ? 'pointer' : 'default',
                     boxShadow: '0 12px 28px rgba(0, 0, 0, 0.22)',
                     zIndex: 2,
+                    opacity: canPlayMeditation ? 1 : 0.65
                   }}
                 >
                   <div

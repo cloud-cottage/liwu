@@ -2,13 +2,16 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wind, Clock } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
+import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 
 const MeditationHome = () => {
     const navigate = useNavigate();
     const { meditationStats } = useWealth();
+    const { authStatus } = useCloudAwareness();
     const totalCount = Math.max(0, Number(meditationStats.sessionCount || 0));
     const todayCount = Math.max(0, Number(meditationStats.todayCount || 0));
     const pastCount = Math.max(0, totalCount - todayCount);
+    const canPlayMeditation = Boolean(authStatus?.isAuthenticated);
 
     return (
         <div className="page-container" style={{ padding: '20px' }}>
@@ -45,9 +48,9 @@ const MeditationHome = () => {
                     10 分钟白噪音，10 分钟正念引导，10 分钟静寂。
                 </p>
                 <button
-                    onClick={() => navigate('/meditation')}
+                    onClick={() => navigate(canPlayMeditation ? '/meditation' : '/profile')}
                     style={{
-                        backgroundColor: 'var(--color-accent-ink)',
+                        backgroundColor: canPlayMeditation ? 'var(--color-accent-ink)' : '#94a3b8',
                         color: '#fff',
                         border: 'none',
                         padding: '16px 40px',
@@ -58,8 +61,13 @@ const MeditationHome = () => {
                         boxShadow: '0 4px 12px rgba(44, 44, 44, 0.2)'
                     }}
                 >
-                    开启冥想
+                    {canPlayMeditation ? '开启冥想' : '登录后播放'}
                 </button>
+                {!canPlayMeditation && (
+                    <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                        游客模式可浏览冥想页内容，但不能开始播放。
+                    </div>
+                )}
             </section>
 
             <div style={{ backgroundColor: '#fff', padding: '22px', borderRadius: '18px', textAlign: 'center', boxShadow: 'var(--shadow-sm)' }}>

@@ -53,6 +53,7 @@ const getTagCloudFontSize = (count, maxCount) => {
 const AwareTagModal = ({
   tag,
   currentUser,
+  isLoggedIn,
   submitting,
   onClose,
   onSubmit
@@ -62,7 +63,7 @@ const AwareTagModal = ({
   }
 
   const accessMeta = getAccessMeta(tag.accessType);
-  const disabled = !canPublishTag(tag, currentUser);
+  const disabled = !isLoggedIn || !canPublishTag(tag, currentUser);
   const historicalCount = tag.totalCount || tag.count || 0;
   const lastUserName = tag.lastUserName || '匿名用户';
 
@@ -139,6 +140,11 @@ const AwareTagModal = ({
         )}
 
         <div style={{ display: 'grid', gap: '10px', marginBottom: '20px' }}>
+          {tag.actionHint && (
+            <div style={{ fontSize: '13px', color: '#0f172a', lineHeight: 1.7, fontWeight: 600 }}>
+              {tag.actionHint}
+            </div>
+          )}
           <div style={{ fontSize: '13px', color: '#475569' }}>历史标记总数：{historicalCount}</div>
           <div style={{ fontSize: '13px', color: '#475569' }}>最近标记者：{lastUserName}</div>
         </div>
@@ -160,7 +166,7 @@ const AwareTagModal = ({
             opacity: submitting ? 0.7 : 1
           }}
         >
-          {disabled ? '仅学员可觉察' : submitting ? '发布中...' : '我也觉察它'}
+          {!isLoggedIn ? '登录后可发布' : disabled ? '仅学员可觉察' : submitting ? '发布中...' : '我也觉察它'}
         </button>
       </div>
     </div>
@@ -170,6 +176,7 @@ const AwareTagModal = ({
 const Record = () => {
   const location = useLocation();
   const {
+    authStatus,
     currentUser,
     userTags,
     popularTags,
@@ -186,11 +193,13 @@ const Record = () => {
   const [submitting, setSubmitting] = useState(false);
   const [selectedAccessType, setSelectedAccessType] = useState('public');
   const [activeAwareTag, setActiveAwareTag] = useState(null);
+  const [creationPromptOpen, setCreationPromptOpen] = useState(false);
   const [sharePayload, setSharePayload] = useState(null);
   const [shareStatus, setShareStatus] = useState('');
   const maxPopularTagCount = useMemo(() => (
     popularTags.reduce((currentMax, tag) => Math.max(currentMax, tag.totalCount || 0), 0)
   ), [popularTags]);
+  const canPublishAwareness = Boolean(authStatus?.isAuthenticated);
 
   const submitAwareness = async ({ content, accessType, recordSource = 'manual' }) => {
     setSubmitting(true);
@@ -214,6 +223,11 @@ const Record = () => {
     event.preventDefault();
     const trimmedValue = inputValue.trim();
 
+    if (!canPublishAwareness) {
+      setError('请先登录后再发布觉察标签');
+      return;
+    }
+
     if (!trimmedValue) {
       setError('请输入标签内容');
       return;
@@ -221,6 +235,34 @@ const Record = () => {
 
     if (trimmedValue.length > 6) {
       setError('标签长度不能超过 6 个字符');
+      return;
+    }
+
+    const existingTagResult = await awarenessService.findExistingTagByContent(trimmedValue);
+    if (!existingTagResult.success) {
+      setError(existingTagResult.error?.message || '标签查询失败，请重试');
+      return;
+    }
+
+    if (existingTagResult.data) {
+      try {
+        const metadata = await awarenessService.getTagMetadata(existingTagResult.data.key);
+        setActiveAwareTag({
+          ...existingTagResult.data,
+          description: metadata.description || existingTagResult.data.description || '',
+          actionHint: '社区已经有人发布过这个觉察，我也觉察它。'
+        });
+      } catch {
+        setActiveAwareTag({
+          ...existingTagResult.data,
+          actionHint: '社区已经有人发布过这个觉察，我也觉察它。'
+        });
+      }
+      return;
+    }
+
+    if (!currentUser?.isStudent) {
+      setCreationPromptOpen(true);
       return;
     }
 
@@ -242,7 +284,8 @@ const Record = () => {
       const metadata = await awarenessService.getTagMetadata(tag.key);
       setActiveAwareTag({
         ...tag,
-        description: metadata.description || tag.description || ''
+        description: metadata.description || tag.description || '',
+        actionHint: ''
       });
     } catch {
       setActiveAwareTag(tag);
@@ -391,11 +434,12 @@ const Record = () => {
               name="awareness-status"
               type="text"
               value={inputValue}
+              disabled={!canPublishAwareness}
               onChange={(event) => {
                 setInputValue(event.target.value);
                 setError('');
               }}
-              placeholder="输入你的状态（6个汉字以内）"
+              placeholder={canPublishAwareness ? '输入你的状态（6个汉字以内）' : '登录后可发布觉察标签'}
               maxLength={6}
               style={{
                 width: '100%',
@@ -406,7 +450,9 @@ const Record = () => {
                 boxSizing: 'border-box',
                 fontFamily: 'var(--font-sans)',
                 outline: 'none',
-                transition: 'border-color 0.2s'
+                transition: 'border-color 0.2s',
+                backgroundColor: canPublishAwareness ? '#fff' : '#f8fafc',
+                cursor: canPublishAwareness ? 'text' : 'not-allowed'
               }}
             />
             <div
@@ -456,17 +502,17 @@ const Record = () => {
 
           <button
             type="submit"
-            disabled={submitting || loading}
+            disabled={submitting || loading || !canPublishAwareness}
             style={{
               width: '100%',
               padding: '14px',
-              backgroundColor: submitting ? '#ccc' : 'var(--color-accent-ink)',
+              backgroundColor: submitting || !canPublishAwareness ? '#ccc' : 'var(--color-accent-ink)',
               color: '#fff',
               border: 'none',
               borderRadius: '12px',
               fontWeight: '500',
               fontSize: '16px',
-              cursor: submitting ? 'not-allowed' : 'pointer',
+              cursor: submitting || !canPublishAwareness ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -476,9 +522,14 @@ const Record = () => {
             }}
           >
             <Sparkles size={18} />
-            {submitting ? '提交中...' : '觉察此刻'}
+            {submitting ? '提交中...' : canPublishAwareness ? '觉察此刻' : '登录后可发布'}
           </button>
         </form>
+        {!canPublishAwareness && (
+          <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', lineHeight: 1.7 }}>
+            游客模式可浏览社区觉察内容，但不能发布觉察标签。
+          </div>
+        )}
       </div>
 
       {userTags.length > 0 && (
@@ -572,10 +623,71 @@ const Record = () => {
       <AwareTagModal
         tag={activeAwareTag}
         currentUser={currentUser}
+        isLoggedIn={canPublishAwareness}
         submitting={submitting}
         onClose={() => setActiveAwareTag(null)}
         onSubmit={(tag) => submitAwareness({ content: tag.content, accessType: tag.accessType, recordSource: 'follow' })}
       />
+
+      {creationPromptOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            zIndex: 32
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: '420px',
+              backgroundColor: '#fff',
+              borderRadius: '20px',
+              padding: '24px',
+              boxShadow: '0 24px 80px rgba(15, 23, 42, 0.2)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: '#111827' }}>暂不可创建新标签</div>
+              <button
+                type="button"
+                onClick={() => setCreationPromptOpen(false)}
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ fontSize: '14px', color: '#475569', lineHeight: 1.8 }}>
+              创建新的觉察标签需要学员用户身份。先去社区已经存在的觉察标签里看一看，也许此刻就有适合你的那一个。
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCreationPromptOpen(false)}
+              style={{
+                width: '100%',
+                marginTop: '18px',
+                border: 'none',
+                borderRadius: '12px',
+                backgroundColor: '#111827',
+                color: '#fff',
+                padding: '12px 14px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              我知道了
+            </button>
+          </div>
+        </div>
+      )}
 
       {sharePayload && (
         <div
