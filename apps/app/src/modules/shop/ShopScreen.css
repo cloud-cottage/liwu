@@ -185,8 +185,8 @@
 }
 
 .shop-category-pill--active {
-  background: #111827;
-  color: #ffffff;
+  background: var(--theme-button-primary-bg);
+  color: var(--theme-button-primary-text);
 }
 
 .shop-gallery-section {
@@ -494,7 +494,7 @@
 }
 
 .shop-sku-card--active {
-  border-color: #111827;
+  border-color: var(--color-accent-clay);
   background: #f1f5f9;
 }
 
@@ -536,8 +536,8 @@
 
 .shop-modal__primary-action {
   margin-top: 22px;
-  background: #111827;
-  color: #ffffff;
+  background: var(--theme-button-primary-bg);
+  color: var(--theme-button-primary-text);
 }
 
 .shop-modal__secondary-action:disabled,

@@ -98,6 +98,55 @@ export const THEME_PRESETS = {
       textSecondary: '#6B7A8F',
       accent: '#FFB800'
     }
+  },
+  IvoryAndSage: {
+    name: 'IvoryAndSage',
+    label: 'IvoryAndSage',
+    description: '以灰白、米色为底，配合鼠尾草绿高光的静谧舒适主题。',
+    web: {
+      '--color-bg-primary': '#F3F0EA',
+      '--color-bg-secondary': '#FCFBF8',
+      '--color-accent-clay': '#8FA58A',
+      '--color-accent-ink': '#353A36',
+      '--color-text-primary': '#353A36',
+      '--color-text-secondary': '#7A817A',
+      '--color-border': 'rgba(143, 165, 138, 0.22)',
+      '--color-success': '#8FA58A',
+      '--font-serif': "'Noto Serif SC', 'Source Han Serif SC', serif",
+      '--font-sans': "'Noto Sans SC', 'PingFang SC', system-ui, sans-serif",
+      '--radius-sm': '10px',
+      '--radius-md': '14px',
+      '--radius-lg': '18px',
+      '--radius-xl': '24px',
+      '--radius-full': '9999px',
+      '--shadow-sm': '0 6px 18px -12px rgba(53, 58, 54, 0.18)',
+      '--shadow-md': '0 12px 28px -14px rgba(53, 58, 54, 0.2)',
+      '--shadow-lg': '0 20px 42px -20px rgba(53, 58, 54, 0.22)',
+      '--shadow-xl': '0 24px 54px -24px rgba(53, 58, 54, 0.24)',
+      '--theme-shell-max-width': '610px',
+      '--theme-body-bg': 'linear-gradient(180deg, #F3F0EA 0%, #F8F5EF 100%)',
+      '--theme-surface-gradient': 'linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(143, 165, 138, 0.06))',
+      '--theme-ribbon-pattern': 'repeating-linear-gradient(135deg, transparent 0 44px, rgba(143, 165, 138, 0.05) 44px 88px)',
+      '--theme-ribbon-opacity': '0.82',
+      '--theme-ribbon-duration': '72s',
+      '--theme-star-glow': 'rgba(143, 165, 138, 0.14)',
+      '--theme-star-glow-secondary': 'rgba(214, 206, 190, 0.2)',
+      '--theme-button-primary-bg': 'linear-gradient(135deg, #8FA58A, #A7B69A)',
+      '--theme-button-primary-text': '#FFFFFF',
+      '--theme-button-secondary-bg': 'rgba(255, 255, 255, 0.88)',
+      '--theme-button-secondary-text': '#4D5A4B'
+    },
+    miniprogram: {
+      pageBackground: '#F3F0EA',
+      sectionCardBackground: '#FCFBF8',
+      primaryButtonBackground: 'linear-gradient(135deg, #8FA58A, #A7B69A)',
+      primaryButtonText: '#FFFFFF',
+      ghostButtonBackground: '#FFFFFF',
+      ghostButtonText: '#4D5A4B',
+      textPrimary: '#353A36',
+      textSecondary: '#7A817A',
+      accent: '#8FA58A'
+    }
   }
 };
 

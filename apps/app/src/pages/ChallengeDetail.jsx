@@ -71,14 +71,15 @@ const ChallengeDetail = () => {
 
                 <button style={{
                     width: '100%',
-                    backgroundColor: 'var(--color-accent-ink)',
-                    color: '#fff',
+                    background: 'var(--theme-button-primary-bg)',
+                    color: 'var(--theme-button-primary-text)',
                     border: 'none',
                     padding: '16px',
                     borderRadius: '12px',
                     fontSize: '16px',
                     fontWeight: 'bold',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    boxShadow: 'var(--shadow-md)'
                 }}>
                     立即参与
                 </button>

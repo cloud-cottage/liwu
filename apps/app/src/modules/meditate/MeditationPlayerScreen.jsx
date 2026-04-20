@@ -79,12 +79,13 @@ const MeditationPlayer = () => {
               marginTop: '18px',
               border: 'none',
               borderRadius: '14px',
-              backgroundColor: 'var(--color-accent-ink)',
-              color: '#fff',
+              background: 'var(--theme-button-primary-bg)',
+              color: 'var(--theme-button-primary-text)',
               padding: '12px 18px',
               fontSize: '14px',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              boxShadow: 'var(--shadow-sm)'
             }}
           >
             前往登录

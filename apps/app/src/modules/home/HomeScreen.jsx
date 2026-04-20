@@ -6,7 +6,16 @@ const Home = () => {
     return (
         <div className="page-container" style={{ padding: '20px' }}>
             <header style={{ marginBottom: '40px', marginTop: '20px' }}>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>理悟</h1>
+                <h1
+                    style={{
+                        fontSize: '28px',
+                        fontFamily: 'var(--font-serif)',
+                        color: 'var(--color-text-primary)',
+                        margin: 0
+                    }}
+                >
+                    理悟
+                </h1>
                 <p style={{ color: 'var(--color-text-secondary)' }}>礼敬物品，安住当下</p>
             </header>
 

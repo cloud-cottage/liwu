@@ -15,9 +15,17 @@ const MeditationHome = () => {
 
     return (
         <div className="page-container" style={{ padding: '20px' }}>
-            <header style={{ marginBottom: '40px', marginTop: '20px', textAlign: 'center' }}>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', fontFamily: 'var(--font-serif)' }}>每日静心</h1>
-                <p style={{ color: 'var(--color-text-secondary)' }}>在呼吸间寻回内在的秩序</p>
+            <header style={{ marginBottom: '16px' }}>
+                <h1
+                    style={{
+                        fontSize: '28px',
+                        fontFamily: 'var(--font-serif)',
+                        color: 'var(--color-text-primary)',
+                        margin: 0
+                    }}
+                >
+                    静寂
+                </h1>
             </header>
 
             <section style={{
@@ -45,20 +53,20 @@ const MeditationHome = () => {
                 <h2 style={{ fontSize: '20px', marginBottom: '10px' }}>当下即是献礼</h2>
                 <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', lineHeight: '1.6', marginBottom: '24px' }}>
                     给自己 30 分钟的留白。<br />
-                    10 分钟白噪音，10 分钟正念引导，10 分钟静寂。
+                    在呼吸间寻回内在的秩序
                 </p>
                 <button
                     onClick={() => navigate(canPlayMeditation ? '/meditation' : '/profile')}
                     style={{
-                        backgroundColor: canPlayMeditation ? 'var(--color-accent-ink)' : '#94a3b8',
-                        color: '#fff',
+                        background: canPlayMeditation ? 'var(--theme-button-primary-bg)' : '#94a3b8',
+                        color: canPlayMeditation ? 'var(--theme-button-primary-text)' : '#fff',
                         border: 'none',
                         padding: '16px 40px',
                         borderRadius: '30px',
                         fontSize: '16px',
                         fontWeight: '500',
                         cursor: 'pointer',
-                        boxShadow: '0 4px 12px rgba(44, 44, 44, 0.2)'
+                        boxShadow: 'var(--shadow-md)'
                     }}
                 >
                     {canPlayMeditation ? '开启冥想' : '登录后播放'}
@@ -70,13 +78,20 @@ const MeditationHome = () => {
                 )}
             </section>
 
-            <div style={{ backgroundColor: '#fff', padding: '22px', borderRadius: '18px', textAlign: 'center', boxShadow: 'var(--shadow-sm)' }}>
-                <Clock size={20} style={{ color: 'var(--color-accent-clay)', marginBottom: '10px' }} />
-                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>累计次数</div>
-                <div style={{ fontSize: '16px', fontWeight: '600', color: 'var(--color-text-primary)', lineHeight: '1.8' }}>
-                    往日已冥想 {pastCount} 次；<br />
-                    今日冥想 {todayCount} 次；<br />
-                    来日将冥想♾️次！
+            <div
+                style={{
+                    backgroundColor: '#fff',
+                    padding: '14px 16px',
+                    borderRadius: '16px',
+                    boxShadow: 'var(--shadow-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                }}
+            >
+                <Clock size={18} style={{ color: 'var(--color-accent-clay)', flexShrink: 0 }} />
+                <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)', lineHeight: '1.65' }}>
+                    往日已冥想 {pastCount} 次；今日冥想 {todayCount} 次；来日将冥想♾️次！
                 </div>
             </div>
         </div>
