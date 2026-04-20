@@ -7,6 +7,7 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
   const filteredUsers = useMemo(() => {
     return users.filter(user => 
       (user.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.noteName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (user.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (user.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (user.inviteCode || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -88,6 +89,11 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                           </span>
                         )}
                       </div>
+                      {user.noteName && (
+                        <div style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
+                          备注名：{user.noteName}
+                        </div>
+                      )}
                       <div style={{ fontSize: '12px', color: '#666' }}>用户 ID：{user.id}</div>
                       <div style={{ fontSize: '11px', color: '#94a3b8' }}>邀请码：{user.uid || '未生成'}</div>
                     </div>

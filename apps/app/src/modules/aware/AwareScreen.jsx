@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -12,6 +12,9 @@ import {
 } from 'lucide-react';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { awarenessService } from '../../services/cloudbase';
+
+const AWARENESS_REPUBLISH_INTERVAL_MS = 60 * 60 * 1000;
+const AWARENESS_PENDING_QUEUE_KEY_PREFIX = 'liwu_awareness_pending_queue_v1';
 
 const ACCESS_TYPE_META = {
   public: {
@@ -50,10 +53,102 @@ const getTagCloudFontSize = (count, maxCount) => {
   return 15;
 };
 
+const buildAwarenessQueueStorageKey = (userKey = 'guest') => `${AWARENESS_PENDING_QUEUE_KEY_PREFIX}:${userKey}`;
+
+const readPendingQueue = (userKey) => {
+  if (typeof window === 'undefined' || !userKey) {
+    return null;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(buildAwarenessQueueStorageKey(userKey));
+    return storedValue ? JSON.parse(storedValue) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writePendingQueue = (userKey, value) => {
+  if (typeof window === 'undefined' || !userKey) {
+    return;
+  }
+
+  window.localStorage.setItem(buildAwarenessQueueStorageKey(userKey), JSON.stringify(value));
+};
+
+const removePendingQueue = (userKey) => {
+  if (typeof window === 'undefined' || !userKey) {
+    return;
+  }
+
+  window.localStorage.removeItem(buildAwarenessQueueStorageKey(userKey));
+};
+
+const formatRemainingMinutes = (dueAt) => {
+  const remainingMs = Math.max(0, new Date(dueAt).getTime() - Date.now());
+  return Math.max(1, Math.ceil(remainingMs / 60000));
+};
+
+const getPendingQueueMessage = (queueItem) => (
+  `有一条觉察正在发布队列中，约 ${formatRemainingMinutes(queueItem.dueAt)} 分钟后会自动发布。`
+);
+
+const InlineToast = ({ message, onClose }) => {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: '18px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 50,
+        width: 'calc(100% - 32px)',
+        maxWidth: '440px'
+      }}
+    >
+      <div
+        style={{
+          borderRadius: '16px',
+          backgroundColor: 'rgba(15, 23, 42, 0.94)',
+          color: '#fff',
+          padding: '12px 14px',
+          boxShadow: '0 18px 48px rgba(15, 23, 42, 0.22)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '12px'
+        }}
+      >
+        <div style={{ fontSize: '13px', lineHeight: 1.6, color: '#e2e8f0' }}>{message}</div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            border: 'none',
+            borderRadius: '10px',
+            backgroundColor: 'rgba(255, 255, 255, 0.14)',
+            color: '#fff',
+            padding: '8px 10px',
+            fontSize: '12px',
+            cursor: 'pointer'
+          }}
+        >
+          知道了
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const AwareTagModal = ({
   tag,
   currentUser,
   isLoggedIn,
+  pendingQueueItem,
   submitting,
   onClose,
   onSubmit
@@ -63,7 +158,14 @@ const AwareTagModal = ({
   }
 
   const accessMeta = getAccessMeta(tag.accessType);
-  const disabled = !isLoggedIn || !canPublishTag(tag, currentUser);
+  const blockedReason = pendingQueueItem
+    ? getPendingQueueMessage(pendingQueueItem)
+    : !isLoggedIn
+      ? '登录后可发布这条觉察。'
+      : !canPublishTag(tag, currentUser)
+        ? '这是学员觉察标签，你可以查看详情，但当前身份还不能发布。'
+        : '';
+  const disabled = Boolean(blockedReason) || submitting;
   const historicalCount = tag.totalCount || tag.count || 0;
   const lastUserName = tag.lastUserName || '匿名用户';
 
@@ -145,6 +247,11 @@ const AwareTagModal = ({
               {tag.actionHint}
             </div>
           )}
+          {blockedReason && (
+            <div style={{ fontSize: '13px', color: '#475569', lineHeight: 1.7 }}>
+              {blockedReason}
+            </div>
+          )}
           <div style={{ fontSize: '13px', color: '#475569' }}>历史标记总数：{historicalCount}</div>
           <div style={{ fontSize: '13px', color: '#475569' }}>最近标记者：{lastUserName}</div>
         </div>
@@ -166,7 +273,15 @@ const AwareTagModal = ({
             opacity: submitting ? 0.7 : 1
           }}
         >
-          {!isLoggedIn ? '登录后可发布' : disabled ? '仅学员可觉察' : submitting ? '发布中...' : '我也觉察它'}
+          {pendingQueueItem
+            ? '队列发布中'
+            : !isLoggedIn
+              ? '登录后可发布'
+              : !canPublishTag(tag, currentUser)
+                ? '仅学员可发布'
+                : submitting
+                  ? '发布中...'
+                  : '我也觉察它'}
         </button>
       </div>
     </div>
@@ -196,10 +311,84 @@ const Record = () => {
   const [creationPromptOpen, setCreationPromptOpen] = useState(false);
   const [sharePayload, setSharePayload] = useState(null);
   const [shareStatus, setShareStatus] = useState('');
+  const [toastMessage, setToastMessage] = useState('');
+  const [pendingQueueItem, setPendingQueueItem] = useState(null);
+  const [queueTick, setQueueTick] = useState(0);
   const maxPopularTagCount = useMemo(() => (
     popularTags.reduce((currentMax, tag) => Math.max(currentMax, tag.totalCount || 0), 0)
   ), [popularTags]);
   const canPublishAwareness = Boolean(authStatus?.isAuthenticated);
+  const queueUserKey = currentUser?.id || authStatus?.authUid || '';
+
+  const showToast = (message) => {
+    setToastMessage(message);
+  };
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setToastMessage('');
+    }, 3200);
+
+    return () => window.clearTimeout(timerId);
+  }, [toastMessage]);
+
+  useEffect(() => {
+    if (!queueUserKey) {
+      setPendingQueueItem(null);
+      return;
+    }
+
+    setPendingQueueItem(readPendingQueue(queueUserKey));
+  }, [queueUserKey]);
+
+  useEffect(() => {
+    if (!pendingQueueItem) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setQueueTick((currentValue) => currentValue + 1);
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [pendingQueueItem]);
+
+  useEffect(() => {
+    if (!pendingQueueItem || !canPublishAwareness || submitting) {
+      return;
+    }
+
+    if (Date.now() < new Date(pendingQueueItem.dueAt).getTime()) {
+      return;
+    }
+
+    void (async () => {
+      setSubmitting(true);
+      const result = await addAwarenessRecord(pendingQueueItem.content, {
+        accessType: pendingQueueItem.accessType,
+        recordSource: pendingQueueItem.recordSource || 'manual'
+      });
+      setSubmitting(false);
+
+      if (!result.success) {
+        setError(result.error?.message || '自动发布失败，请稍后重试');
+        return;
+      }
+
+      removePendingQueue(queueUserKey);
+      setPendingQueueItem(null);
+      setError('');
+      setInputValue('');
+      setSelectedAccessType('public');
+      setSharePayload(result.sharePayload);
+      setShareStatus('');
+      showToast(`队列中的觉察「${pendingQueueItem.content}」已自动发布。`);
+    })();
+  }, [addAwarenessRecord, canPublishAwareness, pendingQueueItem, queueTick, queueUserKey, submitting]);
 
   const submitAwareness = async ({ content, accessType, recordSource = 'manual' }) => {
     setSubmitting(true);
@@ -219,6 +408,56 @@ const Record = () => {
     setShareStatus('');
   };
 
+  const queueAwarenessPublish = ({ content, accessType, recordSource, dueAt }) => {
+    if (!queueUserKey) {
+      return;
+    }
+
+    const nextQueueItem = {
+      content,
+      accessType,
+      recordSource,
+      dueAt,
+      createdAt: new Date().toISOString()
+    };
+
+    writePendingQueue(queueUserKey, nextQueueItem);
+    setPendingQueueItem(nextQueueItem);
+    setActiveAwareTag(null);
+    setCreationPromptOpen(false);
+    showToast(`发布间隔需大于 1 小时，已为你加入发布队列，约 ${formatRemainingMinutes(dueAt)} 分钟后自动发布。`);
+  };
+
+  const attemptPublishAwareness = async ({ content, accessType, recordSource = 'manual' }) => {
+    if (pendingQueueItem) {
+      showToast(getPendingQueueMessage(pendingQueueItem));
+      return;
+    }
+
+    const latestRecordResult = await awarenessService.getCurrentUserLatestRecordByContent(content);
+    if (!latestRecordResult.success) {
+      setError(latestRecordResult.error?.message || '发布检查失败，请重试');
+      return;
+    }
+
+    const latestRecord = latestRecordResult.data;
+    if (latestRecord?.timestamp) {
+      const latestTimestamp = new Date(latestRecord.timestamp).getTime();
+      const nowTimestamp = Date.now();
+      if (nowTimestamp - latestTimestamp < AWARENESS_REPUBLISH_INTERVAL_MS) {
+        queueAwarenessPublish({
+          content,
+          accessType,
+          recordSource,
+          dueAt: new Date(latestTimestamp + AWARENESS_REPUBLISH_INTERVAL_MS).toISOString()
+        });
+        return;
+      }
+    }
+
+    await submitAwareness({ content, accessType, recordSource });
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     const trimmedValue = inputValue.trim();
@@ -230,6 +469,11 @@ const Record = () => {
 
     if (!trimmedValue) {
       setError('请输入标签内容');
+      return;
+    }
+
+    if (pendingQueueItem) {
+      showToast(getPendingQueueMessage(pendingQueueItem));
       return;
     }
 
@@ -266,7 +510,7 @@ const Record = () => {
       return;
     }
 
-    await submitAwareness({
+    await attemptPublishAwareness({
       content: trimmedValue,
       accessType: currentUser?.isStudent ? selectedAccessType : 'public',
       recordSource: 'manual'
@@ -274,21 +518,23 @@ const Record = () => {
   };
 
   const handleTagClick = async (tag) => {
-    if (!canPublishTag(tag, currentUser)) {
-      setError('学员觉察标签仅学员可发布');
-      return;
-    }
-
     setError('');
     try {
       const metadata = await awarenessService.getTagMetadata(tag.key);
       setActiveAwareTag({
         ...tag,
         description: metadata.description || tag.description || '',
-        actionHint: ''
+        actionHint: !canPublishTag(tag, currentUser)
+          ? '社区已经有人发布过这个觉察，你可以先看看它的含义。'
+          : ''
       });
     } catch {
-      setActiveAwareTag(tag);
+      setActiveAwareTag({
+        ...tag,
+        actionHint: !canPublishTag(tag, currentUser)
+          ? '社区已经有人发布过这个觉察，你可以先看看它的含义。'
+          : ''
+      });
     }
   };
 
@@ -367,6 +613,8 @@ const Record = () => {
         backgroundColor: 'var(--color-bg-primary)'
       }}
     >
+      <InlineToast message={toastMessage} onClose={() => setToastMessage('')} />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
         <div>
           <h1
@@ -418,119 +666,165 @@ const Record = () => {
         </div>
       )}
 
-      <div
-        style={{
-          backgroundColor: '#fff',
-          padding: '24px',
-          borderRadius: '16px',
-          boxShadow: 'var(--shadow-sm)',
-          marginBottom: '24px'
-        }}
-      >
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '16px' }}>
-            <input
-              id="awareness-status"
-              name="awareness-status"
-              type="text"
-              value={inputValue}
-              disabled={!canPublishAwareness}
-              onChange={(event) => {
-                setInputValue(event.target.value);
-                setError('');
-              }}
-              placeholder={canPublishAwareness ? '输入你的状态（6个汉字以内）' : '登录后可发布觉察标签'}
-              maxLength={6}
+      {!pendingQueueItem && (
+        <div
+          style={{
+            backgroundColor: '#fff',
+            padding: '24px',
+            borderRadius: '16px',
+            boxShadow: 'var(--shadow-sm)',
+            marginBottom: '24px'
+          }}
+        >
+          <form onSubmit={handleSubmit}>
+            <div style={{ marginBottom: '16px' }}>
+              <input
+                id="awareness-status"
+                name="awareness-status"
+                type="text"
+                value={inputValue}
+                disabled={!canPublishAwareness}
+                onChange={(event) => {
+                  setInputValue(event.target.value);
+                  setError('');
+                }}
+                placeholder={canPublishAwareness ? '输入你的状态（6个汉字以内）' : '登录后可发布觉察标签'}
+                maxLength={6}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  border: error ? '2px solid #f56565' : '1px solid var(--color-border)',
+                  borderRadius: '12px',
+                  fontSize: '16px',
+                  boxSizing: 'border-box',
+                  fontFamily: 'var(--font-sans)',
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                  backgroundColor: canPublishAwareness ? '#fff' : '#f8fafc',
+                  cursor: canPublishAwareness ? 'text' : 'not-allowed'
+                }}
+              />
+              <div
+                style={{
+                  fontSize: '12px',
+                  color: 'var(--color-text-secondary)',
+                  marginTop: '8px',
+                  textAlign: 'right'
+                }}
+              >
+                {inputValue.length}/6
+              </div>
+            </div>
+
+            {currentUser?.isStudent && (
+              <div style={{ marginBottom: '18px' }}>
+                <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '10px' }}>
+                  发布类型
+                </div>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  {Object.entries(ACCESS_TYPE_META).map(([type, meta]) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setSelectedAccessType(type)}
+                      style={{
+                        border: selectedAccessType === type ? `1px solid ${meta.color}` : `1px solid ${meta.borderColor}`,
+                        backgroundColor: meta.backgroundColor,
+                        color: meta.color,
+                        borderRadius: '12px',
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        minWidth: '136px',
+                        textAlign: 'left'
+                      }}
+                    >
+                      <div style={{ fontSize: '14px', fontWeight: 600 }}>{meta.label}</div>
+                      <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>{meta.hint}</div>
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: '12px', color: accessMeta.color, marginTop: '10px' }}>
+                  {selectedAccessType === 'student' ? '所有人都能看到此标签，但只有学员可以继续发布。' : '任何用户都可以继续发布此标签。'}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting || loading || !canPublishAwareness}
               style={{
                 width: '100%',
                 padding: '14px',
-                border: error ? '2px solid #f56565' : '1px solid var(--color-border)',
+                backgroundColor: submitting || !canPublishAwareness ? '#ccc' : 'var(--color-accent-ink)',
+                color: '#fff',
+                border: 'none',
                 borderRadius: '12px',
+                fontWeight: '500',
                 fontSize: '16px',
-                boxSizing: 'border-box',
-                fontFamily: 'var(--font-sans)',
-                outline: 'none',
-                transition: 'border-color 0.2s',
-                backgroundColor: canPublishAwareness ? '#fff' : '#f8fafc',
-                cursor: canPublishAwareness ? 'text' : 'not-allowed'
-              }}
-            />
-            <div
-              style={{
-                fontSize: '12px',
-                color: 'var(--color-text-secondary)',
-                marginTop: '8px',
-                textAlign: 'right'
+                cursor: submitting || !canPublishAwareness ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                transition: 'opacity 0.2s',
+                opacity: submitting ? 0.7 : 1
               }}
             >
-              {inputValue.length}/6
-            </div>
-          </div>
-
-          {currentUser?.isStudent && (
-            <div style={{ marginBottom: '18px' }}>
-              <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '10px' }}>
-                发布类型
-              </div>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                {Object.entries(ACCESS_TYPE_META).map(([type, meta]) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setSelectedAccessType(type)}
-                    style={{
-                      border: selectedAccessType === type ? `1px solid ${meta.color}` : `1px solid ${meta.borderColor}`,
-                      backgroundColor: meta.backgroundColor,
-                      color: meta.color,
-                      borderRadius: '12px',
-                      padding: '10px 14px',
-                      cursor: 'pointer',
-                      minWidth: '136px',
-                      textAlign: 'left'
-                    }}
-                  >
-                    <div style={{ fontSize: '14px', fontWeight: 600 }}>{meta.label}</div>
-                    <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>{meta.hint}</div>
-                  </button>
-                ))}
-              </div>
-              <div style={{ fontSize: '12px', color: accessMeta.color, marginTop: '10px' }}>
-                {selectedAccessType === 'student' ? '所有人都能看到此标签，但只有学员可以继续发布。' : '任何用户都可以继续发布此标签。'}
-              </div>
+              <Sparkles size={18} />
+              {submitting ? '提交中...' : canPublishAwareness ? '觉察此刻' : '登录后可发布'}
+            </button>
+          </form>
+          {!canPublishAwareness && (
+            <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', lineHeight: 1.7 }}>
+              游客模式可浏览社区觉察内容，但不能发布觉察标签。
             </div>
           )}
+        </div>
+      )}
 
+      {pendingQueueItem && (
+        <div
+          style={{
+            marginBottom: '24px',
+            backgroundColor: '#fff',
+            padding: '18px',
+            borderRadius: '16px',
+            boxShadow: 'var(--shadow-sm)',
+            border: '1px solid rgba(214, 140, 101, 0.18)'
+          }}
+        >
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            publish_queue
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: 700, color: '#111827' }}>
+            {pendingQueueItem.content}
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '13px', color: '#475569', lineHeight: 1.7 }}>
+            这条觉察正在发布队列中，约 {formatRemainingMinutes(pendingQueueItem.dueAt)} 分钟后会自动发布。你也可以在此之前取消它。
+          </div>
           <button
-            type="submit"
-            disabled={submitting || loading || !canPublishAwareness}
+            type="button"
+            onClick={() => {
+              removePendingQueue(queueUserKey);
+              setPendingQueueItem(null);
+              showToast('已取消这条待发布的觉察。');
+            }}
             style={{
-              width: '100%',
-              padding: '14px',
-              backgroundColor: submitting || !canPublishAwareness ? '#ccc' : 'var(--color-accent-ink)',
-              color: '#fff',
-              border: 'none',
+              marginTop: '14px',
+              border: '1px solid #cbd5e1',
+              backgroundColor: '#fff',
+              color: '#334155',
               borderRadius: '12px',
-              fontWeight: '500',
-              fontSize: '16px',
-              cursor: submitting || !canPublishAwareness ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              transition: 'opacity 0.2s',
-              opacity: submitting ? 0.7 : 1
+              padding: '10px 14px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer'
             }}
           >
-            <Sparkles size={18} />
-            {submitting ? '提交中...' : canPublishAwareness ? '觉察此刻' : '登录后可发布'}
+            取消发布
           </button>
-        </form>
-        {!canPublishAwareness && (
-          <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', lineHeight: 1.7 }}>
-            游客模式可浏览社区觉察内容，但不能发布觉察标签。
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {userTags.length > 0 && (
         <div style={{ marginBottom: '24px' }}>
@@ -588,30 +882,43 @@ const Record = () => {
           >
             {popularTags.map((tag) => {
               const meta = getAccessMeta(tag.accessType);
-              const disabled = !canPublishTag(tag, currentUser);
+              const isStudentRestricted = tag.accessType === 'student' && !canPublishTag(tag, currentUser);
               const fontSize = getTagCloudFontSize(tag.totalCount || 0, maxPopularTagCount);
 
               return (
                 <button
                   key={tag.key}
                   onClick={() => handleTagClick(tag)}
-                  disabled={disabled}
                   style={{
                     padding: '10px 14px',
                     backgroundColor: '#fff',
-                    border: `1px solid ${meta.borderColor}`,
+                    border: isStudentRestricted ? '1px dashed #0f766e' : `1px solid ${meta.borderColor}`,
                     borderRadius: '20px',
-                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    opacity: disabled ? 0.45 : 1,
+                    gap: '8px',
                     color: meta.color,
                     fontSize,
                     fontWeight: tag.totalCount === maxPopularTagCount ? 700 : 600,
                     lineHeight: 1.2,
-                    boxShadow: 'var(--shadow-sm)'
+                    boxShadow: isStudentRestricted ? '0 0 0 1px rgba(15, 118, 110, 0.08), var(--shadow-sm)' : 'var(--shadow-sm)'
                   }}
                 >
+                  {tag.accessType === 'student' && (
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        color: '#0f766e',
+                        backgroundColor: 'rgba(15, 118, 110, 0.1)',
+                        borderRadius: '999px',
+                        padding: '4px 8px'
+                      }}
+                    >
+                      学员
+                    </span>
+                  )}
                   <span>{tag.content}</span>
                 </button>
               );
@@ -624,9 +931,10 @@ const Record = () => {
         tag={activeAwareTag}
         currentUser={currentUser}
         isLoggedIn={canPublishAwareness}
+        pendingQueueItem={pendingQueueItem}
         submitting={submitting}
         onClose={() => setActiveAwareTag(null)}
-        onSubmit={(tag) => submitAwareness({ content: tag.content, accessType: tag.accessType, recordSource: 'follow' })}
+        onSubmit={(tag) => attemptPublishAwareness({ content: tag.content, accessType: tag.accessType, recordSource: 'follow' })}
       />
 
       {creationPromptOpen && (

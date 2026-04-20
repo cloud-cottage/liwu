@@ -6,7 +6,7 @@
   font-weight: 400;
 
   color-scheme: light;
-  background-color: var(--color-bg-primary);
+  background: var(--theme-body-bg);
   color: var(--color-text-primary);
 
   font-synthesis: none;
@@ -21,18 +21,42 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  background: var(--theme-body-bg);
+  position: relative;
+  overflow-x: hidden;
+}
+
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+body::before {
+  background: var(--theme-ribbon-pattern);
+  opacity: var(--theme-ribbon-opacity);
+  animation: themeRibbonFlow var(--theme-ribbon-duration) linear infinite;
+}
+
+body::after {
+  background:
+    radial-gradient(circle at 16% 14%, var(--theme-star-glow) 0, transparent 22%),
+    radial-gradient(circle at 80% 12%, var(--theme-star-glow-secondary) 0, transparent 20%),
+    radial-gradient(circle at 82% 78%, var(--theme-star-glow) 0, transparent 18%);
 }
 
 #root {
   width: 100%;
-  max-width: 600px;
-  /* Mobile-first container */
+  max-width: var(--theme-shell-max-width);
   margin: 0 auto;
   min-height: 100vh;
   background-color: var(--color-bg-primary);
   position: relative;
   box-shadow: var(--shadow-xl);
-  /* Add shadow to simulate mobile frame on desktop */
+  z-index: 1;
 }
 
 /* Wabi-Sabi Utility Classes */
@@ -53,6 +77,11 @@ body {
 }
 
 /* Animations */
+@keyframes themeRibbonFlow {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  100% { transform: translate(8%, 12%) rotate(6deg); }
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);

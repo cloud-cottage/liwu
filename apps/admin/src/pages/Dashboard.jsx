@@ -9,6 +9,7 @@ import MeditationSettings from '../components/Dashboard/MeditationSettings.jsx';
 import AwarenessTagSettings from '../components/Dashboard/AwarenessTagSettings.jsx';
 import BadgeSettings from '../components/Dashboard/BadgeSettings.jsx';
 import ShopManagement from '../components/Dashboard/ShopManagement.jsx';
+import ThemeSettings from '../components/Dashboard/ThemeSettings.jsx';
 import { useDatabase } from '../hooks/useDatabase.js';
 
 // Add CSS reset to remove default margins
@@ -37,6 +38,7 @@ const Dashboard = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  const [activeUserSection, setActiveUserSection] = useState('users');
   
   const {
     users,
@@ -45,6 +47,7 @@ const Dashboard = () => {
     meditationSettings,
     awarenessTagSettings,
     badgeSettings,
+    themeSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -55,6 +58,7 @@ const Dashboard = () => {
     savingMeditationSettings,
     savingAwarenessTagSettings,
     savingBadgeSettings,
+    savingThemeSettings,
     loading,
     error,
     updateUser,
@@ -66,6 +70,7 @@ const Dashboard = () => {
     updateMeditationSettings,
     updateAwarenessTagSettings,
     updateBadgeSettings,
+    updateThemeSettings,
     saveShopProduct,
     updateShopOrderStatus
   } = useDatabase();
@@ -148,6 +153,14 @@ const Dashboard = () => {
     }
   };
 
+  const handleSaveThemeSettings = async (nextSettings) => {
+    try {
+      await updateThemeSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update theme settings:', err);
+    }
+  };
+
   const handleSaveShopProduct = async (productDraft) => {
     try {
       await saveShopProduct(productDraft);
@@ -197,7 +210,7 @@ const Dashboard = () => {
         <div style={{ padding: '20px', borderBottom: '1px solid #eee' }}>
           <h1 style={{ fontSize: '20px', margin: 0, color: '#333' }}>管理后台</h1>
           <p style={{ fontSize: '12px', color: '#666', margin: '4px 0 8px 0' }}>
-            用户管理与标签统计看板
+            社区运营与内容管理面板
           </p>
           <DatabaseStatus />
         </div>
@@ -243,16 +256,16 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>用户管理</span>
+              <span>用户</span>
             </button>
             <button
-              onClick={() => setActiveTab('statistics')}
+              onClick={() => setActiveTab('shop')}
               style={{
                 padding: '12px 16px',
                 border: 'none',
                 borderRadius: '8px',
-                backgroundColor: activeTab === 'statistics' ? '#2196F3' : 'transparent',
-                color: activeTab === 'statistics' ? '#fff' : '#666',
+                backgroundColor: activeTab === 'shop' ? '#2196F3' : 'transparent',
+                color: activeTab === 'shop' ? '#fff' : '#666',
                 cursor: 'pointer',
                 fontSize: '14px',
                 fontWeight: 500,
@@ -263,16 +276,16 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>标签统计</span>
+              <span>工坊</span>
             </button>
             <button
-              onClick={() => setActiveTab('tagManagement')}
+              onClick={() => setActiveTab('meditation')}
               style={{
                 padding: '12px 16px',
                 border: 'none',
                 borderRadius: '8px',
-                backgroundColor: activeTab === 'tagManagement' ? '#2196F3' : 'transparent',
-                color: activeTab === 'tagManagement' ? '#fff' : '#666',
+                backgroundColor: activeTab === 'meditation' ? '#2196F3' : 'transparent',
+                color: activeTab === 'meditation' ? '#fff' : '#666',
                 cursor: 'pointer',
                 fontSize: '14px',
                 fontWeight: 500,
@@ -283,16 +296,16 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>标签管理</span>
+              <span>冥想</span>
             </button>
             <button
-              onClick={() => setActiveTab('awarenessTags')}
+              onClick={() => setActiveTab('awareness')}
               style={{
                 padding: '12px 16px',
                 border: 'none',
                 borderRadius: '8px',
-                backgroundColor: activeTab === 'awarenessTags' ? '#2196F3' : 'transparent',
-                color: activeTab === 'awarenessTags' ? '#fff' : '#666',
+                backgroundColor: activeTab === 'awareness' ? '#2196F3' : 'transparent',
+                color: activeTab === 'awareness' ? '#fff' : '#666',
                 cursor: 'pointer',
                 fontSize: '14px',
                 fontWeight: 500,
@@ -326,13 +339,13 @@ const Dashboard = () => {
               <span>徽章</span>
             </button>
             <button
-              onClick={() => setActiveTab('shop')}
+              onClick={() => setActiveTab('fortune')}
               style={{
                 padding: '12px 16px',
                 border: 'none',
                 borderRadius: '8px',
-                backgroundColor: activeTab === 'shop' ? '#2196F3' : 'transparent',
-                color: activeTab === 'shop' ? '#fff' : '#666',
+                backgroundColor: activeTab === 'fortune' ? '#2196F3' : 'transparent',
+                color: activeTab === 'fortune' ? '#fff' : '#666',
                 cursor: 'pointer',
                 fontSize: '14px',
                 fontWeight: 500,
@@ -343,16 +356,16 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>工坊</span>
+              <span>福豆</span>
             </button>
             <button
-              onClick={() => setActiveTab('meditationSettings')}
+              onClick={() => setActiveTab('settings')}
               style={{
                 padding: '12px 16px',
                 border: 'none',
                 borderRadius: '8px',
-                backgroundColor: activeTab === 'meditationSettings' ? '#2196F3' : 'transparent',
-                color: activeTab === 'meditationSettings' ? '#fff' : '#666',
+                backgroundColor: activeTab === 'settings' ? '#2196F3' : 'transparent',
+                color: activeTab === 'settings' ? '#fff' : '#666',
                 cursor: 'pointer',
                 fontSize: '14px',
                 fontWeight: 500,
@@ -363,7 +376,7 @@ const Dashboard = () => {
                 transition: 'all 0.2s ease'
               }}
             >
-              <span>福豆奖励</span>
+              <span>设置</span>
             </button>
           </div>
         </nav>
@@ -537,33 +550,87 @@ const Dashboard = () => {
 
         {/* Users Tab */}
         {!loading && !error && activeTab === 'users' && (
-          <UserList 
-            users={users} 
-            onEditUser={handleEditUser}
-            onManageTags={handleManageTags}
+          <div style={{ display: 'grid', gap: '20px' }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              {[
+                { key: 'users', label: '用户列表' },
+                { key: 'tagManagement', label: '标签管理' },
+                { key: 'tagStatistics', label: '标签统计' }
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setActiveUserSection(item.key)}
+                  style={{
+                    border: 'none',
+                    borderRadius: '999px',
+                    backgroundColor: activeUserSection === item.key ? '#111827' : '#fff',
+                    color: activeUserSection === item.key ? '#fff' : '#334155',
+                    boxShadow: 'var(--shadow-sm)',
+                    padding: '10px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {activeUserSection === 'users' && (
+              <UserList 
+                users={users} 
+                onEditUser={handleEditUser}
+                onManageTags={handleManageTags}
+              />
+            )}
+
+            {activeUserSection === 'tagManagement' && (
+              <TagManagement
+                users={users}
+                tagCategories={categories}
+                tags={tags}
+                onUpdateCategories={handleUpdateCategories}
+                onUpdateTags={handleUpdateTags}
+              />
+            )}
+
+            {activeUserSection === 'tagStatistics' && (
+              <TagStatistics 
+                users={users} 
+                tagCategories={categories}
+              />
+            )}
+          </div>
+        )}
+
+        {!loading && !error && activeTab === 'shop' && (
+          <ShopManagement
+            categories={shopCategories}
+            products={shopProducts}
+            skus={shopSkus}
+            orders={shopOrders}
+            orderItems={shopOrderItems}
+            onSaveProduct={handleSaveShopProduct}
+            onUpdateOrderStatus={handleUpdateShopOrderStatus}
           />
         )}
 
-        {/* Statistics Tab */}
-        {!loading && !error && activeTab === 'statistics' && (
-          <TagStatistics 
-            users={users} 
-            tagCategories={categories}
-          />
+        {!loading && !error && activeTab === 'meditation' && (
+          <div style={{
+            backgroundColor: '#fff',
+            borderRadius: '16px',
+            padding: '28px',
+            boxShadow: 'var(--shadow-sm)',
+            color: '#64748b',
+            fontSize: '14px'
+          }}>
+            冥想后台页面暂未接入，后续在这里补充专属管理内容。
+          </div>
         )}
 
-        {/* Tag Management Tab */}
-        {!loading && !error && activeTab === 'tagManagement' && (
-          <TagManagement
-            users={users}
-            tagCategories={categories}
-            tags={tags}
-            onUpdateCategories={handleUpdateCategories}
-            onUpdateTags={handleUpdateTags}
-          />
-        )}
-
-        {!loading && !error && activeTab === 'meditationSettings' && (
+        {!loading && !error && activeTab === 'fortune' && (
           <MeditationSettings
             key={`${meditationSettings.documentId || 'default'}-${meditationSettings.rewardPoints}-${String(meditationSettings.allowRepeatRewards)}-${meditationSettings.inviterRewardRate || 0}`}
             settings={meditationSettings}
@@ -573,7 +640,17 @@ const Dashboard = () => {
           />
         )}
 
-        {!loading && !error && activeTab === 'awarenessTags' && (
+        {!loading && !error && activeTab === 'settings' && (
+          <ThemeSettings
+            key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
+            settings={themeSettings}
+            error={settingsError}
+            saving={savingThemeSettings}
+            onSave={handleSaveThemeSettings}
+          />
+        )}
+
+        {!loading && !error && activeTab === 'awareness' && (
           <AwarenessTagSettings
             key={`${awarenessTagSettings.documentId || 'default'}-${awarenessTagOverview.length}`}
             tags={awarenessTagOverview}
@@ -594,17 +671,6 @@ const Dashboard = () => {
           />
         )}
 
-        {!loading && !error && activeTab === 'shop' && (
-          <ShopManagement
-            categories={shopCategories}
-            products={shopProducts}
-            skus={shopSkus}
-            orders={shopOrders}
-            orderItems={shopOrderItems}
-            onSaveProduct={handleSaveShopProduct}
-            onUpdateOrderStatus={handleUpdateShopOrderStatus}
-          />
-        )}
       </div>
 
       {/* Modals */}

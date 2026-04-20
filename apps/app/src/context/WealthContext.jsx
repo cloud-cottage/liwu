@@ -1,10 +1,11 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import FortuneBeanIcon from '../components/Icons/FortuneBeanIcon.jsx';
 import { badgeService, wealthService } from '../services/cloudbase';
 
 const WealthContext = createContext();
 const WALLET_SYNC_INTERVAL_MS = 15000;
-const REWARD_MODAL_MARKER_KEY = 'wealth_reward_modal_marker';
+const REWARD_MODAL_MARKER_KEY = 'wealth_reward_toast_marker';
 const MEDITATION_TIMEZONE = 'Asia/Shanghai';
 const MEDITATION_MIN_VALID_SECONDS = 180;
 
@@ -100,6 +101,10 @@ const getNewRewardEntries = (entries = [], marker = createRewardMarker()) => (
     .sort((left, right) => getEntryTimestamp(left) - getEntryTimestamp(right))
 );
 
+const getRewardToastEntry = (result = {}) => (
+  Array.isArray(result.history) ? result.history.find(isRewardEntry) || null : null
+);
+
 const RewardArrivalToast = ({ entry, balance, onClose }) => {
   if (!entry) {
     return null;
@@ -150,7 +155,7 @@ const RewardArrivalToast = ({ entry, balance, onClose }) => {
             flexShrink: 0
           }}
         >
-          福
+          <FortuneBeanIcon size={26} />
         </div>
 
         <div
@@ -166,8 +171,10 @@ const RewardArrivalToast = ({ entry, balance, onClose }) => {
             <div style={{ fontSize: '24px', fontWeight: 700, color: '#f6caa9', lineHeight: 1 }}>
               +{entry.amount}
             </div>
-            <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
-              当前福豆 {balance}
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+              <span>当前</span>
+              <span>{balance}</span>
+              <FortuneBeanIcon size={14} style={{ color: '#f6caa9' }} aria-label="福豆" />
             </div>
           </div>
           <div style={{ marginTop: '6px', fontSize: '13px', color: '#cbd5e1', lineHeight: 1.5 }}>
@@ -255,6 +262,15 @@ export const WealthProvider = ({ children }) => {
       return entriesToAppend.length > 0 ? [...currentQueue, ...entriesToAppend] : currentQueue;
     });
   }, []);
+
+  const pushRewardToast = useCallback((entry = null) => {
+    if (!entry || !entry.id) {
+      return;
+    }
+
+    enqueueRewardEntries([entry]);
+    writeSessionJSON(REWARD_MODAL_MARKER_KEY, createRewardMarker(entry));
+  }, [enqueueRewardEntries]);
 
   const processRewardHistoryUpdate = useCallback((nextHistory = []) => {
     if (!rewardTrackingReadyRef.current) {
@@ -381,6 +397,12 @@ export const WealthProvider = ({ children }) => {
 
       setBalance(result.balance);
       setHistory(result.history);
+      if (result.rewarded) {
+        const rewardEntry = getRewardToastEntry(result);
+        if (rewardEntry) {
+          pushRewardToast(rewardEntry);
+        }
+      }
       processRewardHistoryUpdate(result.history);
       return result;
     } catch (error) {
@@ -395,7 +417,7 @@ export const WealthProvider = ({ children }) => {
         error
       };
     }
-  }, [balance, history, processRewardHistoryUpdate]);
+  }, [balance, history, processRewardHistoryUpdate, pushRewardToast]);
 
   const addDream = useCallback((name, price) => {
     setDreams((currentDreams) => [
@@ -553,7 +575,8 @@ export const WealthProvider = ({ children }) => {
         updateMeditationStats,
         completeMeditationSession,
         completeChallenge,
-        syncWalletFromCloud
+        syncWalletFromCloud,
+        pushRewardToast
       }}
     >
       {children}

@@ -3,6 +3,7 @@ import { X, Save } from 'lucide-react';
 
 const createFormData = (user) => ({
   name: user?.name || '',
+  noteName: user?.noteName || '',
   email: user?.email || '',
   phone: user?.phone || '',
   bio: user?.bio || '',
@@ -91,6 +92,24 @@ const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
                 fontSize: '14px'
               }}
               required
+            />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '4px', fontSize: '14px', fontWeight: 500 }}>备注名</label>
+            <input
+              type="text"
+              name="noteName"
+              value={formData.noteName}
+              onChange={handleChange}
+              placeholder="仅后台可见，便于管理员识别用户"
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #ddd',
+                borderRadius: '8px',
+                fontSize: '14px'
+              }}
             />
           </div>
 

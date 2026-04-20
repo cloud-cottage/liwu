@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useWealth } from './WealthContext.jsx';
 import { awarenessService, authService, badgeService, userProfileService } from '../services/cloudbase';
 
 const CloudAwarenessContext = createContext();
@@ -85,6 +86,7 @@ const buildUserCacheKey = (authUid = 'guest') => `${USER_CACHE_PREFIX}:${authUid
 export const useCloudAwareness = () => useContext(CloudAwarenessContext);
 
 export const CloudAwarenessProvider = ({ children }) => {
+  const { pushRewardToast, syncWalletFromCloud } = useWealth();
   const [authStatus, setAuthStatus] = useState({
     hasSession: false,
     authUid: '',
@@ -309,6 +311,14 @@ export const CloudAwarenessProvider = ({ children }) => {
         persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt);
       }
 
+      const rewardEntry = Array.isArray(result.reward?.history)
+        ? result.reward.history.find((entry) => entry?.type === 'EARN' && Number(entry.amount || 0) > 0) || null
+        : null;
+      if (rewardEntry) {
+        pushRewardToast(rewardEntry);
+        void syncWalletFromCloud({ refresh: true, allowAnonymous: true });
+      }
+
       return {
         success: true,
         record: result.record,
@@ -319,7 +329,7 @@ export const CloudAwarenessProvider = ({ children }) => {
       console.error('提交觉察失败:', submitError);
       return { success: false, error: submitError };
     }
-  }, [persistCaches, popularTags, recentRecords, userTags]);
+  }, [persistCaches, popularTags, pushRewardToast, recentRecords, syncWalletFromCloud, userTags]);
 
   const refreshData = useCallback(async (options = {}) => {
     await loadData({

@@ -8,6 +8,12 @@ import {
   flattenBadgeSeries,
   normalizeBadgeSettings
 } from '@liwu/shared-utils/badge-system.js';
+import {
+  CLIENT_THEME_SETTINGS_KEY,
+  DEFAULT_CLIENT_THEME_SETTINGS,
+  normalizeClientThemeSettings,
+  toClientThemeSettingsPayload
+} from '@liwu/shared-utils/theme-system.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -30,6 +36,10 @@ export const DEFAULT_AWARENESS_TAG_SETTINGS = {
 export const DEFAULT_BADGE_SETTINGS = {
   ...normalizeBadgeSettings(createDefaultBadgeSettings()),
   missingCollection: false
+};
+
+export const DEFAULT_THEME_SETTINGS = {
+  ...DEFAULT_CLIENT_THEME_SETTINGS
 };
 
 const isMissingCollectionIssue = (value) => {
@@ -231,6 +241,7 @@ const normalizeUser = (user) => ({
   id: getDocumentId(user),
   uid: Number(user.uid || 0),
   name: user.name || '',
+  noteName: user.note_name || user.noteName || '',
   avatar: user.avatar || '',
   email: user.email || '',
   phone: user.phone || '',
@@ -301,6 +312,7 @@ const toUserPayload = (userData) => {
   delete rest.lastActive;
   delete rest.authUid;
   delete rest.uid;
+  delete rest.noteName;
   delete rest.isStudent;
   delete rest.inviteCode;
   delete rest.inviterUserId;
@@ -311,6 +323,7 @@ const toUserPayload = (userData) => {
   return {
     ...rest,
     ...(userData.uid !== undefined ? { uid: Math.max(1, Number(userData.uid) || 1) } : {}),
+    ...(userData.noteName !== undefined ? { note_name: String(userData.noteName || '').trim() } : {}),
     ...(joinDate !== undefined ? { join_date: joinDate } : {}),
     ...(lastActive !== undefined ? { last_active: lastActive } : {}),
     ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),
@@ -1008,6 +1021,88 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving badge settings:', error);
+      throw error;
+    }
+  }
+
+  static async getThemeSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: CLIENT_THEME_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_THEME_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_THEME_SETTINGS };
+      }
+
+      return normalizeClientThemeSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_THEME_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching theme settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveThemeSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: CLIENT_THEME_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toClientThemeSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeClientThemeSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeClientThemeSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving theme settings:', error);
       throw error;
     }
   }

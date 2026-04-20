@@ -14,6 +14,7 @@ import MeditationPlayer from './modules/meditate/player';
 import Shop from './modules/shop';
 import { WealthProvider } from './context/WealthContext';
 import { CloudAwarenessProvider } from './context/CloudAwarenessContext';
+import { ThemeProvider } from './context/ThemeContext';
 import './App.css';
 
 const Layout = () => {
@@ -29,28 +30,30 @@ const Layout = () => {
 
 function App() {
   return (
-    <WealthProvider>
-      <CloudAwarenessProvider>
-        <Router>
-          <Routes>
-            <Route path="/" element={<Layout />}>
-              <Route index element={<Home />} />
-              <Route path="meditation-tab" element={<MeditationHome />} />
-              <Route path="aware" element={<Record />} />
-              <Route path="record" element={<Navigate to="/aware" replace />} />
-              <Route path="community" element={<Community />} />
-              <Route path="profile" element={<Profile />} />
-              <Route path="shop" element={<Shop />} />
-              <Route path="challenges" element={<Challenges />} />
-              <Route path="challenges/:id" element={<ChallengeDetail />} />
-              <Route path="fortune-ledger" element={<FortuneLedger />} />
-              <Route path="album" element={<Album />} />
-            </Route>
-            <Route path="/meditation" element={<MeditationPlayer />} />
-          </Routes>
-        </Router>
-      </CloudAwarenessProvider>
-    </WealthProvider>
+    <ThemeProvider>
+      <WealthProvider>
+        <CloudAwarenessProvider>
+          <Router>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route index element={<Home />} />
+                <Route path="meditation-tab" element={<MeditationHome />} />
+                <Route path="aware" element={<Record />} />
+                <Route path="record" element={<Navigate to="/aware" replace />} />
+                <Route path="community" element={<Community />} />
+                <Route path="profile" element={<Profile />} />
+                <Route path="shop" element={<Shop />} />
+                <Route path="challenges" element={<Challenges />} />
+                <Route path="challenges/:id" element={<ChallengeDetail />} />
+                <Route path="fortune-ledger" element={<FortuneLedger />} />
+                <Route path="album" element={<Album />} />
+              </Route>
+              <Route path="/meditation" element={<MeditationPlayer />} />
+            </Routes>
+          </Router>
+        </CloudAwarenessProvider>
+      </WealthProvider>
+    </ThemeProvider>
   );
 }
 

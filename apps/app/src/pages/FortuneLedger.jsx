@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowLeft, Coins, TrendingDown, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import FortuneBeanIcon from '../components/Icons/FortuneBeanIcon.jsx';
 import { useWealth } from '../context/WealthContext';
 
 const FortuneLedger = () => {
@@ -57,7 +58,10 @@ const FortuneLedger = () => {
           }}
         >
           <div style={{ fontSize: '13px', color: '#9a3412', fontWeight: 600 }}>当前福豆</div>
-          <div style={{ marginTop: '6px', fontSize: '36px', fontWeight: 700, color: '#7c2d12' }}>{balance}</div>
+          <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '10px', fontSize: '36px', fontWeight: 700, color: '#7c2d12' }}>
+            <span>{balance}</span>
+            <FortuneBeanIcon size={28} style={{ color: '#9a3412' }} aria-label="福豆" />
+          </div>
         </div>
       </section>
 
@@ -132,7 +136,8 @@ const FortuneLedger = () => {
                       whiteSpace: 'nowrap'
                     }}
                   >
-                    {isEarn ? '+' : '-'}{Math.abs(Number(item.amount || 0))}
+                    <span>{isEarn ? '+' : '-'}{Math.abs(Number(item.amount || 0))}</span>
+                    <FortuneBeanIcon size={16} style={{ color: 'currentColor' }} aria-label="福豆" />
                   </div>
                 </div>
               );

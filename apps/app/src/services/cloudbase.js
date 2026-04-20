@@ -14,6 +14,12 @@ import {
   formatBadgeBonusText,
   normalizeBadgeSettings
 } from '@liwu/shared-utils/badge-system.js';
+import {
+  CLIENT_THEME_SETTINGS_KEY,
+  DEFAULT_CLIENT_THEME_SETTINGS,
+  getThemePreset,
+  normalizeClientThemeSettings
+} from '@liwu/shared-utils/theme-system.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
@@ -24,6 +30,7 @@ const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
+const NAME_UPDATE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
@@ -316,6 +323,17 @@ const normalizePhone = (value = '') => {
 
 const normalizeProfileName = (value = '') => String(value || '').trim().slice(0, 16);
 
+const formatNameUpdateWaitTime = (ms = 0) => {
+  const hours = Math.ceil(Math.max(0, ms) / (60 * 60 * 1000));
+  const days = Math.floor(hours / 24);
+
+  if (days >= 1) {
+    return `${days} 天`;
+  }
+
+  return `${Math.max(1, hours)} 小时`;
+};
+
 const buildPhoneAuthUid = (phoneNumber = '') => {
   const normalizedPhoneNumber = normalizePhone(phoneNumber);
   return normalizedPhoneNumber ? `mock_phone_${normalizedPhoneNumber}` : '';
@@ -445,6 +463,7 @@ const normalizeCurrentUserProfile = (document = {}) => ({
   balance: Number(document.balance || 0),
   wealthHistory: normalizeWealthHistory(document.wealth_history || document.wealthHistory),
   rewardClaims: normalizeRewardClaims(document.reward_claims || document.rewardClaims),
+  nameUpdatedAt: document.name_updated_at || document.nameUpdatedAt || '',
   joinDate: document.join_date || document.joinDate || '',
   lastActive: document.last_active || document.lastActive || ''
 });
@@ -1569,7 +1588,20 @@ export const userProfileService = {
         throw new Error('请输入用户名');
       }
 
+      if (normalizedName !== currentProfile.name && currentProfile.nameUpdatedAt) {
+        const lastUpdatedAt = new Date(currentProfile.nameUpdatedAt).getTime();
+        const nowTimestamp = Date.now();
+        if (Number.isFinite(lastUpdatedAt) && nowTimestamp - lastUpdatedAt < NAME_UPDATE_INTERVAL_MS) {
+          throw new Error(`用户名两次修改间隔需大于 3 天，请约 ${formatNameUpdateWaitTime(NAME_UPDATE_INTERVAL_MS - (nowTimestamp - lastUpdatedAt))}后再试`);
+        }
+      }
+
       updatePayload.name = normalizedName;
+      if (normalizedName !== currentProfile.name) {
+        updatePayload.name_updated_at = new Date().toISOString();
+      } else {
+        delete updatePayload.name_updated_at;
+      }
     }
 
     await db.collection(collections.users).doc(currentProfile.id).update(updatePayload);
@@ -1652,6 +1684,57 @@ export const awarenessService = {
       };
     } catch (error) {
       console.error('查询既有觉察标签失败:', error);
+      return { success: false, error };
+    }
+  },
+
+  async getCurrentUserLatestRecordByContent(content) {
+    try {
+      const trimmedContent = String(content || '').trim();
+      if (!trimmedContent) {
+        return { success: true, data: null };
+      }
+
+      const currentProfile = await userProfileService.getCurrentProfile({
+        refresh: false,
+        allowAnonymous: false
+      });
+
+      if (!currentProfile?.id) {
+        return { success: true, data: null };
+      }
+
+      const queries = [
+        { user_id: currentProfile.id, content: trimmedContent }
+      ];
+
+      if (currentProfile.authUid) {
+        queries.push({ auth_uid: currentProfile.authUid, content: trimmedContent });
+      }
+
+      const results = await Promise.all(
+        queries.map(async (query) => {
+          const result = await db
+            .collection(collections.awarenessRecords)
+            .where(query)
+            .orderBy('createdAt', 'desc')
+            .limit(5)
+            .get();
+
+          return getResponseData(result, collections.awarenessRecords).map(normalizeAwarenessRecord);
+        })
+      );
+
+      const latestRecord = results
+        .flat()
+        .sort((left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime())[0] || null;
+
+      return {
+        success: true,
+        data: latestRecord
+      };
+    } catch (error) {
+      console.error('查询当前用户相同觉察记录失败:', error);
       return { success: false, error };
     }
   },
@@ -1948,6 +2031,37 @@ export const rewardSettingsService = {
         inviterRewardRate: 0
       };
     }
+  }
+};
+
+export const themeSettingsService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: CLIENT_THEME_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionResponse(result)) {
+        return { ...DEFAULT_CLIENT_THEME_SETTINGS };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_CLIENT_THEME_SETTINGS };
+      }
+
+      return normalizeClientThemeSettings(document);
+    } catch (error) {
+      console.error('获取主题设置失败:', error);
+      return { ...DEFAULT_CLIENT_THEME_SETTINGS };
+    }
+  },
+
+  getPreset(themeName = 'OrangeGold') {
+    return getThemePreset(themeName);
   }
 };
 
