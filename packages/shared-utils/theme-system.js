@@ -152,7 +152,7 @@ export const THEME_PRESETS = {
 
 export const DEFAULT_CLIENT_THEME_SETTINGS = {
   documentId: null,
-  theme: 'OrangeGold',
+  theme: 'IvoryAndSage',
   missingCollection: false
 };
 
