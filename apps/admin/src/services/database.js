@@ -248,8 +248,6 @@ const normalizeUser = (user) => ({
   joinDate: user.join_date || user.joinDate || '',
   lastActive: user.last_active || user.lastActive || '',
   status: user.status || 'inactive',
-  level: Number(user.level ?? 1),
-  experience: Number(user.experience ?? 0),
   authUid: user.auth_uid || user.authUid || '',
   isStudent: Boolean(user.is_student ?? user.isStudent),
   inviteCode: user.uid ? String(user.uid) : '',

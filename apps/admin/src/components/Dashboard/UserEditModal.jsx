@@ -10,8 +10,6 @@ const createFormData = (user) => ({
   location: user?.location || '',
   age: user?.age || '',
   status: user?.status || 'active',
-  level: user?.level || 1,
-  experience: user?.experience || 0,
   isStudent: Boolean(user?.isStudent)
 });
 
@@ -200,7 +198,7 @@ const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '24px' }}>
             <div>
               <label style={{ display: 'block', marginBottom: '4px', fontSize: '14px', fontWeight: 500 }}>状态</label>
               <select
@@ -218,38 +216,6 @@ const UserEditModal = ({ user, isOpen, onClose, onSave }) => {
                 <option value="active">活跃</option>
                 <option value="inactive">不活跃</option>
               </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontSize: '14px', fontWeight: 500 }}>等级</label>
-              <input
-                type="number"
-                name="level"
-                value={formData.level}
-                onChange={handleChange}
-                style={{ 
-                  width: '100%', 
-                  padding: '8px', 
-                  border: '1px solid #ddd', 
-                  borderRadius: '4px',
-                  fontSize: '14px'
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontSize: '14px', fontWeight: 500 }}>经验值</label>
-              <input
-                type="number"
-                name="experience"
-                value={formData.experience}
-                onChange={handleChange}
-                style={{ 
-                  width: '100%', 
-                  padding: '8px', 
-                  border: '1px solid #ddd', 
-                  borderRadius: '4px',
-                  fontSize: '14px'
-                }}
-              />
             </div>
           </div>
 

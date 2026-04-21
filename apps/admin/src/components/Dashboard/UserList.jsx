@@ -45,7 +45,7 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
               <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600, color: '#666' }}>用户</th>
               <th style={{ textAlign: 'left', padding: '12px 8px', borderBottom: '1px solid #eee', fontSize: '14px', fontWeight: 600 }}>联系方式</th>
               <th style={{ textAlign: 'left', padding: '12px 8px', borderBottom: '1px solid #eee', fontSize: '14px', fontWeight: 600 }}>状态</th>
-              <th style={{ textAlign: 'left', padding: '12px 8px', borderBottom: '1px solid #eee', fontSize: '14px', fontWeight: 600 }}>等级</th>
+              <th style={{ textAlign: 'left', padding: '12px 8px', borderBottom: '1px solid #eee', fontSize: '14px', fontWeight: 600 }}>福豆</th>
               <th style={{ textAlign: 'left', padding: '12px 8px', borderBottom: '1px solid #eee', fontSize: '14px', fontWeight: 600 }}>标签</th>
               <th style={{ textAlign: 'left', padding: '12px 8px', borderBottom: '1px solid #eee', fontSize: '14px', fontWeight: 600 }}>注册时间</th>
               <th style={{ padding: '12px', textAlign: 'center', fontSize: '14px', fontWeight: 600, color: '#666' }}>操作</th>
@@ -116,8 +116,7 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                   </span>
                 </td>
                 <td style={{ padding: '12px', fontSize: '14px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 500 }}>等级 {user.level}</div>
-                  <div style={{ fontSize: '12px', color: '#666' }}>{user.experience} 经验 · {user.balance || 0} 福豆</div>
+                  <div style={{ fontSize: '14px', fontWeight: 500 }}>{user.balance || 0} 福豆</div>
                 </td>
                 <td style={{ padding: '12px' }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
