@@ -299,7 +299,7 @@ export const CloudAwarenessProvider = ({ children }) => {
       const nextPopularTags = upsertTagCount(popularTags, result.record, 'totalCount');
       const nextRecentRecords = prependRecentRecord(recentRecords, result.record);
       const fetchedAt = new Date().toISOString();
-      const sharePayload = await awarenessService.buildSharePayload(content.trim());
+      const sharePayload = await awarenessService.buildSharePayloadFromRecord(result.record);
 
       setCurrentUser(nextCurrentUser);
       setUserTags(nextUserTags);

@@ -48,6 +48,7 @@ const Dashboard = () => {
     awarenessTagSettings,
     badgeSettings,
     themeSettings,
+    brandCarouselSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -59,6 +60,7 @@ const Dashboard = () => {
     savingAwarenessTagSettings,
     savingBadgeSettings,
     savingThemeSettings,
+    savingBrandCarouselSettings,
     loading,
     error,
     updateUser,
@@ -71,6 +73,7 @@ const Dashboard = () => {
     updateAwarenessTagSettings,
     updateBadgeSettings,
     updateThemeSettings,
+    updateBrandCarouselSettings,
     saveShopProduct,
     updateShopOrderStatus
   } = useDatabase();
@@ -158,6 +161,14 @@ const Dashboard = () => {
       await updateThemeSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update theme settings:', err);
+    }
+  };
+
+  const handleSaveBrandCarouselSettings = async (nextSettings) => {
+    try {
+      await updateBrandCarouselSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update brand carousel settings:', err);
     }
   };
 
@@ -644,9 +655,12 @@ const Dashboard = () => {
           <ThemeSettings
             key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
             settings={themeSettings}
+            brandCarouselSettings={brandCarouselSettings}
             error={settingsError}
             saving={savingThemeSettings}
+            savingCarousel={savingBrandCarouselSettings}
             onSave={handleSaveThemeSettings}
+            onSaveBrandCarousel={handleSaveBrandCarouselSettings}
           />
         )}
 

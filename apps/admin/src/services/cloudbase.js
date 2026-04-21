@@ -25,7 +25,11 @@ const shouldUseCloudBaseProxy = () => {
 const isCloudBaseApiUrl = (value = '') => {
   try {
     const nextUrl = new URL(String(value));
-    return nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com');
+    return (
+      nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com') ||
+      nextUrl.hostname.endsWith('.myqcloud.com') ||
+      nextUrl.hostname.endsWith('.qcloud.la')
+    );
   } catch {
     return false;
   }

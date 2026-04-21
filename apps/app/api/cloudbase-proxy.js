@@ -38,7 +38,11 @@ const readRawBody = async (req) => {
 const isAllowedTarget = (target) => {
   try {
     const targetUrl = new URL(target);
-    return targetUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com');
+    return (
+      targetUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com') ||
+      targetUrl.hostname.endsWith('.myqcloud.com') ||
+      targetUrl.hostname.endsWith('.qcloud.la')
+    );
   } catch {
     return false;
   }

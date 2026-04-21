@@ -1,15 +1,68 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { THEME_PRESETS, getThemePreset } from '@liwu/shared-utils/theme-system.js';
+import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 
 const ThemeSettings = ({
   settings,
+  brandCarouselSettings,
   error,
   saving,
-  onSave
+  savingCarousel,
+  onSave,
+  onSaveBrandCarousel
 }) => {
   const [draftTheme, setDraftTheme] = useState(settings.theme);
+  const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
+  const [uploadingSlideIndex, setUploadingSlideIndex] = useState(-1);
+  const [carouselFeedback, setCarouselFeedback] = useState('');
   const themeOptions = useMemo(() => Object.values(THEME_PRESETS), []);
   const activeTheme = getThemePreset(draftTheme);
+
+  useEffect(() => {
+    setDraftTheme(settings.theme);
+  }, [settings.theme]);
+
+  useEffect(() => {
+    setDraftSlides(brandCarouselSettings.slides || []);
+  }, [brandCarouselSettings.slides]);
+
+  const handleSlideCaptionChange = (index, value) => {
+    setDraftSlides((currentSlides) => currentSlides.map((slide, slideIndex) => (
+      slideIndex === index ? { ...slide, caption: value } : slide
+    )));
+  };
+
+  const handleUploadSlideImage = async (index, file) => {
+    if (!file) {
+      return;
+    }
+
+    setUploadingSlideIndex(index);
+    setCarouselFeedback('');
+
+    try {
+      const uploadResult = await uploadImageAsWebp({
+        file,
+        cloudPath: `liwu/brand-carousel/${draftSlides[index].id}-${Date.now()}.webp`,
+      });
+
+      setDraftSlides((currentSlides) => currentSlides.map((slide, slideIndex) => (
+        slideIndex === index
+          ? {
+            ...slide,
+            fileId: uploadResult.fileId,
+            imageUrl: uploadResult.imageUrl
+          }
+          : slide
+      )));
+      setCarouselFeedback(`第 ${index + 1} 张轮播图已转换为 webP 并上传成功，记得点击“保存轮播图设置”。`);
+    } catch (error) {
+      console.error('品牌轮播图上传失败:', error);
+      setCarouselFeedback(error.message || '品牌轮播图上传失败');
+    } finally {
+      setUploadingSlideIndex(-1);
+    }
+  };
 
   return (
     <section
@@ -98,6 +151,77 @@ const ThemeSettings = ({
             ))}
           </div>
         </div>
+
+        <div style={previewCardStyle}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            brand_carousel
+          </div>
+          <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+            品牌轮播图
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+            维护首页轮播的四张品牌图片与对应文案。图片会上传到 CloudBase 云存储。
+          </div>
+
+          {carouselFeedback && (
+            <div style={{ marginTop: '14px', ...successBannerStyle }}>
+              {carouselFeedback}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gap: '14px', marginTop: '18px' }}>
+            {draftSlides.map((slide, index) => (
+              <div key={slide.id} style={carouselSlideCardStyle}>
+                <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '14px', alignItems: 'start' }}>
+                  <div>
+                    <div style={carouselPreviewFrameStyle}>
+                      {slide.imageUrl ? (
+                        <img src={slide.imageUrl} alt={slide.id} style={carouselPreviewImageStyle} />
+                      ) : (
+                        <div style={carouselPreviewPlaceholderStyle}>未上传</div>
+                      )}
+                    </div>
+                    <label style={uploadButtonStyle}>
+                      {uploadingSlideIndex === index ? '上传中...' : '上传图片'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={uploadingSlideIndex === index}
+                        style={{ display: 'none' }}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          void handleUploadSlideImage(index, file);
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  <label style={fieldStyle}>
+                    <span style={fieldLabelStyle}>图片文案</span>
+                    <textarea
+                      rows={3}
+                      value={slide.caption}
+                      onChange={(event) => handleSlideCaptionChange(index, event.target.value)}
+                      style={{ ...fieldInputStyle, resize: 'vertical', minHeight: '88px' }}
+                    />
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
+            <button
+              type="button"
+              onClick={() => onSaveBrandCarousel({ ...brandCarouselSettings, slides: draftSlides })}
+              disabled={savingCarousel}
+              style={primaryButtonStyle}
+            >
+              {savingCarousel ? '保存中...' : '保存轮播图设置'}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
@@ -158,12 +282,70 @@ const primaryButtonStyle = {
   cursor: 'pointer'
 };
 
+const carouselSlideCardStyle = {
+  borderRadius: '16px',
+  border: '1px solid #e2e8f0',
+  backgroundColor: '#ffffff',
+  padding: '14px'
+};
+
+const carouselPreviewFrameStyle = {
+  width: '100%',
+  aspectRatio: '16 / 9',
+  borderRadius: '12px',
+  overflow: 'hidden',
+  backgroundColor: '#e2e8f0'
+};
+
+const carouselPreviewImageStyle = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  display: 'block'
+};
+
+const carouselPreviewPlaceholderStyle = {
+  width: '100%',
+  height: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#64748b',
+  fontSize: '12px'
+};
+
+const uploadButtonStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginTop: '10px',
+  width: '100%',
+  padding: '10px 12px',
+  borderRadius: '10px',
+  border: '1px solid #dbe4ee',
+  backgroundColor: '#fff',
+  color: '#334155',
+  fontSize: '13px',
+  fontWeight: 600,
+  cursor: 'pointer',
+  boxSizing: 'border-box'
+};
+
 const errorBannerStyle = {
   marginBottom: '16px',
   padding: '12px 14px',
   borderRadius: '12px',
   backgroundColor: '#fef2f2',
   color: '#b91c1c',
+  fontSize: '13px',
+  lineHeight: 1.6
+};
+
+const successBannerStyle = {
+  padding: '12px 14px',
+  borderRadius: '12px',
+  backgroundColor: '#f0fdf4',
+  color: '#15803d',
   fontSize: '13px',
   lineHeight: 1.6
 };

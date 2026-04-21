@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, Coins, Layers3, MapPin, Sparkles, X } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { shopService } from '../../services/cloudbase';
 import { useWealth } from '../../context/WealthContext';
 import './ShopScreen.css';
@@ -279,6 +280,7 @@ const ProductModal = ({
 };
 
 const ShopScreen = () => {
+  const location = useLocation();
   const { balance, syncWalletFromCloud } = useWealth();
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
@@ -345,6 +347,7 @@ const ShopScreen = () => {
     () => categories.find((item) => item.id === selectedCategoryId) || null,
     [categories, selectedCategoryId]
   );
+  const requestedProductId = useMemo(() => new URLSearchParams(location.search).get('product')?.trim() || '', [location.search]);
 
   const highlightedCategoryDescription = selectedCategory?.description
     || '从日常仪式、空间器物到心意礼物，挑一件适合此刻练习的物品。';
@@ -362,6 +365,14 @@ const ShopScreen = () => {
       setNotice({ type: 'error', text: error.message || '商品详情加载失败' });
     }
   };
+
+  useEffect(() => {
+    if (!requestedProductId || loading) {
+      return;
+    }
+
+    void handleOpenProduct(requestedProductId);
+  }, [loading, requestedProductId]);
 
   const handleSaveAddress = async (addressDraft) => {
     const nextAddress = await shopService.saveUserAddress(addressDraft);

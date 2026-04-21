@@ -1,4 +1,4 @@
 export const profileShopEntry = {
-  route: '/shop',
+  route: '/s',
   label: '工坊'
 }

@@ -20,6 +20,11 @@ import {
   getThemePreset,
   normalizeClientThemeSettings
 } from '@liwu/shared-utils/theme-system.js';
+import {
+  BRAND_CAROUSEL_SETTINGS_KEY,
+  DEFAULT_BRAND_CAROUSEL_SETTINGS,
+  normalizeBrandCarouselSettings
+} from '@liwu/shared-utils/home-carousel-settings.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
@@ -47,7 +52,11 @@ const shouldUseCloudBaseProxy = () => {
 const isCloudBaseApiUrl = (value = '') => {
   try {
     const nextUrl = new URL(String(value));
-    return nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com');
+    return (
+      nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com') ||
+      nextUrl.hostname.endsWith('.myqcloud.com') ||
+      nextUrl.hostname.endsWith('.qcloud.la')
+    );
   } catch {
     return false;
   }
@@ -128,7 +137,8 @@ const rememberPendingInviteCode = () => {
     return '';
   }
 
-  const inviteCode = new URL(window.location.href).searchParams.get('invite')?.trim();
+  const searchParams = new URL(window.location.href).searchParams;
+  const inviteCode = searchParams.get('i')?.trim() || searchParams.get('invite')?.trim();
   if (inviteCode) {
     window.localStorage.setItem(PENDING_INVITE_STORAGE_KEY, inviteCode);
     return inviteCode;
@@ -257,6 +267,7 @@ const getOrCreateAwarenessAuthorKey = () => {
 
 const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴';
 const AWARENESS_TAG_REUSE_MAX_LENGTH = 18;
+const SHORT_AWARENESS_TAG_CODE_LENGTH = 8;
 
 const parseNaturalNumber = (value = '') => {
   const normalizedValue = String(value || '').trim();
@@ -320,6 +331,12 @@ const normalizePhone = (value = '') => {
 
   return digitsOnlyValue;
 };
+
+const generateShortAwarenessTagCode = () => (
+  `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(-SHORT_AWARENESS_TAG_CODE_LENGTH)
+);
 
 const normalizeProfileName = (value = '') => String(value || '').trim().slice(0, 16);
 
@@ -484,6 +501,7 @@ const normalizeAwarenessRecord = (record = {}) => {
     content,
     accessType,
     tagKey: record.tag_key || `${content}::${accessType}`,
+    shortCode: record.share_tag_code || record.shareTagCode || '',
     recordSource: record.record_source || record.recordSource || 'manual',
     timestamp: getRecordTimestamp(record),
     rewardPointsAwarded: Math.max(0, Number(record.reward_points_awarded ?? record.rewardPointsAwarded ?? 0))
@@ -508,6 +526,7 @@ const normalizeShopProduct = (product = {}) => ({
   productType: product.product_type || product.productType || 'physical',
   coverImage: product.cover_image || product.coverImage || '',
   gallery: product.gallery || [],
+  showcaseMedia: Array.isArray(product.showcase_media || product.showcaseMedia) ? (product.showcase_media || product.showcaseMedia) : [],
   description: product.description || '',
   detailBlocks: product.detail_blocks || product.detailBlocks || [],
   status: product.status || 'draft',
@@ -1615,17 +1634,26 @@ export const userProfileService = {
     );
   },
 
-  async buildInviteLink({ tagContent } = {}) {
+  async buildInviteLink({ tagContent, tagCode } = {}) {
     const currentProfile = await this.ensureCurrentProfile();
 
     if (typeof window === 'undefined') {
-      return `/record?invite=${encodeURIComponent(currentProfile.inviteCode)}`;
+      const nextUrl = new URL('/a', 'https://liwu.local');
+      nextUrl.searchParams.set('i', currentProfile.inviteCode);
+      if (tagCode) {
+        nextUrl.searchParams.set('t', tagCode);
+      } else if (tagContent) {
+        nextUrl.searchParams.set('tag', tagContent.trim().slice(0, 6));
+      }
+      return `${nextUrl.pathname}${nextUrl.search}`;
     }
 
-    const shareUrl = new URL('/aware', window.location.origin);
-    shareUrl.searchParams.set('invite', currentProfile.inviteCode);
+    const shareUrl = new URL('/a', window.location.origin);
+    shareUrl.searchParams.set('i', currentProfile.inviteCode);
 
-    if (tagContent) {
+    if (tagCode) {
+      shareUrl.searchParams.set('t', tagCode);
+    } else if (tagContent) {
       shareUrl.searchParams.set('tag', tagContent.trim().slice(0, 6));
     }
 
@@ -1637,6 +1665,41 @@ export const awarenessService = {
   async getTagMetadata(tagKey) {
     const settings = await getAwarenessTagSettings();
     return normalizeAwarenessTagSettingEntry(settings.tagsByKey?.[tagKey] || {});
+  },
+
+  async resolveTagContentByShortCode(shortCode) {
+    try {
+      const normalizedShortCode = String(shortCode || '').trim();
+      if (!normalizedShortCode) {
+        return { success: true, data: null };
+      }
+
+      const result = await db
+        .collection(collections.awarenessRecords)
+        .where({ share_tag_code: normalizedShortCode })
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+
+      const document = getFirstDocument(result, collections.awarenessRecords);
+      if (!document) {
+        return { success: true, data: null };
+      }
+
+      const record = normalizeAwarenessRecord(document);
+      return {
+        success: true,
+        data: {
+          content: record.content,
+          accessType: record.accessType,
+          key: record.tagKey,
+          shortCode: record.shortCode
+        }
+      };
+    } catch (error) {
+      console.error('解析短觉察标签失败:', error);
+      return { success: false, error };
+    }
   },
 
   async findExistingTagByContent(content) {
@@ -1766,6 +1829,7 @@ export const awarenessService = {
       const tagKey = `${trimmedContent}::${accessType}`;
       const tagMetadata = await this.getTagMetadata(tagKey);
       const configuredRewardPoints = Math.max(0, Number(tagMetadata.rewardPoints || 0));
+      const shortCode = generateShortAwarenessTagCode();
       const basePayload = {
         author_key: awarenessIdentity.authorKey,
         user_id: awarenessIdentity.userId,
@@ -1774,6 +1838,7 @@ export const awarenessService = {
         content: trimmedContent,
         access_type: accessType,
         tag_key: tagKey,
+        share_tag_code: shortCode,
         record_source: recordSource,
         timestamp: nowIso,
         created_at_client: nowIso,
@@ -1983,7 +2048,27 @@ export const awarenessService = {
 
   async buildSharePayload(content) {
     const shareUrl = await userProfileService.buildInviteLink({ tagContent: content });
-    const shareText = `我刚刚在理悟记录了此刻的觉察：「${content}」。一起进入应用，安住当下。`;
+    const shareText = `刚刚在「理悟」记录下此刻的觉察：${content}！和我一起来安住当下吧～`;
+
+    return {
+      title: '理悟 · 觉察此刻',
+      text: shareText,
+      url: shareUrl,
+      links: buildShareLinks({
+        title: '理悟 · 觉察此刻',
+        text: shareText,
+        url: shareUrl
+      })
+    };
+  },
+
+  async buildSharePayloadFromRecord(record = {}) {
+    const content = String(record.content || '').trim();
+    const shareUrl = await userProfileService.buildInviteLink({
+      tagContent: content,
+      tagCode: record.shortCode || ''
+    });
+    const shareText = `刚刚在「理悟」记录下此刻的觉察：${content}！和我一起来安住当下吧～`;
 
     return {
       title: '理悟 · 觉察此刻',
@@ -2062,6 +2147,54 @@ export const themeSettingsService = {
 
   getPreset(themeName = 'OrangeGold') {
     return getThemePreset(themeName);
+  }
+};
+
+export const brandCarouselSettingsService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: BRAND_CAROUSEL_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionResponse(result)) {
+        return { ...DEFAULT_BRAND_CAROUSEL_SETTINGS };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_BRAND_CAROUSEL_SETTINGS };
+      }
+
+      const normalizedSettings = normalizeBrandCarouselSettings(document);
+      const fileIds = normalizedSettings.slides.map((slide) => slide.fileId).filter(Boolean);
+
+      if (fileIds.length === 0) {
+        return normalizedSettings;
+      }
+
+      const tempUrlResult = await app.getTempFileURL({ fileList: fileIds });
+      const tempUrlMap = new Map(
+        (tempUrlResult?.fileList || tempUrlResult?.data?.fileList || []).map((item) => [
+          item.fileID || item.fileId,
+          item.tempFileURL || item.download_url || item.downloadUrl || ''
+        ])
+      );
+
+      return {
+        ...normalizedSettings,
+        slides: normalizedSettings.slides.map((slide) => ({
+          ...slide,
+          imageUrl: tempUrlMap.get(slide.fileId) || slide.imageUrl || ''
+        }))
+      };
+    } catch (error) {
+      console.error('获取品牌轮播图设置失败:', error);
+      return { ...DEFAULT_BRAND_CAROUSEL_SETTINGS };
+    }
   }
 };
 

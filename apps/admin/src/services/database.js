@@ -14,6 +14,12 @@ import {
   normalizeClientThemeSettings,
   toClientThemeSettingsPayload
 } from '@liwu/shared-utils/theme-system.js';
+import {
+  BRAND_CAROUSEL_SETTINGS_KEY,
+  DEFAULT_BRAND_CAROUSEL_SETTINGS,
+  normalizeBrandCarouselSettings,
+  toBrandCarouselSettingsPayload
+} from '@liwu/shared-utils/home-carousel-settings.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -40,6 +46,10 @@ export const DEFAULT_BADGE_SETTINGS = {
 
 export const DEFAULT_THEME_SETTINGS = {
   ...DEFAULT_CLIENT_THEME_SETTINGS
+};
+
+export const DEFAULT_BRAND_CAROUSEL = {
+  ...DEFAULT_BRAND_CAROUSEL_SETTINGS
 };
 
 const isMissingCollectionIssue = (value) => {
@@ -104,6 +114,8 @@ const normalizeShopProduct = (product = {}) => ({
   categoryId: product.category_id || product.categoryId || '',
   productType: product.product_type || product.productType || 'physical',
   coverImage: product.cover_image || product.coverImage || '',
+  gallery: Array.isArray(product.gallery) ? product.gallery : [],
+  showcaseMedia: Array.isArray(product.showcase_media || product.showcaseMedia) ? (product.showcase_media || product.showcaseMedia) : [],
   description: product.description || '',
   status: product.status || 'draft',
   skuMode: product.sku_mode || product.skuMode || 'single',
@@ -164,6 +176,7 @@ const toShopProductPayload = (productData = {}) => ({
   product_type: productData.productType || 'physical',
   cover_image: productData.coverImage || '',
   gallery: productData.gallery || [],
+  showcase_media: productData.showcaseMedia || [],
   description: productData.description || '',
   detail_blocks: productData.detailBlocks || [],
   status: productData.status || 'draft',
@@ -1101,6 +1114,88 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving theme settings:', error);
+      throw error;
+    }
+  }
+
+  static async getBrandCarouselSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: BRAND_CAROUSEL_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_BRAND_CAROUSEL,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_BRAND_CAROUSEL };
+      }
+
+      return normalizeBrandCarouselSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_BRAND_CAROUSEL,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching brand carousel settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveBrandCarouselSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: BRAND_CAROUSEL_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toBrandCarouselSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeBrandCarouselSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeBrandCarouselSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving brand carousel settings:', error);
       throw error;
     }
   }

@@ -5,8 +5,6 @@ import Home from './modules/home';
 import Record from './modules/aware';
 import Community from './pages/Community';
 import Profile from './modules/profile';
-import Challenges from './pages/Challenges';
-import ChallengeDetail from './pages/ChallengeDetail';
 import FortuneLedger from './pages/FortuneLedger';
 import Album from './pages/Album';
 import MeditationHome from './modules/meditate';
@@ -37,14 +35,15 @@ function App() {
             <Routes>
               <Route path="/" element={<Layout />}>
                 <Route index element={<Home />} />
-                <Route path="meditation-tab" element={<MeditationHome />} />
-                <Route path="aware" element={<Record />} />
-                <Route path="record" element={<Navigate to="/aware" replace />} />
+                <Route path="m" element={<MeditationHome />} />
+                <Route path="meditation-tab" element={<Navigate to="/m" replace />} />
+                <Route path="a" element={<Record />} />
+                <Route path="aware" element={<Navigate to="/a" replace />} />
+                <Route path="record" element={<Navigate to="/a" replace />} />
                 <Route path="community" element={<Community />} />
                 <Route path="profile" element={<Profile />} />
-                <Route path="shop" element={<Shop />} />
-                <Route path="challenges" element={<Challenges />} />
-                <Route path="challenges/:id" element={<ChallengeDetail />} />
+                <Route path="s" element={<Shop />} />
+                <Route path="shop" element={<Navigate to="/s" replace />} />
                 <Route path="fortune-ledger" element={<FortuneLedger />} />
                 <Route path="album" element={<Album />} />
               </Route>

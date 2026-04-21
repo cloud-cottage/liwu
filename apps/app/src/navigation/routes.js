@@ -1,9 +1,9 @@
 export const appRoutes = {
   home: '/',
-  meditate: '/meditation-tab',
-  aware: '/aware',
+  meditate: '/m',
+  aware: '/a',
   profile: '/profile',
-  shop: '/shop',
+  shop: '/s',
   fortuneLedger: '/fortune-ledger',
   album: '/album'
 }

@@ -693,7 +693,7 @@ const Profile = () => {
             </IconEntryButton>
             <IconEntryButton
               label="工坊入口"
-              onClick={() => navigate('/shop')}
+              onClick={() => navigate('/s')}
             >
               <ShopDoorIcon size={24} />
             </IconEntryButton>

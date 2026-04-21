@@ -80,18 +80,16 @@ const MeditationHome = () => {
 
             <div
                 style={{
-                    backgroundColor: '#fff',
-                    padding: '14px 16px',
-                    borderRadius: '16px',
-                    boxShadow: 'var(--shadow-sm)',
+                    padding: '4px 2px',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '10px'
+                    gap: '8px',
+                    opacity: 0.72
                 }}
             >
-                <Clock size={18} style={{ color: 'var(--color-accent-clay)', flexShrink: 0 }} />
-                <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)', lineHeight: '1.65' }}>
-                    往日已冥想 {pastCount} 次；今日冥想 {todayCount} 次；来日将冥想♾️次！
+                <Clock size={15} style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }} />
+                <div style={{ fontSize: '12px', fontWeight: 400, color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
+                    往日 {pastCount} ；今日 {todayCount} ；来日 ♾️
                 </div>
             </div>
         </div>

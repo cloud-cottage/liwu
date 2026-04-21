@@ -15,7 +15,7 @@ const BottomNav = () => {
             </NavLink>
 
             <NavLink
-                to="/meditation-tab"
+                to="/m"
                 className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
             >
                 <Wind size={24} strokeWidth={1.5} />
@@ -23,7 +23,7 @@ const BottomNav = () => {
             </NavLink>
 
             <NavLink
-                to="/aware"
+                to="/a"
                 className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
             >
                 <Sparkles size={24} strokeWidth={1.5} />

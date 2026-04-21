@@ -302,7 +302,9 @@ const Record = () => {
     refreshData
   } = useCloudAwareness();
 
-  const initialSharedTag = new URLSearchParams(location.search).get('tag')?.trim().slice(0, 6) || '';
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const initialSharedTag = searchParams.get('tag')?.trim().slice(0, 6) || '';
+  const initialShortTagCode = searchParams.get('t')?.trim() || '';
   const [inputValue, setInputValue] = useState(initialSharedTag);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -323,6 +325,33 @@ const Record = () => {
   const showToast = (message) => {
     setToastMessage(message);
   };
+
+  useEffect(() => {
+    if (!initialShortTagCode) {
+      setInputValue(initialSharedTag);
+      return;
+    }
+
+    let disposed = false;
+
+    void (async () => {
+      const result = await awarenessService.resolveTagContentByShortCode(initialShortTagCode);
+      if (disposed) {
+        return;
+      }
+
+      if (result.success && result.data?.content) {
+        setInputValue(String(result.data.content).slice(0, 6));
+        return;
+      }
+
+      setInputValue(initialSharedTag);
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [initialSharedTag, initialShortTagCode]);
 
   useEffect(() => {
     if (!toastMessage) {
@@ -1036,7 +1065,7 @@ const Record = () => {
             </div>
 
             <div style={{ fontSize: '14px', color: '#475569', lineHeight: 1.7, marginBottom: '16px' }}>
-              你的觉察已同步到 CloudBase。现在可以一键分享，好友通过该链接进入并注册后，会自动与你建立邀请关系。
+              一键分享，好友通过你的链接注册会自动与你绑定邀请关系。
             </div>
 
             <div
@@ -1100,6 +1129,8 @@ const Record = () => {
             </div>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+              <button type="button" onClick={handleCopyForPlatform('微信好友')} style={platformButtonStyle}>微信好友</button>
+              <button type="button" onClick={handleCopyForPlatform('微信朋友圈')} style={platformButtonStyle}>微信朋友圈</button>
               <button type="button" onClick={() => openPlatformShare(sharePayload.links.weibo)} style={platformButtonStyle}>微博</button>
               <button type="button" onClick={() => handleCopyForPlatform('小红书')} style={platformButtonStyle}>小红书</button>
               <button type="button" onClick={() => handleCopyForPlatform('抖音')} style={platformButtonStyle}>抖音</button>

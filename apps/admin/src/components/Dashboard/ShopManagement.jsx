@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 
 const formatCash = (value) => (value ? `¥${Number(value).toFixed(2)}` : '纯福豆');
 
@@ -27,12 +28,40 @@ const createEmptySku = () => ({
   status: 'active'
 });
 
+const createEmptyGalleryItem = () => ({
+  id: `gallery_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  url: '',
+  showcaseEnabled: false,
+  showcaseAspectRatio: '1:1'
+});
+
+const normalizeGalleryItems = (product = null) => {
+  const showcaseByUrl = new Map(
+    (product?.showcaseMedia || [])
+      .filter((item) => item?.url)
+      .map((item) => [item.url, item])
+  );
+
+  return (product?.gallery || []).map((item, index) => {
+    const url = typeof item === 'string' ? item : (item?.url || '');
+    const showcaseEntry = showcaseByUrl.get(url);
+
+    return {
+      id: typeof item === 'string' ? `gallery_${index}` : (item?.id || `gallery_${index}`),
+      url,
+      showcaseEnabled: Boolean(showcaseEntry),
+      showcaseAspectRatio: showcaseEntry?.aspectRatio || showcaseEntry?.ratio || '1:1'
+    };
+  });
+};
+
 const createProductDraft = (product = null, skus = []) => ({
   id: product?.id || '',
   name: product?.name || '',
   subtitle: product?.subtitle || '',
   categoryId: product?.categoryId || '',
   productType: product?.productType || 'physical',
+  coverImage: product?.coverImage || '',
   description: product?.description || '',
   status: product?.status || 'draft',
   skuMode: product?.skuMode || 'single',
@@ -43,6 +72,7 @@ const createProductDraft = (product = null, skus = []) => ({
   salesCount: product?.salesCount || 0,
   limitPerUser: product?.limitPerUser || 0,
   sortOrder: product?.sortOrder || 0,
+  gallery: normalizeGalleryItems(product),
   skus: skus.length > 0 ? skus.map((sku) => ({ ...sku })) : [createEmptySku()]
 });
 
@@ -60,6 +90,8 @@ const ShopManagement = ({
   const [productDraft, setProductDraft] = useState(() => createProductDraft());
   const [savingProduct, setSavingProduct] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState('');
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingGalleryIndex, setUploadingGalleryIndex] = useState(-1);
 
   const filteredProducts = useMemo(() => (
     selectedCategoryId
@@ -127,6 +159,59 @@ const ShopManagement = ({
     }));
   };
 
+  const handleGalleryChange = (index, field, value) => {
+    setProductDraft((currentDraft) => ({
+      ...currentDraft,
+      gallery: currentDraft.gallery.map((item, itemIndex) => (
+        itemIndex === index
+          ? {
+              ...item,
+              [field]: field === 'showcaseEnabled' ? Boolean(value) : value
+            }
+          : item
+      ))
+    }));
+  };
+
+  const handleUploadCoverImage = async (file) => {
+    if (!file) {
+      return;
+    }
+
+    setUploadingCover(true);
+    try {
+      const uploadResult = await uploadImageAsWebp({
+        file,
+        cloudPath: `liwu/shop-cover/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.webp`
+      });
+
+      setProductDraft((currentDraft) => ({
+        ...currentDraft,
+        coverImage: uploadResult.imageUrl
+      }));
+    } finally {
+      setUploadingCover(false);
+    }
+  };
+
+  const handleUploadGalleryImage = async (index, file) => {
+    if (!file) {
+      return;
+    }
+
+    setUploadingGalleryIndex(index);
+    try {
+      const uploadResult = await uploadImageAsWebp({
+        file,
+        cloudPath: `liwu/shop-gallery/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.webp`
+      });
+
+      handleGalleryChange(index, 'url', uploadResult.imageUrl);
+    } finally {
+      setUploadingGalleryIndex(-1);
+    }
+  };
+
   const handleAddSku = () => {
     setProductDraft((currentDraft) => ({
       ...currentDraft,
@@ -141,9 +226,35 @@ const ShopManagement = ({
     }));
   };
 
+  const handleAddGalleryItem = () => {
+    setProductDraft((currentDraft) => ({
+      ...currentDraft,
+      gallery: [...currentDraft.gallery, createEmptyGalleryItem()]
+    }));
+  };
+
+  const handleRemoveGalleryItem = (index) => {
+    setProductDraft((currentDraft) => ({
+      ...currentDraft,
+      gallery: currentDraft.gallery.filter((_, itemIndex) => itemIndex !== index)
+    }));
+  };
+
   const handleSaveProduct = async () => {
     setSavingProduct(true);
-    await onSaveProduct(productDraft);
+    const nextDraft = {
+      ...productDraft,
+      gallery: productDraft.gallery.map((item) => item.url).filter(Boolean),
+      showcaseMedia: productDraft.gallery
+        .filter((item) => item.showcaseEnabled && item.url)
+        .map((item) => ({
+          id: item.id,
+          url: item.url,
+          aspectRatio: item.showcaseAspectRatio || '1:1'
+        }))
+    };
+
+    await onSaveProduct(nextDraft);
     setSavingProduct(false);
     setEditingProduct(null);
     setProductDraft(createProductDraft());
@@ -238,6 +349,11 @@ const ShopManagement = ({
                     <div style={{ marginTop: '6px', fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
                       {product.subtitle || product.description || '暂无商品描述'}
                     </div>
+                    {(product.showcaseMedia || []).length > 0 && (
+                      <div style={{ marginTop: '8px', fontSize: '12px', color: '#8f5d2f', fontWeight: 600 }}>
+                        橱窗图 {product.showcaseMedia.length} 张
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                     <span
@@ -398,6 +514,13 @@ const ShopManagement = ({
             setProductDraft(createProductDraft());
           }}
           onChange={handleProductDraftChange}
+          onGalleryChange={handleGalleryChange}
+          onAddGalleryItem={handleAddGalleryItem}
+          onRemoveGalleryItem={handleRemoveGalleryItem}
+          onUploadCoverImage={handleUploadCoverImage}
+          onUploadGalleryImage={handleUploadGalleryImage}
+          uploadingCover={uploadingCover}
+          uploadingGalleryIndex={uploadingGalleryIndex}
           onSkuChange={handleSkuChange}
           onAddSku={handleAddSku}
           onRemoveSku={handleRemoveSku}
@@ -484,6 +607,13 @@ const ProductEditor = ({
   saving,
   onClose,
   onChange,
+  onGalleryChange,
+  onAddGalleryItem,
+  onRemoveGalleryItem,
+  onUploadCoverImage,
+  onUploadGalleryImage,
+  uploadingCover,
+  uploadingGalleryIndex,
   onSkuChange,
   onAddSku,
   onRemoveSku,
@@ -523,6 +653,32 @@ const ProductEditor = ({
         <Field label="商品名称">
           <input value={draft.name} onChange={(event) => onChange('name', event.target.value)} style={inputStyle} />
         </Field>
+        <div style={{ display: 'grid', gap: '6px' }}>
+          <span style={{ fontSize: '13px', color: '#475569' }}>封面图</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '12px', alignItems: 'start' }}>
+            <div style={imagePreviewFrameStyle}>
+              {draft.coverImage ? (
+                <img src={draft.coverImage} alt="商品封面" style={imagePreviewStyle} />
+              ) : (
+                <div style={imagePlaceholderStyle}>未上传</div>
+              )}
+            </div>
+            <label style={uploadActionStyle}>
+              {uploadingCover ? '上传中...' : '上传封面图'}
+              <input
+                type="file"
+                accept="image/*"
+                disabled={uploadingCover}
+                style={{ display: 'none' }}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  void onUploadCoverImage(file);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+        </div>
         <Field label="副标题">
           <input value={draft.subtitle} onChange={(event) => onChange('subtitle', event.target.value)} style={inputStyle} />
         </Field>
@@ -544,6 +700,61 @@ const ProductEditor = ({
         <Field label="描述">
           <textarea value={draft.description} onChange={(event) => onChange('description', event.target.value)} style={{ ...inputStyle, minHeight: '120px' }} />
         </Field>
+
+        <div style={{ marginTop: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>商品图片</div>
+            <button type="button" onClick={onAddGalleryItem} style={miniButtonStyle}>新增图片</button>
+          </div>
+          <div style={{ display: 'grid', gap: '10px' }}>
+            {draft.gallery.map((item, index) => (
+              <div key={item.id} style={{ borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: '#f8fafc', padding: '14px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                  <Field label="图片地址">
+                    <div style={{ display: 'grid', gap: '8px' }}>
+                      <div style={imagePreviewFrameStyle}>
+                        {item.url ? (
+                          <img src={item.url} alt={`商品图片 ${index + 1}`} style={imagePreviewStyle} />
+                        ) : (
+                          <div style={imagePlaceholderStyle}>未上传</div>
+                        )}
+                      </div>
+                      <label style={uploadActionStyle}>
+                        {uploadingGalleryIndex === index ? '上传中...' : '上传商品图'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={uploadingGalleryIndex === index}
+                          style={{ display: 'none' }}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            void onUploadGalleryImage(index, file);
+                            event.target.value = '';
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </Field>
+                  <Field label="设为橱窗">
+                    <select value={item.showcaseEnabled ? 'yes' : 'no'} onChange={(event) => onGalleryChange(index, 'showcaseEnabled', event.target.value === 'yes')} style={inputStyle}>
+                      <option value="no">否</option>
+                      <option value="yes">是</option>
+                    </select>
+                  </Field>
+                  <Field label="显示比例">
+                    <select value={item.showcaseAspectRatio} onChange={(event) => onGalleryChange(index, 'showcaseAspectRatio', event.target.value)} style={inputStyle}>
+                      <option value="1:1">1:1</option>
+                      <option value="2:3">2:3</option>
+                      <option value="16:9">16:9</option>
+                    </select>
+                  </Field>
+                  <button type="button" onClick={() => onRemoveGalleryItem(index)} style={miniButtonStyle}>删除</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
           <Field label="福豆起价">
             <input type="number" value={draft.pricePointsFrom} onChange={(event) => onChange('pricePointsFrom', event.target.value)} style={inputStyle} />
@@ -636,6 +847,45 @@ const inputStyle = {
   border: '1px solid #dbe4ee',
   padding: '10px 12px',
   fontSize: '14px'
+};
+
+const imagePreviewFrameStyle = {
+  width: '100%',
+  aspectRatio: '16 / 9',
+  borderRadius: '12px',
+  overflow: 'hidden',
+  backgroundColor: '#e5e7eb'
+};
+
+const imagePreviewStyle = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  display: 'block'
+};
+
+const imagePlaceholderStyle = {
+  width: '100%',
+  height: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#64748b',
+  fontSize: '12px'
+};
+
+const uploadActionStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '10px 12px',
+  borderRadius: '10px',
+  border: '1px solid #dbe4ee',
+  backgroundColor: '#fff',
+  color: '#334155',
+  fontSize: '13px',
+  fontWeight: 600,
+  cursor: 'pointer'
 };
 
 const miniButtonStyle = {

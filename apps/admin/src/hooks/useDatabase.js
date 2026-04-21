@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import DatabaseService, { DEFAULT_AWARENESS_TAG_SETTINGS, DEFAULT_BADGE_SETTINGS, DEFAULT_MEDITATION_SETTINGS, DEFAULT_THEME_SETTINGS } from '../services/database.js';
+import DatabaseService, { DEFAULT_AWARENESS_TAG_SETTINGS, DEFAULT_BADGE_SETTINGS, DEFAULT_BRAND_CAROUSEL, DEFAULT_MEDITATION_SETTINGS, DEFAULT_THEME_SETTINGS } from '../services/database.js';
 import DatabaseInitializer from '../services/databaseInit.js';
 
 const getSetupErrorMessage = (error) => {
@@ -24,6 +24,7 @@ export const useDatabase = () => {
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
   const [badgeSettings, setBadgeSettings] = useState(DEFAULT_BADGE_SETTINGS);
   const [themeSettings, setThemeSettings] = useState(DEFAULT_THEME_SETTINGS);
+  const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [shopCategories, setShopCategories] = useState([]);
   const [shopProducts, setShopProducts] = useState([]);
@@ -35,6 +36,7 @@ export const useDatabase = () => {
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
   const [savingBadgeSettings, setSavingBadgeSettings] = useState(false);
   const [savingThemeSettings, setSavingThemeSettings] = useState(false);
+  const [savingBrandCarouselSettings, setSavingBrandCarouselSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -44,12 +46,13 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
         DatabaseService.getBadgeSettings(),
         DatabaseService.getThemeSettings(),
+        DatabaseService.getBrandCarouselSettings(),
         DatabaseService.getAwarenessTagOverview(),
         DatabaseService.getShopManagementData()
       ]);
@@ -61,6 +64,7 @@ export const useDatabase = () => {
       setAwarenessTagSettings(nextAwarenessTagSettings);
       setBadgeSettings(nextBadgeSettings);
       setThemeSettings(nextThemeSettings);
+      setBrandCarouselSettings(nextBrandCarouselSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
       setShopProducts(nextShopManagementData.products);
@@ -68,7 +72,7 @@ export const useDatabase = () => {
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -82,6 +86,7 @@ export const useDatabase = () => {
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
+      setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -115,6 +120,7 @@ export const useDatabase = () => {
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
+      setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -285,6 +291,23 @@ export const useDatabase = () => {
     }
   };
 
+  const updateBrandCarouselSettings = async (settingsData) => {
+    try {
+      setSavingBrandCarouselSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveBrandCarouselSettings(settingsData);
+      setBrandCarouselSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating brand carousel settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingBrandCarouselSettings(false);
+    }
+  };
+
   const saveShopProduct = async (productData) => {
     try {
       await DatabaseService.saveShopProduct(productData);
@@ -321,6 +344,7 @@ export const useDatabase = () => {
     awarenessTagSettings,
     badgeSettings,
     themeSettings,
+    brandCarouselSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -332,6 +356,7 @@ export const useDatabase = () => {
     savingAwarenessTagSettings,
     savingBadgeSettings,
     savingThemeSettings,
+    savingBrandCarouselSettings,
     loading,
     error,
     
@@ -348,6 +373,7 @@ export const useDatabase = () => {
     updateAwarenessTagSettings,
     updateBadgeSettings,
     updateThemeSettings,
+    updateBrandCarouselSettings,
     saveShopProduct,
     updateShopOrderStatus,
     initializeDatabase,

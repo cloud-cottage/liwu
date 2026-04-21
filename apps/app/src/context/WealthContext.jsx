@@ -213,18 +213,6 @@ export const WealthProvider = ({ children }) => {
   const [history, setHistory] = useState(() => readStoredJSON('wealth_history', []));
   const [dreams, setDreams] = useState(() => readStoredJSON('wealth_dreams', []));
   const [inventory, setInventory] = useState(() => readStoredJSON('wealth_inventory', []));
-  const [challenges, setChallenges] = useState(() => {
-    const savedChallenges = localStorage.getItem('wealth_challenges');
-    if (savedChallenges) {
-      return JSON.parse(savedChallenges);
-    }
-
-    return [
-      { id: 1, title: '七日静心', description: '连续7天完成每日冥想', reward: '50 福豆', type: 'Meditation', completed: false },
-      { id: 2, title: '断舍离达人', description: '本周觉察5件断舍离物品', reward: '100 福豆', type: 'Declutter', completed: false },
-      { id: 3, title: '晨曦守望者', description: '连续3天在早晨8点前开启冥想', reward: '30 福豆', type: 'Meditation', completed: false }
-    ];
-  });
 
   const [meditationStats, setMeditationStats] = useState(() => {
     const savedMeditationStats = localStorage.getItem('meditation_stats');
@@ -303,9 +291,8 @@ export const WealthProvider = ({ children }) => {
     localStorage.setItem('wealth_history', JSON.stringify(history));
     localStorage.setItem('wealth_dreams', JSON.stringify(dreams));
     localStorage.setItem('wealth_inventory', JSON.stringify(inventory));
-    localStorage.setItem('wealth_challenges', JSON.stringify(challenges));
     localStorage.setItem('meditation_stats', JSON.stringify(meditationStats));
-  }, [balance, challenges, dreams, history, inventory, meditationStats]);
+  }, [balance, dreams, history, inventory, meditationStats]);
 
   useEffect(() => {
     if (rewardTrackingReadyRef.current) {
@@ -550,12 +537,6 @@ export const WealthProvider = ({ children }) => {
     }
   }, [addWealth, balance, updateMeditationStats]);
 
-  const completeChallenge = useCallback((challengeId) => {
-    setChallenges((currentChallenges) => currentChallenges.map((challenge) => (
-      challenge.id === challengeId ? { ...challenge, completed: true } : challenge
-    )));
-  }, []);
-
   const closeRewardModal = useCallback(() => {
     setRewardModalQueue((currentQueue) => currentQueue.slice(1));
   }, []);
@@ -567,14 +548,12 @@ export const WealthProvider = ({ children }) => {
         history,
         dreams,
         inventory,
-        challenges,
         meditationStats,
         addWealth,
         addDream,
         buyDream,
         updateMeditationStats,
         completeMeditationSession,
-        completeChallenge,
         syncWalletFromCloud,
         pushRewardToast
       }}
