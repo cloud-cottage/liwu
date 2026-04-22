@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Copy,
   Lock,
-  RefreshCw,
   Share2,
   Sparkles,
   TrendingUp,
@@ -296,10 +295,8 @@ const Record = () => {
     userTags,
     popularTags,
     loading,
-    refreshing,
     error: cloudError,
-    addAwarenessRecord,
-    refreshData
+    addAwarenessRecord
   } = useCloudAwareness();
 
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -567,10 +564,6 @@ const Record = () => {
     }
   };
 
-  const handleRefresh = async () => {
-    await refreshData({ force: true });
-  };
-
   const handleNativeShare = async () => {
     if (!sharePayload) {
       return;
@@ -657,25 +650,6 @@ const Record = () => {
             觉察
           </h1>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={loading || refreshing}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: loading || refreshing ? 'not-allowed' : 'pointer',
-            padding: '8px',
-            color: 'var(--color-text-secondary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            fontSize: '12px',
-            opacity: loading || refreshing ? 0.5 : 1
-          }}
-        >
-          <RefreshCw size={16} style={{ animation: loading || refreshing ? 'spin 1s linear infinite' : 'none' }} />
-          刷新
-        </button>
       </div>
 
       {(error || cloudError) && (

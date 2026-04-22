@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import DatabaseService, { DEFAULT_AWARENESS_TAG_SETTINGS, DEFAULT_BADGE_SETTINGS, DEFAULT_BRAND_CAROUSEL, DEFAULT_MEDITATION_SETTINGS, DEFAULT_THEME_SETTINGS } from '../services/database.js';
+import DatabaseService, {
+  DEFAULT_AWARENESS_TAG_SETTINGS,
+  DEFAULT_BADGE_SETTINGS,
+  DEFAULT_BRAND_CAROUSEL,
+  DEFAULT_MEDITATION_SETTINGS,
+  DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
+  DEFAULT_THEME_SETTINGS
+} from '../services/database.js';
 import DatabaseInitializer from '../services/databaseInit.js';
 
 const getSetupErrorMessage = (error) => {
@@ -25,6 +32,7 @@ export const useDatabase = () => {
   const [badgeSettings, setBadgeSettings] = useState(DEFAULT_BADGE_SETTINGS);
   const [themeSettings, setThemeSettings] = useState(DEFAULT_THEME_SETTINGS);
   const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
+  const [studentMembershipSettings, setStudentMembershipSettings] = useState(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [shopCategories, setShopCategories] = useState([]);
   const [shopProducts, setShopProducts] = useState([]);
@@ -37,6 +45,7 @@ export const useDatabase = () => {
   const [savingBadgeSettings, setSavingBadgeSettings] = useState(false);
   const [savingThemeSettings, setSavingThemeSettings] = useState(false);
   const [savingBrandCarouselSettings, setSavingBrandCarouselSettings] = useState(false);
+  const [savingStudentMembershipSettings, setSavingStudentMembershipSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -46,13 +55,14 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
         DatabaseService.getBadgeSettings(),
         DatabaseService.getThemeSettings(),
         DatabaseService.getBrandCarouselSettings(),
+        DatabaseService.getStudentMembershipSettings(),
         DatabaseService.getAwarenessTagOverview(),
         DatabaseService.getShopManagementData()
       ]);
@@ -65,6 +75,7 @@ export const useDatabase = () => {
       setBadgeSettings(nextBadgeSettings);
       setThemeSettings(nextThemeSettings);
       setBrandCarouselSettings(nextBrandCarouselSettings);
+      setStudentMembershipSettings(nextStudentMembershipSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
       setShopProducts(nextShopManagementData.products);
@@ -72,7 +83,7 @@ export const useDatabase = () => {
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextStudentMembershipSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -87,6 +98,7 @@ export const useDatabase = () => {
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
+      setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -121,6 +133,7 @@ export const useDatabase = () => {
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
+      setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -308,6 +321,23 @@ export const useDatabase = () => {
     }
   };
 
+  const updateStudentMembershipSettings = async (settingsData) => {
+    try {
+      setSavingStudentMembershipSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveStudentMembershipSettings(settingsData);
+      setStudentMembershipSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating student membership settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingStudentMembershipSettings(false);
+    }
+  };
+
   const saveShopProduct = async (productData) => {
     try {
       await DatabaseService.saveShopProduct(productData);
@@ -345,6 +375,7 @@ export const useDatabase = () => {
     badgeSettings,
     themeSettings,
     brandCarouselSettings,
+    studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -357,6 +388,7 @@ export const useDatabase = () => {
     savingBadgeSettings,
     savingThemeSettings,
     savingBrandCarouselSettings,
+    savingStudentMembershipSettings,
     loading,
     error,
     
@@ -374,6 +406,7 @@ export const useDatabase = () => {
     updateBadgeSettings,
     updateThemeSettings,
     updateBrandCarouselSettings,
+    updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,
     initializeDatabase,

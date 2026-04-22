@@ -5,12 +5,13 @@ import FortuneBeanIcon from '../../components/Icons/FortuneBeanIcon.jsx';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useBadgeState } from '../../hooks/useBadgeState.js';
-import { authService, userProfileService } from '../../services/cloudbase';
+import { authService, studentMembershipService, userProfileService } from '../../services/cloudbase';
 
 const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/g, '').trim();
 
 const isValidPhoneNumber = (value = '') => /^(?:\+?86)?1\d{10}$/.test(normalizePhoneInput(value));
 const MAX_PROFILE_NAME_LENGTH = 16;
+const formatCurrency = (value = 0) => `¥${Number(value || 0).toFixed(2)}`;
 
 const getLoginMethodLabel = (loginMethod = '') => {
   if (loginMethod === 'phone') {
@@ -347,6 +348,143 @@ const LoginModal = ({
   );
 };
 
+const MembershipOrderModal = ({
+  open,
+  settings,
+  loading,
+  submitting,
+  selectedPlanKey,
+  onSelectPlan,
+  onClose,
+  onSubmit
+}) => {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 41,
+        backgroundColor: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '440px',
+          backgroundColor: '#fff',
+          borderRadius: '20px',
+          padding: '22px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div>
+            <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>付费学员</div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+              选择一个方案后，会创建一笔待支付订单。
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              color: '#64748b',
+              padding: '4px'
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '12px',
+              backgroundColor: '#eff6ff',
+              color: '#1d4ed8',
+              fontSize: '14px'
+            }}
+          >
+            正在同步学员方案...
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {(settings?.plans || []).map((plan) => {
+                const active = selectedPlanKey === plan.key;
+                return (
+                  <button
+                    key={plan.key}
+                    type="button"
+                    onClick={() => onSelectPlan(plan.key)}
+                    style={{
+                      width: '100%',
+                      borderRadius: '16px',
+                      border: active ? '1px solid var(--color-accent-clay)' : '1px solid #e2e8f0',
+                      background: active ? 'rgba(214, 140, 101, 0.08)' : '#fff',
+                      padding: '14px 16px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      textAlign: 'left',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>{plan.label}</div>
+                      <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
+                        {plan.isLifetime ? '一次开通，长期有效' : `开通 ${plan.durationMonths} 个月学员身份`}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: '#111827' }}>
+                      {formatCurrency(plan.priceCash)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '18px' }}>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={submitting}
+                style={inlineSecondaryButtonStyle}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={onSubmit}
+                disabled={submitting || !selectedPlanKey}
+                style={{
+                  ...inlinePrimaryButtonStyle,
+                  opacity: submitting || !selectedPlanKey ? 0.7 : 1,
+                  cursor: submitting || !selectedPlanKey ? 'default' : 'pointer'
+                }}
+              >
+                {submitting ? '创建中...' : '创建订单'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const Profile = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -372,12 +510,52 @@ const Profile = () => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const [membershipSettings, setMembershipSettings] = useState(null);
+  const [loadingMembershipSettings, setLoadingMembershipSettings] = useState(false);
+  const [isMembershipModalOpen, setIsMembershipModalOpen] = useState(false);
+  const [selectedMembershipPlanKey, setSelectedMembershipPlanKey] = useState('');
+  const [submittingMembershipOrder, setSubmittingMembershipOrder] = useState(false);
 
   const recentEntries = useMemo(() => history.slice(0, 5), [history]);
 
   useEffect(() => {
     setNameDraft(currentUser?.name || '');
   }, [currentUser?.name]);
+
+  useEffect(() => {
+    if (!isMembershipModalOpen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setLoadingMembershipSettings(true);
+      try {
+        const nextSettings = await studentMembershipService.getSettings();
+        if (cancelled) {
+          return;
+        }
+
+        setMembershipSettings(nextSettings);
+        setSelectedMembershipPlanKey((currentPlanKey) => (
+          currentPlanKey || nextSettings.plans?.[0]?.key || ''
+        ));
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error.message || '学员方案加载失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingMembershipSettings(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isMembershipModalOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -534,6 +712,40 @@ const Profile = () => {
     setFeedbackMessage('已退出登录');
   };
 
+  const handleOpenMembershipEntry = () => {
+    setErrorMessage('');
+    setFeedbackMessage('');
+
+    if (!authStatus.isAuthenticated) {
+      setIsLoginModalOpen(true);
+      setFeedbackMessage('登录后即可创建学员付费订单。');
+      return;
+    }
+
+    setIsMembershipModalOpen(true);
+  };
+
+  const handleCreateMembershipOrder = async () => {
+    if (!selectedMembershipPlanKey) {
+      setErrorMessage('请先选择一个学员方案');
+      return;
+    }
+
+    setSubmittingMembershipOrder(true);
+    setErrorMessage('');
+    setFeedbackMessage('');
+
+    try {
+      const result = await studentMembershipService.createOrder(selectedMembershipPlanKey);
+      setIsMembershipModalOpen(false);
+      setFeedbackMessage(`已创建${result.plan.label}订单，订单号 ${result.order.orderNo}。后台确认支付后会自动开通或续期学员身份。`);
+    } catch (error) {
+      setErrorMessage(error.message || '学员订单创建失败');
+    } finally {
+      setSubmittingMembershipOrder(false);
+    }
+  };
+
   const handleSaveName = async () => {
     const normalizedName = String(nameDraft || '').trim();
 
@@ -687,7 +899,7 @@ const Profile = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
             <IconEntryButton
               label="付费学员"
-              onClick={() => setFeedbackMessage('学员付费入口已预留，稍后将接入订阅订单流程。')}
+              onClick={handleOpenMembershipEntry}
             >
               <MembershipIcon size={24} />
             </IconEntryButton>
@@ -810,6 +1022,17 @@ const Profile = () => {
         onSendCode={handleSendCode}
         onPhoneLogin={handlePhoneLogin}
         onWechatLogin={handleWechatLogin}
+      />
+
+      <MembershipOrderModal
+        open={isMembershipModalOpen}
+        settings={membershipSettings}
+        loading={loadingMembershipSettings}
+        submitting={submittingMembershipOrder}
+        selectedPlanKey={selectedMembershipPlanKey}
+        onSelectPlan={setSelectedMembershipPlanKey}
+        onClose={() => setIsMembershipModalOpen(false)}
+        onSubmit={handleCreateMembershipOrder}
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '30px' }}>

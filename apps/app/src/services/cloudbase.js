@@ -25,6 +25,12 @@ import {
   DEFAULT_BRAND_CAROUSEL_SETTINGS,
   normalizeBrandCarouselSettings
 } from '@liwu/shared-utils/home-carousel-settings.js';
+import {
+  DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
+  STUDENT_MEMBERSHIP_SETTINGS_KEY,
+  getStudentMembershipPlan,
+  normalizeStudentMembershipSettings
+} from '@liwu/shared-utils/student-membership-settings.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
@@ -34,6 +40,7 @@ const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
 const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
+const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const NAME_UPDATE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
@@ -475,6 +482,8 @@ const normalizeCurrentUserProfile = (document = {}) => ({
   level: Number(document.level ?? 1),
   experience: Number(document.experience ?? 0),
   isStudent: Boolean(document.is_student ?? document.isStudent),
+  studentExpireAt: document.student_expire_at || document.studentExpireAt || '',
+  studentMembershipPlanKey: document.student_membership_plan_key || document.studentMembershipPlanKey || '',
   inviteCode: getUserInviteCode(document),
   inviterUserId: document.inviter_user_id || document.inviterUserId || '',
   balance: Number(document.balance || 0),
@@ -2116,6 +2125,116 @@ export const rewardSettingsService = {
         inviterRewardRate: 0
       };
     }
+  }
+};
+
+export const studentMembershipService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: STUDENT_MEMBERSHIP_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionResponse(result)) {
+        return { ...DEFAULT_STUDENT_MEMBERSHIP_SETTINGS };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_STUDENT_MEMBERSHIP_SETTINGS };
+      }
+
+      return normalizeStudentMembershipSettings(document);
+    } catch (error) {
+      console.error('获取学员付费设置失败:', error);
+      return { ...DEFAULT_STUDENT_MEMBERSHIP_SETTINGS };
+    }
+  },
+
+  async createOrder(planKey = '') {
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true, allowAnonymous: false });
+    if (!currentProfile?.id) {
+      throw new Error('请先登录后再创建学员订单');
+    }
+
+    const settings = await this.getSettings();
+    const plan = getStudentMembershipPlan(settings, planKey);
+    if (!plan) {
+      throw new Error('未找到对应的学员方案');
+    }
+
+    const nowIso = new Date().toISOString();
+    const orderNo = generateOrderNo();
+    const orderPayload = {
+      order_no: orderNo,
+      user_id: currentProfile.id,
+      order_type: 'cash',
+      status: 'pending_payment',
+      address_id: '',
+      receiver_snapshot: null,
+      total_points: 0,
+      total_cash: Number(plan.priceCash || 0),
+      reward_points_return_total: 0,
+      reward_points_awarded: 0,
+      badge_bonus_points_awarded: 0,
+      shipping_fee: 0,
+      discount_cash: 0,
+      discount_points: 0,
+      pay_channel: 'cash_pending',
+      pay_transaction_id: '',
+      remark: 'student_membership',
+      cancel_reason: '',
+      paid_at: '',
+      shipped_at: '',
+      completed_at: '',
+      biz_type: STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE,
+      biz_meta: {
+        plan_key: plan.key,
+        duration_months: plan.durationMonths,
+        is_lifetime: plan.isLifetime
+      },
+      created_at: nowIso,
+      updated_at: nowIso
+    };
+
+    const orderResult = await db.collection(collections.shopOrders).add(orderPayload);
+    const orderId = orderResult.id;
+
+    const orderItemPayload = {
+      order_id: orderId,
+      product_id: 'student_membership',
+      sku_id: `student_membership_${plan.key}`,
+      product_name_snapshot: '付费学员',
+      sku_name_snapshot: plan.label,
+      cover_snapshot: '',
+      attrs_snapshot: {
+        membership_plan_key: plan.key,
+        duration_months: plan.durationMonths,
+        is_lifetime: plan.isLifetime
+      },
+      price_points_snapshot: 0,
+      price_cash_snapshot: Number(plan.priceCash || 0),
+      reward_points_return_snapshot: 0,
+      quantity: 1,
+      subtotal_points: 0,
+      subtotal_cash: Number(plan.priceCash || 0),
+      product_type: 'service',
+      created_at: nowIso
+    };
+
+    await db.collection(collections.shopOrderItems).add(orderItemPayload);
+
+    return {
+      plan,
+      order: normalizeShopOrder({
+        _id: orderId,
+        ...orderPayload
+      }),
+      item: orderItemPayload
+    };
   }
 };
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wind, Clock } from 'lucide-react';
+import { Wind } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 
@@ -82,14 +82,11 @@ const MeditationHome = () => {
                 style={{
                     padding: '4px 2px',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
                     opacity: 0.72
                 }}
             >
-                <Clock size={15} style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }} />
                 <div style={{ fontSize: '12px', fontWeight: 400, color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
-                    往日 {pastCount} ；今日 {todayCount} ；来日 ♾️
+                    往日 {pastCount} → 今日 {todayCount} → 来日 ∞
                 </div>
             </div>
         </div>

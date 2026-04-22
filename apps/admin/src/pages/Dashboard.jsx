@@ -10,6 +10,7 @@ import AwarenessTagSettings from '../components/Dashboard/AwarenessTagSettings.j
 import BadgeSettings from '../components/Dashboard/BadgeSettings.jsx';
 import ShopManagement from '../components/Dashboard/ShopManagement.jsx';
 import ThemeSettings from '../components/Dashboard/ThemeSettings.jsx';
+import StudentMembershipSettings from '../components/Dashboard/StudentMembershipSettings.jsx';
 import { useDatabase } from '../hooks/useDatabase.js';
 
 // Add CSS reset to remove default margins
@@ -49,6 +50,7 @@ const Dashboard = () => {
     badgeSettings,
     themeSettings,
     brandCarouselSettings,
+    studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
     shopProducts,
@@ -61,6 +63,7 @@ const Dashboard = () => {
     savingBadgeSettings,
     savingThemeSettings,
     savingBrandCarouselSettings,
+    savingStudentMembershipSettings,
     loading,
     error,
     updateUser,
@@ -74,6 +77,7 @@ const Dashboard = () => {
     updateBadgeSettings,
     updateThemeSettings,
     updateBrandCarouselSettings,
+    updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus
   } = useDatabase();
@@ -169,6 +173,14 @@ const Dashboard = () => {
       await updateBrandCarouselSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update brand carousel settings:', err);
+    }
+  };
+
+  const handleSaveStudentMembershipSettings = async (nextSettings) => {
+    try {
+      await updateStudentMembershipSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update student membership settings:', err);
     }
   };
 
@@ -565,6 +577,7 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               {[
                 { key: 'users', label: '用户列表' },
+                { key: 'studentUsers', label: '学员用户' },
                 { key: 'tagManagement', label: '标签管理' },
                 { key: 'tagStatistics', label: '标签统计' }
               ].map((item) => (
@@ -594,6 +607,16 @@ const Dashboard = () => {
                 users={users} 
                 onEditUser={handleEditUser}
                 onManageTags={handleManageTags}
+              />
+            )}
+
+            {activeUserSection === 'studentUsers' && (
+              <StudentMembershipSettings
+                settings={studentMembershipSettings}
+                users={users}
+                saving={savingStudentMembershipSettings}
+                error={settingsError}
+                onSave={handleSaveStudentMembershipSettings}
               />
             )}
 

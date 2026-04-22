@@ -31,6 +31,35 @@ const CAROUSEL_ITEMS = [
 
 const SHOWCASE_REFRESH_INTERVAL_MS = 6500;
 
+const SHOWCASE_GRID_SPANS = {
+  '1:1': { colSpan: 1, rowSpan: 1 },
+  '1:2': { colSpan: 1, rowSpan: 2 },
+  '1:3': { colSpan: 1, rowSpan: 3 },
+  '1:4': { colSpan: 1, rowSpan: 4 },
+  '2:3': { colSpan: 2, rowSpan: 3 },
+  '3:4': { colSpan: 3, rowSpan: 4 },
+  '2:1': { colSpan: 2, rowSpan: 1 },
+  '3:1': { colSpan: 3, rowSpan: 1 },
+  '4:1': { colSpan: 4, rowSpan: 1 },
+  '3:2': { colSpan: 3, rowSpan: 2 },
+  '4:3': { colSpan: 4, rowSpan: 3 },
+  '16:9': { colSpan: 2, rowSpan: 1 }
+};
+
+const SHOWCASE_ASPECT_PRESETS = [
+  { key: '1:1', width: 1, height: 1 },
+  { key: '1:2', width: 1, height: 2 },
+  { key: '1:3', width: 1, height: 3 },
+  { key: '1:4', width: 1, height: 4 },
+  { key: '2:3', width: 2, height: 3 },
+  { key: '3:4', width: 3, height: 4 },
+  { key: '2:1', width: 2, height: 1 },
+  { key: '3:1', width: 3, height: 1 },
+  { key: '4:1', width: 4, height: 1 },
+  { key: '3:2', width: 3, height: 2 },
+  { key: '4:3', width: 4, height: 3 }
+];
+
 const shuffleArray = (items = [], seed = 0) => (
   [...items].sort((left, right) => {
     const leftWeight = `${left.id}_${seed}`.split('').reduce((total, char) => total + char.charCodeAt(0), 0);
@@ -39,16 +68,49 @@ const shuffleArray = (items = [], seed = 0) => (
   })
 );
 
-const getShowcaseSpan = (aspectRatio = '1:1') => {
-  if (aspectRatio === '2:3') {
-    return { colSpan: 1, rowSpan: 2 };
+const getShowcaseSpan = (aspectRatio = '1:1') => SHOWCASE_GRID_SPANS[aspectRatio] || SHOWCASE_GRID_SPANS['1:1'];
+
+const loadImageDimensions = (src) => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve({
+    width: image.naturalWidth || image.width || 0,
+    height: image.naturalHeight || image.height || 0
+  });
+  image.onerror = () => reject(new Error('橱窗图片尺寸识别失败'));
+  image.src = src;
+});
+
+const resolveClosestShowcaseAspectRatio = (width = 0, height = 0) => {
+  const normalizedWidth = Math.max(0, Number(width) || 0);
+  const normalizedHeight = Math.max(0, Number(height) || 0);
+
+  if (!normalizedWidth || !normalizedHeight) {
+    return '1:1';
   }
 
-  if (aspectRatio === '16:9') {
-    return { colSpan: 2, rowSpan: 1 };
+  const targetRatio = normalizedWidth / normalizedHeight;
+
+  return SHOWCASE_ASPECT_PRESETS.reduce((closestKey, preset) => {
+    const presetRatio = preset.width / preset.height;
+    const closestPreset = SHOWCASE_ASPECT_PRESETS.find((item) => item.key === closestKey) || SHOWCASE_ASPECT_PRESETS[0];
+    const closestDelta = Math.abs((closestPreset.width / closestPreset.height) - targetRatio);
+    const presetDelta = Math.abs(presetRatio - targetRatio);
+
+    return presetDelta < closestDelta ? preset.key : closestKey;
+  }, '1:1');
+};
+
+const resolveShowcaseAspectRatioFromUrl = async (url = '', fallbackAspectRatio = '1:1') => {
+  if (!url) {
+    return fallbackAspectRatio;
   }
 
-  return { colSpan: 1, rowSpan: 1 };
+  try {
+    const dimensions = await loadImageDimensions(url);
+    return resolveClosestShowcaseAspectRatio(dimensions.width, dimensions.height);
+  } catch {
+    return fallbackAspectRatio;
+  }
 };
 
 const canPlaceItem = (grid, startRow, startCol, colSpan, rowSpan) => {
@@ -111,7 +173,7 @@ const buildShowcaseLayout = (items = []) => {
   return placements;
 };
 
-const buildShowcaseItems = (products = []) => {
+const buildShowcaseItems = async (products = []) => {
   const productShowcaseItems = products.flatMap((product) => {
     const explicitShowcaseItems = Array.isArray(product.showcaseMedia) ? product.showcaseMedia : [];
     const fallbackItems = explicitShowcaseItems.length > 0
@@ -129,7 +191,12 @@ const buildShowcaseItems = (products = []) => {
       }));
   });
 
-  return productShowcaseItems;
+  return Promise.all(
+    productShowcaseItems.map(async (item) => ({
+      ...item,
+      aspectRatio: await resolveShowcaseAspectRatioFromUrl(item.image, item.aspectRatio || '1:1')
+    }))
+  );
 };
 
 const Home = () => {
@@ -160,7 +227,7 @@ const Home = () => {
         return;
       }
 
-      setShowcaseItems(buildShowcaseItems(products));
+      setShowcaseItems(await buildShowcaseItems(products));
       setCarouselItems(CAROUSEL_ITEMS.map((fallbackItem, index) => ({
         ...fallbackItem,
         image: brandCarouselSettings.slides?.[index]?.imageUrl || fallbackItem.image,

@@ -20,10 +20,19 @@ import {
   normalizeBrandCarouselSettings,
   toBrandCarouselSettingsPayload
 } from '@liwu/shared-utils/home-carousel-settings.js';
+import {
+  DEFAULT_STUDENT_MEMBERSHIP_SETTINGS as SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
+  STUDENT_MEMBERSHIP_SETTINGS_KEY,
+  getStudentMembershipPlan,
+  normalizeStudentMembershipSettings,
+  toStudentMembershipSettingsPayload
+} from '@liwu/shared-utils/student-membership-settings.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
+const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
+const LIFETIME_STUDENT_EXPIRES_AT = '2999-12-31T23:59:59.000Z';
 
 export const DEFAULT_MEDITATION_SETTINGS = {
   rewardPoints: 50,
@@ -50,6 +59,10 @@ export const DEFAULT_THEME_SETTINGS = {
 
 export const DEFAULT_BRAND_CAROUSEL = {
   ...DEFAULT_BRAND_CAROUSEL_SETTINGS
+};
+
+export const DEFAULT_STUDENT_MEMBERSHIP_SETTINGS = {
+  ...SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS
 };
 
 const isMissingCollectionIssue = (value) => {
@@ -263,6 +276,8 @@ const normalizeUser = (user) => ({
   status: user.status || 'inactive',
   authUid: user.auth_uid || user.authUid || '',
   isStudent: Boolean(user.is_student ?? user.isStudent),
+  studentExpireAt: user.student_expire_at || user.studentExpireAt || '',
+  studentMembershipPlanKey: user.student_membership_plan_key || user.studentMembershipPlanKey || '',
   inviteCode: user.uid ? String(user.uid) : '',
   inviterUserId: user.inviter_user_id || user.inviterUserId || '',
   balance: Number(user.balance || 0),
@@ -403,7 +418,127 @@ const toBadgeSettingsPayload = (settingsData = {}) => ({
   series: normalizeBadgeSettings(settingsData).series
 });
 
-const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
+const addMonthsToIso = (baseDateInput, monthsToAdd) => {
+  const nextDate = new Date(baseDateInput || new Date());
+  if (Number.isNaN(nextDate.getTime())) {
+    return new Date().toISOString();
+  }
+
+  nextDate.setMonth(nextDate.getMonth() + Math.max(0, Number(monthsToAdd) || 0));
+  return nextDate.toISOString();
+};
+
+const resolveStudentMembershipPlanKeyFromOrder = (orderDocument = {}, orderItems = []) => {
+  if ((orderDocument.biz_type || orderDocument.bizType || '') === STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE) {
+    return (
+      orderDocument.biz_meta?.plan_key ||
+      orderDocument.bizMeta?.planKey ||
+      orderDocument.membership_plan_key ||
+      orderDocument.membershipPlanKey ||
+      ''
+    );
+  }
+
+  const membershipItem = orderItems.find((item) => (
+    item.attrs_snapshot?.membership_plan_key ||
+    item.attrs_snapshot?.membershipPlanKey ||
+    item.attrsSnapshot?.membership_plan_key ||
+    item.attrsSnapshot?.membershipPlanKey
+  ));
+
+  return (
+    membershipItem?.attrs_snapshot?.membership_plan_key ||
+    membershipItem?.attrs_snapshot?.membershipPlanKey ||
+    membershipItem?.attrsSnapshot?.membership_plan_key ||
+    membershipItem?.attrsSnapshot?.membershipPlanKey ||
+    ''
+  );
+};
+
+const DEFAULT_USER_DASHBOARD_STATS = {
+  earnedBadgeCount: 0,
+  recentSevenDayPoints: 0,
+  meditationCount: 0,
+  awarenessCount: 0
+};
+
+const getTimestampValue = (value) => {
+  const nextTimestamp = new Date(value || 0).getTime();
+  return Number.isFinite(nextTimestamp) ? nextTimestamp : 0;
+};
+
+const buildDashboardUserStatsMap = ({
+  pointLedgerEntries = [],
+  awarenessRecords = [],
+  badgeProfiles = []
+} = {}) => {
+  const recentRewardCutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  const meditationCountMap = new Map();
+  const awarenessCountMap = new Map();
+  const recentSevenDayPointsMap = new Map();
+  const earnedBadgeCountMap = new Map();
+
+  const incrementMap = (targetMap, userId, amount = 1) => {
+    if (!userId) {
+      return;
+    }
+
+    targetMap.set(userId, Number(targetMap.get(userId) || 0) + Number(amount || 0));
+  };
+
+  pointLedgerEntries.forEach((entry) => {
+    const userId = entry.user_id || entry.userId || '';
+    if (!userId) {
+      return;
+    }
+
+    if ((entry.biz_type || entry.bizType || '') === BADGE_ACTIVITY_TYPES.meditation) {
+      incrementMap(meditationCountMap, userId, 1);
+    }
+
+    const delta = Number(entry.delta || 0);
+    const createdAt = entry.created_at || entry.createdAt || '';
+    if (delta > 0 && getTimestampValue(createdAt) >= recentRewardCutoff) {
+      incrementMap(recentSevenDayPointsMap, userId, delta);
+    }
+  });
+
+  awarenessRecords.forEach((record) => {
+    incrementMap(awarenessCountMap, record.user_id || record.userId || '', 1);
+  });
+
+  badgeProfiles.forEach((profile) => {
+    const userId = profile.user_id || profile.userId || '';
+    const unlockedBadgeIds = Array.isArray(profile.unlocked_badge_ids || profile.unlockedBadgeIds)
+      ? [...new Set((profile.unlocked_badge_ids || profile.unlockedBadgeIds).filter(Boolean))]
+      : [];
+
+    if (userId) {
+      earnedBadgeCountMap.set(userId, unlockedBadgeIds.length);
+    }
+  });
+
+  const userStatsById = new Map();
+  const allUserIds = new Set([
+    ...meditationCountMap.keys(),
+    ...awarenessCountMap.keys(),
+    ...recentSevenDayPointsMap.keys(),
+    ...earnedBadgeCountMap.keys()
+  ]);
+
+  allUserIds.forEach((userId) => {
+    userStatsById.set(userId, {
+      earnedBadgeCount: Number(earnedBadgeCountMap.get(userId) || 0),
+      recentSevenDayPoints: Number(recentSevenDayPointsMap.get(userId) || 0),
+      meditationCount: Number(meditationCountMap.get(userId) || 0),
+      awarenessCount: Number(awarenessCountMap.get(userId) || 0)
+    });
+  });
+
+  return userStatsById;
+};
+
+const attachTagsToUsers = (users, tags, categories, userTagLinks, userStatsById = new Map()) => {
   const categoriesById = new Map(categories.map((category) => [category.id, category]));
   const normalizedTags = tags.map((tag) => normalizeTag(tag, categoriesById));
   const tagsById = new Map(normalizedTags.map((tag) => [tag.id, tag]));
@@ -431,6 +566,8 @@ const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
     const normalizedUser = normalizeUser(user);
     return {
       ...normalizedUser,
+      ...DEFAULT_USER_DASHBOARD_STATS,
+      ...(userStatsById.get(normalizedUser.id) || {}),
       tags: tagsByUserId.get(normalizedUser.id) || []
     };
   });
@@ -558,6 +695,9 @@ class DatabaseService {
       if (nextStatus === 'paid' && order.status !== 'paid' && order.totalCash > 0 && (order.rewardPointsAwarded + order.badgeBonusPointsAwarded) === 0) {
         const userResult = await db.collection(collections.users).doc(order.userId).get();
         const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
+        const orderItemsResult = await db.collection(collections.shopOrderItems).where({ order_id: orderId }).limit(20).get().catch(() => ({ data: [] }));
+        const orderItems = getDocuments(orderItemsResult, collections.shopOrderItems);
+        const membershipPlanKey = resolveStudentMembershipPlanKeyFromOrder(orderDocument, orderItems);
 
         if (userDocument) {
           const configuredRewardPoints = Math.max(0, Number(order.rewardPointsReturnTotal || 0));
@@ -596,6 +736,29 @@ class DatabaseService {
 
             updatePayload.reward_points_awarded = configuredRewardPoints;
             updatePayload.badge_bonus_points_awarded = Math.max(0, Number(badgeBonus.rewardAmount || 0));
+          }
+
+          if (membershipPlanKey) {
+            const membershipSettings = await DatabaseService.getStudentMembershipSettings();
+            const membershipPlan = getStudentMembershipPlan(membershipSettings, membershipPlanKey);
+
+            if (membershipPlan) {
+              const currentExpireAt = userDocument.student_expire_at || userDocument.studentExpireAt || '';
+              const currentExpireTimestamp = new Date(currentExpireAt || 0).getTime();
+              const membershipBaseDate = Number.isFinite(currentExpireTimestamp) && currentExpireTimestamp > Date.now()
+                ? new Date(currentExpireAt)
+                : new Date(nowIso);
+              const nextExpireAt = membershipPlan.isLifetime
+                ? LIFETIME_STUDENT_EXPIRES_AT
+                : addMonthsToIso(membershipBaseDate, membershipPlan.durationMonths);
+
+              await db.collection(collections.users).doc(order.userId).update({
+                is_student: true,
+                student_expire_at: nextExpireAt,
+                student_membership_plan_key: membershipPlan.key,
+                updated_at: nowIso
+              });
+            }
           }
         }
       }
@@ -1073,6 +1236,88 @@ class DatabaseService {
     }
   }
 
+  static async getStudentMembershipSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: STUDENT_MEMBERSHIP_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_STUDENT_MEMBERSHIP_SETTINGS };
+      }
+
+      return normalizeStudentMembershipSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching student membership settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveStudentMembershipSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: STUDENT_MEMBERSHIP_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toStudentMembershipSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeStudentMembershipSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeStudentMembershipSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving student membership settings:', error);
+      throw error;
+    }
+  }
+
   static async saveThemeSettings(settingsData) {
     try {
       await ensureAnonymousLogin();
@@ -1438,18 +1683,28 @@ class DatabaseService {
   static async getDashboardData() {
     try {
       await ensureAnonymousLogin();
-      const [usersResult, tagsResult, categoriesResult, userTagsResult] = await Promise.all([
+      const [usersResult, tagsResult, categoriesResult, userTagsResult, pointLedgerResult, awarenessRecordsResult, badgeProfilesResult] = await Promise.all([
         db.collection(collections.users).limit(1000).get(),
         db.collection(collections.tags).limit(1000).get(),
         db.collection(collections.tagCategories).limit(1000).get(),
-        db.collection(collections.userTags).limit(5000).get()
+        db.collection(collections.userTags).limit(5000).get(),
+        db.collection(collections.pointLedger).limit(5000).get().catch(() => ({ data: [] })),
+        db.collection(collections.awarenessRecords).limit(5000).get().catch(() => ({ data: [] })),
+        db.collection(collections.badgeProfiles).limit(2000).get().catch(() => ({ data: [] }))
       ]);
+
+      const userStatsById = buildDashboardUserStatsMap({
+        pointLedgerEntries: getDocuments(pointLedgerResult, collections.pointLedger),
+        awarenessRecords: getDocuments(awarenessRecordsResult, collections.awarenessRecords),
+        badgeProfiles: getDocuments(badgeProfilesResult, collections.badgeProfiles)
+      });
 
       return attachTagsToUsers(
         getDocuments(usersResult, collections.users),
         getDocuments(tagsResult, collections.tags),
         getDocuments(categoriesResult, collections.tagCategories),
-        getDocuments(userTagsResult, collections.userTags)
+        getDocuments(userTagsResult, collections.userTags),
+        userStatsById
       );
     } catch (error) {
       console.error('Error fetching dashboard data:', error);

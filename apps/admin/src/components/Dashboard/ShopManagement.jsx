@@ -3,6 +3,80 @@ import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 
 const formatCash = (value) => (value ? `¥${Number(value).toFixed(2)}` : '纯福豆');
 
+const SHOWCASE_ASPECT_PRESETS = [
+  { key: '1:1', width: 1, height: 1 },
+  { key: '1:2', width: 1, height: 2 },
+  { key: '1:3', width: 1, height: 3 },
+  { key: '1:4', width: 1, height: 4 },
+  { key: '2:3', width: 2, height: 3 },
+  { key: '3:4', width: 3, height: 4 },
+  { key: '2:1', width: 2, height: 1 },
+  { key: '3:1', width: 3, height: 1 },
+  { key: '4:1', width: 4, height: 1 },
+  { key: '3:2', width: 3, height: 2 },
+  { key: '4:3', width: 4, height: 3 }
+];
+
+const resolveClosestShowcaseAspectRatio = (width = 0, height = 0) => {
+  const normalizedWidth = Math.max(0, Number(width) || 0);
+  const normalizedHeight = Math.max(0, Number(height) || 0);
+
+  if (!normalizedWidth || !normalizedHeight) {
+    return '1:1';
+  }
+
+  const targetRatio = normalizedWidth / normalizedHeight;
+
+  return SHOWCASE_ASPECT_PRESETS.reduce((closestKey, preset) => {
+    const presetRatio = preset.width / preset.height;
+    const closestPreset = SHOWCASE_ASPECT_PRESETS.find((item) => item.key === closestKey) || SHOWCASE_ASPECT_PRESETS[0];
+    const closestDelta = Math.abs((closestPreset.width / closestPreset.height) - targetRatio);
+    const presetDelta = Math.abs(presetRatio - targetRatio);
+
+    return presetDelta < closestDelta ? preset.key : closestKey;
+  }, '1:1');
+};
+
+const loadImageDimensions = (src) => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve({
+    width: image.naturalWidth || image.width || 0,
+    height: image.naturalHeight || image.height || 0
+  });
+  image.onerror = () => reject(new Error('图片尺寸识别失败'));
+  image.src = src;
+});
+
+const resolveShowcaseAspectRatioFromFile = async (file) => {
+  if (!file) {
+    return '1:1';
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const dimensions = await loadImageDimensions(objectUrl);
+    return resolveClosestShowcaseAspectRatio(dimensions.width, dimensions.height);
+  } catch {
+    return '1:1';
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
+
+const resolveShowcaseAspectRatioFromUrl = async (url = '') => {
+  if (!url) {
+    return '1:1';
+  }
+
+  try {
+    const dimensions = await loadImageDimensions(url);
+    return resolveClosestShowcaseAspectRatio(dimensions.width, dimensions.height);
+  } catch {
+    return '1:1';
+  }
+};
+
 const statusLabelMap = {
   draft: '草稿',
   active: '上架中',
@@ -32,7 +106,7 @@ const createEmptyGalleryItem = () => ({
   id: `gallery_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
   url: '',
   showcaseEnabled: false,
-  showcaseAspectRatio: '1:1'
+  showcaseAspectRatio: ''
 });
 
 const normalizeGalleryItems = (product = null) => {
@@ -50,7 +124,7 @@ const normalizeGalleryItems = (product = null) => {
       id: typeof item === 'string' ? `gallery_${index}` : (item?.id || `gallery_${index}`),
       url,
       showcaseEnabled: Boolean(showcaseEntry),
-      showcaseAspectRatio: showcaseEntry?.aspectRatio || showcaseEntry?.ratio || '1:1'
+      showcaseAspectRatio: showcaseEntry?.aspectRatio || showcaseEntry?.ratio || ''
     };
   });
 };
@@ -92,6 +166,7 @@ const ShopManagement = ({
   const [updatingOrderId, setUpdatingOrderId] = useState('');
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadingGalleryIndex, setUploadingGalleryIndex] = useState(-1);
+  const [uploadingGalleryBatch, setUploadingGalleryBatch] = useState(false);
 
   const filteredProducts = useMemo(() => (
     selectedCategoryId
@@ -201,14 +276,74 @@ const ShopManagement = ({
 
     setUploadingGalleryIndex(index);
     try {
+      const showcaseAspectRatio = await resolveShowcaseAspectRatioFromFile(file);
       const uploadResult = await uploadImageAsWebp({
         file,
         cloudPath: `liwu/shop-gallery/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.webp`
       });
 
-      handleGalleryChange(index, 'url', uploadResult.imageUrl);
+      setProductDraft((currentDraft) => ({
+        ...currentDraft,
+        gallery: currentDraft.gallery.map((item, itemIndex) => (
+          itemIndex === index
+            ? {
+                ...item,
+                url: uploadResult.imageUrl,
+                showcaseAspectRatio
+              }
+            : item
+        ))
+      }));
     } finally {
       setUploadingGalleryIndex(-1);
+    }
+  };
+
+  const handleUploadGalleryImages = async (fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (files.length === 0) {
+      return;
+    }
+
+    setUploadingGalleryBatch(true);
+    try {
+      const uploadedItems = [];
+
+      for (const file of files) {
+        const showcaseAspectRatio = await resolveShowcaseAspectRatioFromFile(file);
+        const uploadResult = await uploadImageAsWebp({
+          file,
+          cloudPath: `liwu/shop-gallery/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.webp`
+        });
+
+        uploadedItems.push({
+          ...createEmptyGalleryItem(),
+          url: uploadResult.imageUrl,
+          showcaseAspectRatio
+        });
+      }
+
+      setProductDraft((currentDraft) => {
+        const remainingItems = [...uploadedItems];
+        const nextGallery = currentDraft.gallery.map((item) => {
+          if (item.url || remainingItems.length === 0) {
+            return item;
+          }
+
+          const nextUploadedItem = remainingItems.shift();
+          return {
+            ...item,
+            url: nextUploadedItem.url
+          };
+        });
+
+        return {
+          ...currentDraft,
+          gallery: [...nextGallery, ...remainingItems]
+        };
+      });
+    } finally {
+      setUploadingGalleryBatch(false);
     }
   };
 
@@ -242,22 +377,30 @@ const ShopManagement = ({
 
   const handleSaveProduct = async () => {
     setSavingProduct(true);
-    const nextDraft = {
-      ...productDraft,
-      gallery: productDraft.gallery.map((item) => item.url).filter(Boolean),
-      showcaseMedia: productDraft.gallery
-        .filter((item) => item.showcaseEnabled && item.url)
-        .map((item) => ({
-          id: item.id,
-          url: item.url,
-          aspectRatio: item.showcaseAspectRatio || '1:1'
-        }))
-    };
+    try {
+      const galleryItems = productDraft.gallery.filter((item) => item.url);
+      const showcaseMedia = await Promise.all(
+        galleryItems
+          .filter((item) => item.showcaseEnabled)
+          .map(async (item) => ({
+            id: item.id,
+            url: item.url,
+            aspectRatio: await resolveShowcaseAspectRatioFromUrl(item.url)
+          }))
+      );
 
-    await onSaveProduct(nextDraft);
-    setSavingProduct(false);
-    setEditingProduct(null);
-    setProductDraft(createProductDraft());
+      const nextDraft = {
+        ...productDraft,
+        gallery: galleryItems.map((item) => item.url),
+        showcaseMedia
+      };
+
+      await onSaveProduct(nextDraft);
+      setEditingProduct(null);
+      setProductDraft(createProductDraft());
+    } finally {
+      setSavingProduct(false);
+    }
   };
 
   const handleOrderStatusUpdate = async (orderId, nextStatus) => {
@@ -519,8 +662,10 @@ const ShopManagement = ({
           onRemoveGalleryItem={handleRemoveGalleryItem}
           onUploadCoverImage={handleUploadCoverImage}
           onUploadGalleryImage={handleUploadGalleryImage}
+          onUploadGalleryImages={handleUploadGalleryImages}
           uploadingCover={uploadingCover}
           uploadingGalleryIndex={uploadingGalleryIndex}
+          uploadingGalleryBatch={uploadingGalleryBatch}
           onSkuChange={handleSkuChange}
           onAddSku={handleAddSku}
           onRemoveSku={handleRemoveSku}
@@ -612,8 +757,10 @@ const ProductEditor = ({
   onRemoveGalleryItem,
   onUploadCoverImage,
   onUploadGalleryImage,
+  onUploadGalleryImages,
   uploadingCover,
   uploadingGalleryIndex,
+  uploadingGalleryBatch,
   onSkuChange,
   onAddSku,
   onRemoveSku,
@@ -704,13 +851,29 @@ const ProductEditor = ({
         <div style={{ marginTop: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>商品图片</div>
-            <button type="button" onClick={onAddGalleryItem} style={miniButtonStyle}>新增图片</button>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <label style={{ ...uploadActionStyle, minWidth: 'auto' }}>
+                {uploadingGalleryBatch ? '批量上传中...' : '批量上传'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={uploadingGalleryBatch}
+                  style={{ display: 'none' }}
+                  onChange={(event) => {
+                    void onUploadGalleryImages(event.target.files);
+                    event.target.value = '';
+                  }}
+                />
+              </label>
+              <button type="button" onClick={onAddGalleryItem} style={miniButtonStyle}>新增空位</button>
+            </div>
           </div>
           <div style={{ display: 'grid', gap: '10px' }}>
             {draft.gallery.map((item, index) => (
               <div key={item.id} style={{ borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: '#f8fafc', padding: '14px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
-                  <Field label="图片地址">
+                  <Field label={`商品图片 ${index + 1}`}>
                     <div style={{ display: 'grid', gap: '8px' }}>
                       <div style={imagePreviewFrameStyle}>
                         {item.url ? (
@@ -741,12 +904,10 @@ const ProductEditor = ({
                       <option value="yes">是</option>
                     </select>
                   </Field>
-                  <Field label="显示比例">
-                    <select value={item.showcaseAspectRatio} onChange={(event) => onGalleryChange(index, 'showcaseAspectRatio', event.target.value)} style={inputStyle}>
-                      <option value="1:1">1:1</option>
-                      <option value="2:3">2:3</option>
-                      <option value="16:9">16:9</option>
-                    </select>
+                  <Field label="自动比例">
+                    <div style={readonlyInfoStyle}>
+                      {item.url ? (item.showcaseAspectRatio || '待识别') : '待识别'}
+                    </div>
                   </Field>
                   <button type="button" onClick={() => onRemoveGalleryItem(index)} style={miniButtonStyle}>删除</button>
                 </div>
@@ -847,6 +1008,15 @@ const inputStyle = {
   border: '1px solid #dbe4ee',
   padding: '10px 12px',
   fontSize: '14px'
+};
+
+const readonlyInfoStyle = {
+  ...inputStyle,
+  backgroundColor: '#f8fafc',
+  color: '#334155',
+  minHeight: '42px',
+  display: 'flex',
+  alignItems: 'center'
 };
 
 const imagePreviewFrameStyle = {
