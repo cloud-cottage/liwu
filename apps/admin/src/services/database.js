@@ -1,5 +1,5 @@
 import { DATABASE_CONFIG } from '../config/database.js';
-import { db, ensureAnonymousLogin } from './cloudbase.js';
+import app, { db, ensureAnonymousLogin } from './cloudbase.js';
 import {
   BADGE_ACTIVITY_TYPES,
   BADGE_BONUS_TYPES,
@@ -20,6 +20,12 @@ import {
   normalizeBrandCarouselSettings,
   toBrandCarouselSettingsPayload
 } from '@liwu/shared-utils/home-carousel-settings.js';
+import {
+  DEFAULT_USER_AVATAR_OPTIONS_SETTINGS,
+  USER_AVATAR_OPTIONS_SETTINGS_KEY,
+  normalizeUserAvatarOptionsSettings,
+  toUserAvatarOptionsPayload
+} from '@liwu/shared-utils/avatar-options.js';
 import {
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS as SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   STUDENT_MEMBERSHIP_SETTINGS_KEY,
@@ -92,6 +98,10 @@ export const DEFAULT_BRAND_CAROUSEL = {
   ...DEFAULT_BRAND_CAROUSEL_SETTINGS
 };
 
+export const DEFAULT_USER_AVATAR_OPTIONS = {
+  ...DEFAULT_USER_AVATAR_OPTIONS_SETTINGS
+};
+
 export const DEFAULT_STUDENT_MEMBERSHIP_SETTINGS = {
   ...SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS
 };
@@ -125,6 +135,21 @@ const getDocuments = (result, collectionName) => {
 };
 
 const getFirstDocument = (result, collectionName) => getDocuments(result, collectionName)[0] || null;
+
+const buildTempUrlMap = async (fileIds = []) => {
+  const normalizedFileIds = [...new Set(fileIds.filter(Boolean))];
+  if (normalizedFileIds.length === 0) {
+    return new Map();
+  }
+
+  const tempUrlResult = await app.getTempFileURL({ fileList: normalizedFileIds });
+  return new Map(
+    (tempUrlResult?.fileList || tempUrlResult?.data?.fileList || []).map((item) => [
+      item.fileID || item.fileId,
+      item.tempFileURL || item.download_url || item.downloadUrl || ''
+    ])
+  );
+};
 
 const normalizeCategory = (category) => ({
   id: getDocumentId(category),
@@ -306,6 +331,7 @@ const normalizeUser = (user) => ({
   name: user.name || '',
   noteName: user.note_name || user.noteName || '',
   avatar: user.avatar || '',
+  avatarIndex: Number(user.avatar_index ?? user.avatarIndex ?? 0),
   email: user.email || '',
   phone: user.phone || '',
   joinDate: user.join_date || user.joinDate || '',
@@ -1637,7 +1663,16 @@ class DatabaseService {
         return { ...DEFAULT_BRAND_CAROUSEL };
       }
 
-      return normalizeBrandCarouselSettings(document);
+      const normalizedSettings = normalizeBrandCarouselSettings(document);
+      const tempUrlMap = await buildTempUrlMap(normalizedSettings.slides.map((slide) => slide.fileId));
+
+      return {
+        ...normalizedSettings,
+        slides: normalizedSettings.slides.map((slide) => ({
+          ...slide,
+          imageUrl: tempUrlMap.get(slide.fileId) || slide.imageUrl || ''
+        }))
+      };
     } catch (error) {
       if (isMissingCollectionIssue(error)) {
         return {
@@ -1647,6 +1682,50 @@ class DatabaseService {
       }
 
       console.error('Error fetching brand carousel settings:', error);
+      throw error;
+    }
+  }
+
+  static async getUserAvatarOptionsSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: USER_AVATAR_OPTIONS_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_USER_AVATAR_OPTIONS,
+          missingCollection: true
+        };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_USER_AVATAR_OPTIONS };
+      }
+
+      const normalizedSettings = normalizeUserAvatarOptionsSettings(document);
+      const tempUrlMap = await buildTempUrlMap(normalizedSettings.avatars.map((avatar) => avatar.fileId));
+
+      return {
+        ...normalizedSettings,
+        avatars: normalizedSettings.avatars.map((avatar) => ({
+          ...avatar,
+          imageUrl: tempUrlMap.get(avatar.fileId) || avatar.imageUrl || ''
+        }))
+      };
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_USER_AVATAR_OPTIONS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching user avatar options settings:', error);
       throw error;
     }
   }
@@ -1692,6 +1771,50 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving brand carousel settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveUserAvatarOptionsSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: USER_AVATAR_OPTIONS_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocument = getFirstDocument(existingResult, collections.appSettings);
+      const payload = {
+        ...toUserAvatarOptionsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocument) {
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeUserAvatarOptionsSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeUserAvatarOptionsSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving user avatar options settings:', error);
       throw error;
     }
   }
@@ -1934,14 +2057,15 @@ class DatabaseService {
   static async getDashboardData() {
     try {
       await ensureAnonymousLogin();
-      const [usersResult, tagsResult, categoriesResult, userTagsResult, pointLedgerResult, awarenessRecordsResult, badgeProfilesResult] = await Promise.all([
+      const [usersResult, tagsResult, categoriesResult, userTagsResult, pointLedgerResult, awarenessRecordsResult, badgeProfilesResult, userAvatarOptionsSettings] = await Promise.all([
         db.collection(collections.users).limit(1000).get(),
         db.collection(collections.tags).limit(1000).get(),
         db.collection(collections.tagCategories).limit(1000).get(),
         db.collection(collections.userTags).limit(5000).get(),
         db.collection(collections.pointLedger).limit(5000).get().catch(() => ({ data: [] })),
         db.collection(collections.awarenessRecords).limit(5000).get().catch(() => ({ data: [] })),
-        db.collection(collections.badgeProfiles).limit(2000).get().catch(() => ({ data: [] }))
+        db.collection(collections.badgeProfiles).limit(2000).get().catch(() => ({ data: [] })),
+        this.getUserAvatarOptionsSettings()
       ]);
 
       const userStatsById = buildDashboardUserStatsMap({
@@ -1950,13 +2074,27 @@ class DatabaseService {
         badgeProfiles: getDocuments(badgeProfilesResult, collections.badgeProfiles)
       });
 
-      return attachTagsToUsers(
+      const dashboardData = attachTagsToUsers(
         getDocuments(usersResult, collections.users),
         getDocuments(tagsResult, collections.tags),
         getDocuments(categoriesResult, collections.tagCategories),
         getDocuments(userTagsResult, collections.userTags),
         userStatsById
       );
+
+      const avatarUrlByIndex = new Map(
+        (userAvatarOptionsSettings.avatars || [])
+          .filter((avatar) => avatar.imageUrl)
+          .map((avatar) => [avatar.index, avatar.imageUrl])
+      );
+
+      return {
+        ...dashboardData,
+        users: dashboardData.users.map((user) => ({
+          ...user,
+          avatar: avatarUrlByIndex.get(user.avatarIndex) || user.avatar || ''
+        }))
+      };
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       throw error;

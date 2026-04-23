@@ -50,6 +50,7 @@ const Dashboard = () => {
     badgeSettings,
     themeSettings,
     brandCarouselSettings,
+    userAvatarOptionsSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -63,6 +64,7 @@ const Dashboard = () => {
     savingBadgeSettings,
     savingThemeSettings,
     savingBrandCarouselSettings,
+    savingUserAvatarOptionsSettings,
     savingStudentMembershipSettings,
     loading,
     error,
@@ -77,6 +79,7 @@ const Dashboard = () => {
     updateBadgeSettings,
     updateThemeSettings,
     updateBrandCarouselSettings,
+    updateUserAvatarOptionsSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,
@@ -174,6 +177,14 @@ const Dashboard = () => {
       await updateBrandCarouselSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update brand carousel settings:', err);
+    }
+  };
+
+  const handleSaveUserAvatarOptionsSettings = async (nextSettings) => {
+    try {
+      await updateUserAvatarOptionsSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update user avatar options settings:', err);
     }
   };
 
@@ -680,11 +691,14 @@ const Dashboard = () => {
             key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
             settings={themeSettings}
             brandCarouselSettings={brandCarouselSettings}
+            userAvatarOptionsSettings={userAvatarOptionsSettings}
             error={settingsError}
             saving={savingThemeSettings}
             savingCarousel={savingBrandCarouselSettings}
+            savingAvatarOptions={savingUserAvatarOptionsSettings}
             onSave={handleSaveThemeSettings}
             onSaveBrandCarousel={handleSaveBrandCarouselSettings}
+            onSaveUserAvatarOptions={handleSaveUserAvatarOptionsSettings}
           />
         )}
 

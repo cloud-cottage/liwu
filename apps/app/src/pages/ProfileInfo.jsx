@@ -1,11 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Pencil, UserRound } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowLeft, Camera, LogOut, Pencil, UserRound, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useCloudAwareness } from '../context/CloudAwarenessContext.jsx';
 import { useWealth } from '../context/WealthContext.jsx';
-import { authService, studentMembershipService, userProfileService } from '../services/cloudbase.js';
+import { authService, avatarSettingsService, studentMembershipService, userProfileService } from '../services/cloudbase.js';
 import MembershipOrderModal from '../modules/profile/MembershipOrderModal.jsx';
-import { uploadImageAsWebp } from '../utils/imageUpload.js';
 
 const MAX_PROFILE_NAME_LENGTH = 16;
 
@@ -147,6 +146,139 @@ const ProfileAvatar = ({ avatar, disabled = false, onClick, uploading = false })
   </button>
 );
 
+const AvatarPickerModal = ({
+  open,
+  avatars,
+  selectedAvatarIndex,
+  loading,
+  saving,
+  onClose,
+  onSelect
+}) => {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        zIndex: 50
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '560px',
+          maxHeight: 'calc(100vh - 40px)',
+          overflow: 'auto',
+          backgroundColor: '#fff',
+          borderRadius: '20px',
+          padding: '22px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div>
+            <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>选择头像</div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+              头像由管理员统一维护，你只能从这组头像中选择一张。
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              color: '#64748b',
+              padding: '4px'
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: '16px', fontSize: '14px', color: '#64748b' }}>
+            正在加载头像库...
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+              gap: '12px'
+            }}
+          >
+            {avatars.map((avatar) => {
+              const isAvailable = Boolean(avatar.imageUrl);
+              const isActive = avatar.index === selectedAvatarIndex;
+
+              return (
+                <button
+                  key={avatar.id}
+                  type="button"
+                  onClick={() => isAvailable && onSelect(avatar.index)}
+                  disabled={!isAvailable || saving}
+                  style={{
+                    border: isActive ? '2px solid #8FA58A' : '1px solid #dbe4ee',
+                    backgroundColor: '#fff',
+                    borderRadius: '18px',
+                    padding: '10px',
+                    cursor: isAvailable && !saving ? 'pointer' : 'default',
+                    opacity: isAvailable ? 1 : 0.5,
+                    display: 'grid',
+                    gap: '8px'
+                  }}
+                >
+                  <div
+                    style={{
+                      width: '100%',
+                      aspectRatio: '1 / 1',
+                      borderRadius: '16px',
+                      overflow: 'hidden',
+                      backgroundColor: '#f8fafc',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {avatar.imageUrl ? (
+                      <img
+                        src={avatar.imageUrl}
+                        alt={avatar.id}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          display: 'block'
+                        }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>未配置</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textAlign: 'center' }}>
+                    #{avatar.index}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const formatStudentExpireText = (value = '') => {
   if (!value) {
     return '待开通';
@@ -170,7 +302,6 @@ const formatStudentExpireText = (value = '') => {
 
 const ProfileInfo = () => {
   const navigate = useNavigate();
-  const fileInputRef = useRef(null);
   const { syncWalletFromCloud } = useWealth();
   const {
     authStatus,
@@ -182,7 +313,10 @@ const ProfileInfo = () => {
   const [nameDraft, setNameDraft] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
   const [savingName, setSavingName] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarOptions, setAvatarOptions] = useState([]);
+  const [loadingAvatarOptions, setLoadingAvatarOptions] = useState(false);
+  const [savingAvatar, setSavingAvatar] = useState(false);
+  const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [loggingOut, setLoggingOut] = useState(false);
@@ -195,6 +329,36 @@ const ProfileInfo = () => {
   useEffect(() => {
     setNameDraft(currentUser?.name || '');
   }, [currentUser?.name]);
+
+  useEffect(() => {
+    if (!isAvatarPickerOpen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setLoadingAvatarOptions(true);
+      try {
+        const nextSettings = await avatarSettingsService.getSettings();
+        if (!cancelled) {
+          setAvatarOptions(nextSettings.avatars || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error.message || '头像库加载失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingAvatarOptions(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAvatarPickerOpen]);
 
   useEffect(() => {
     if (!isMembershipModalOpen) {
@@ -300,38 +464,32 @@ const ProfileInfo = () => {
       return;
     }
 
-    fileInputRef.current?.click();
+    setErrorMessage('');
+    setFeedbackMessage('');
+    setIsAvatarPickerOpen(true);
   };
 
-  const handleAvatarChange = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-
-    if (!file) {
+  const handleAvatarSelect = async (avatarIndex) => {
+    if (!avatarIndex) {
       return;
     }
 
-    setUploadingAvatar(true);
+    setSavingAvatar(true);
     setFeedbackMessage('');
     setErrorMessage('');
 
     try {
-      const uploadResult = await uploadImageAsWebp({
-        file,
-        cloudPath: `liwu/user-avatar/${currentUser?.uid || currentUser?.id || Date.now()}-${Date.now()}.webp`
-      });
-
-      await userProfileService.updateCurrentProfile({ avatar: uploadResult.imageUrl });
+      await userProfileService.updateCurrentProfile({ avatarIndex });
       await Promise.all([
         syncAuthState({ allowAnonymous: false }),
         refreshData({ force: true, allowAnonymous: true })
       ]);
-
       setFeedbackMessage('头像已更新');
+      setIsAvatarPickerOpen(false);
     } catch (error) {
-      setErrorMessage(error.message || '头像上传失败');
+      setErrorMessage(error.message || '头像更新失败');
     } finally {
-      setUploadingAvatar(false);
+      setSavingAvatar(false);
     }
   };
 
@@ -414,12 +572,12 @@ const ProfileInfo = () => {
         >
           <ProfileAvatar
             avatar={currentUser?.avatar || ''}
-            disabled={!authStatus.isAuthenticated || uploadingAvatar}
+            disabled={!authStatus.isAuthenticated || savingAvatar}
             onClick={handleSelectAvatar}
-            uploading={uploadingAvatar}
+            uploading={savingAvatar}
           />
           <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-            {authStatus.isAuthenticated ? '点击头像更新，上传时会自动转换为 webP。' : '登录后可上传头像。'}
+            {authStatus.isAuthenticated ? '点击头像，从头像库中选择一张作为你的头像。' : '登录后可选择头像。'}
           </div>
         </div>
       </section>
@@ -578,14 +736,6 @@ const ProfileInfo = () => {
         </div>
       </section>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleAvatarChange}
-        style={{ display: 'none' }}
-      />
-
       <MembershipOrderModal
         open={isMembershipModalOpen}
         settings={membershipSettings}
@@ -595,6 +745,16 @@ const ProfileInfo = () => {
         onSelectPlan={setSelectedMembershipPlanKey}
         onClose={() => setIsMembershipModalOpen(false)}
         onSubmit={handleCreateMembershipOrder}
+      />
+
+      <AvatarPickerModal
+        open={isAvatarPickerOpen}
+        avatars={avatarOptions}
+        selectedAvatarIndex={currentUser?.avatarIndex || 0}
+        loading={loadingAvatarOptions}
+        saving={savingAvatar}
+        onClose={() => setIsAvatarPickerOpen(false)}
+        onSelect={handleAvatarSelect}
       />
     </div>
   );

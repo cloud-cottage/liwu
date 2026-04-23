@@ -26,6 +26,14 @@ import {
   normalizeBrandCarouselSettings
 } from '@liwu/shared-utils/home-carousel-settings.js';
 import {
+  DEFAULT_USER_AVATAR_OPTIONS_SETTINGS,
+  USER_AVATAR_OPTIONS_SETTINGS_KEY,
+  getAvatarOptionByIndex,
+  getSelectableUserAvatars,
+  normalizeUserAvatarOptionsSettings,
+  pickRandomDefaultAvatarIndex
+} from '@liwu/shared-utils/avatar-options.js';
+import {
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   STUDENT_MEMBERSHIP_SETTINGS_KEY,
   getStudentMembershipPlan,
@@ -47,13 +55,21 @@ const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
 const SHANGHAI_TIMEZONE = 'Asia/Shanghai';
+const AWARENESS_TAG_MODAL_CACHE_KEY = 'liwu_awareness_tag_modal_cache_v1';
+const AWARENESS_TAG_MODAL_CACHE_TTL_MS = 30 * 60 * 1000;
+
+const isLocalDevHost = (hostname = '') => (
+  hostname === 'localhost' ||
+  hostname === '127.0.0.1' ||
+  hostname === '0.0.0.0'
+);
 
 const shouldUseCloudBaseProxy = () => {
   if (typeof window === 'undefined') {
     return false;
   }
 
-  return window.location.hostname === 'liwu.yunduojihua.com';
+  return window.location.hostname === 'liwu.yunduojihua.com' || isLocalDevHost(window.location.hostname);
 };
 
 const isCloudBaseApiUrl = (value = '') => {
@@ -77,10 +93,29 @@ const installCloudBaseRequestProxy = () => {
   }
 
   const originalOpen = window.XMLHttpRequest.prototype.open;
+  const originalFetch = window.fetch.bind(window);
 
   window.XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
     const nextUrl = typeof url === 'string' && isCloudBaseApiUrl(url) ? toProxyUrl(url) : url;
     return originalOpen.call(this, method, nextUrl, ...rest);
+  };
+
+  window.fetch = function patchedFetch(input, init) {
+    const rawUrl = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input?.url;
+
+    if (!rawUrl || !isCloudBaseApiUrl(rawUrl)) {
+      return originalFetch(input, init);
+    }
+
+    if (typeof input === 'string' || input instanceof URL) {
+      return originalFetch(toProxyUrl(rawUrl), init);
+    }
+
+    return originalFetch(new Request(toProxyUrl(rawUrl), input), init);
   };
 
   window.__liwuCloudBaseProxyInstalled = true;
@@ -477,6 +512,7 @@ const normalizeCurrentUserProfile = (document = {}) => ({
   authUid: document.auth_uid || document.authUid || '',
   name: document.name || buildDefaultUserName(getUserUid(document) || 1),
   avatar: document.avatar || '',
+  avatarIndex: Number(document.avatar_index ?? document.avatarIndex ?? 0),
   email: document.email || '',
   phone: document.phone || '',
   status: document.status || 'active',
@@ -516,6 +552,49 @@ const normalizeAwarenessRecord = (record = {}) => {
     timestamp: getRecordTimestamp(record),
     rewardPointsAwarded: Math.max(0, Number(record.reward_points_awarded ?? record.rewardPointsAwarded ?? 0))
   };
+};
+
+const normalizeAwarenessDisplayUser = (document = {}, fallbackName = '匿名用户') => ({
+  id: getDocumentId(document),
+  name: document.name || fallbackName,
+  avatar: document.avatar || '',
+  avatarIndex: Number(document.avatar_index ?? document.avatarIndex ?? 0)
+});
+
+const getAwarenessTagModalCache = () => (
+  readLocalStorageJSON(AWARENESS_TAG_MODAL_CACHE_KEY) || {}
+);
+
+const readCachedAwarenessTagModalSummary = (tagKey = '') => {
+  if (!tagKey) {
+    return null;
+  }
+
+  const cache = getAwarenessTagModalCache();
+  const cachedEntry = cache[tagKey];
+  if (!cachedEntry?.fetchedAt || !cachedEntry?.data) {
+    return null;
+  }
+
+  const cachedTimestamp = new Date(cachedEntry.fetchedAt).getTime();
+  if (!Number.isFinite(cachedTimestamp) || (Date.now() - cachedTimestamp) > AWARENESS_TAG_MODAL_CACHE_TTL_MS) {
+    return null;
+  }
+
+  return cachedEntry.data;
+};
+
+const writeCachedAwarenessTagModalSummary = (tagKey = '', data = null) => {
+  if (!tagKey || !data) {
+    return;
+  }
+
+  const cache = getAwarenessTagModalCache();
+  cache[tagKey] = {
+    fetchedAt: new Date().toISOString(),
+    data
+  };
+  writeLocalStorageJSON(AWARENESS_TAG_MODAL_CACHE_KEY, cache);
 };
 
 const normalizeShopCategory = (category = {}) => ({
@@ -684,6 +763,64 @@ const getAwarenessTagSettings = async () => {
     console.error('获取觉察标签配置失败:', error);
     return { tagsByKey: {} };
   }
+};
+
+const getUserAvatarOptionsSettings = async () => {
+  try {
+    await ensureAnonymousLogin();
+    const result = await db
+      .collection(collections.appSettings)
+      .where({ key: USER_AVATAR_OPTIONS_SETTINGS_KEY })
+      .limit(1)
+      .get();
+
+    if (isMissingCollectionResponse(result)) {
+      return { ...DEFAULT_USER_AVATAR_OPTIONS_SETTINGS };
+    }
+
+    const document = getFirstDocument(result, collections.appSettings);
+    if (!document) {
+      return { ...DEFAULT_USER_AVATAR_OPTIONS_SETTINGS };
+    }
+
+    const normalizedSettings = normalizeUserAvatarOptionsSettings(document);
+    const fileIds = normalizedSettings.avatars.map((avatar) => avatar.fileId).filter(Boolean);
+
+    if (fileIds.length === 0) {
+      return normalizedSettings;
+    }
+
+    const tempUrlResult = await app.getTempFileURL({ fileList: fileIds });
+    const tempUrlMap = new Map(
+      (tempUrlResult?.fileList || tempUrlResult?.data?.fileList || []).map((item) => [
+        item.fileID || item.fileId,
+        item.tempFileURL || item.download_url || item.downloadUrl || ''
+      ])
+    );
+
+    return {
+      ...normalizedSettings,
+      avatars: normalizedSettings.avatars.map((avatar) => ({
+        ...avatar,
+        imageUrl: tempUrlMap.get(avatar.fileId) || avatar.imageUrl || ''
+      }))
+    };
+  } catch (error) {
+    console.error('获取用户头像配置失败:', error);
+    return { ...DEFAULT_USER_AVATAR_OPTIONS_SETTINGS };
+  }
+};
+
+const applyAvatarUrlFromSettings = (profile = {}, avatarSettings = DEFAULT_USER_AVATAR_OPTIONS_SETTINGS) => {
+  const avatarOption = getAvatarOptionByIndex(avatarSettings, profile.avatarIndex);
+  if (!avatarOption?.imageUrl) {
+    return profile;
+  }
+
+  return {
+    ...profile,
+    avatar: avatarOption.imageUrl
+  };
 };
 
 const shanghaiDateFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -1539,6 +1676,9 @@ export const userProfileService = {
         const rawExistingUid = getUserUid(existingDocument);
         const resolvedUid = existingProfile.uid || await getNextUserUid();
         const resolvedDefaultName = buildDefaultUserName(resolvedUid);
+        const avatarSettings = existingProfile.avatarIndex > 0
+          ? await getUserAvatarOptionsSettings()
+          : null;
         const updatePayload = {
           last_active: nowIso,
           updated_at: new Date()
@@ -1577,11 +1717,14 @@ export const userProfileService = {
         clearPendingInviteCode();
 
         return updateCurrentProfileCache(
-          normalizeCurrentUserProfile({
-            ...existingDocument,
-            ...updatePayload,
-            _id: existingProfile.id
-          })
+          applyAvatarUrlFromSettings(
+            normalizeCurrentUserProfile({
+              ...existingDocument,
+              ...updatePayload,
+              _id: existingProfile.id
+            }),
+            avatarSettings || undefined
+          )
         );
       }
 
@@ -1602,10 +1745,12 @@ export const userProfileService = {
         }
       }
 
+      const avatarSettings = await getUserAvatarOptionsSettings();
       const newUserPayload = {
         uid: await getNextUserUid(),
         auth_uid: authUid,
         name: '',
+        avatar_index: pickRandomDefaultAvatarIndex(avatarSettings),
         email: authStatus.email,
         phone: normalizedPhoneNumber,
         status: 'active',
@@ -1627,10 +1772,13 @@ export const userProfileService = {
       clearPendingInviteCode();
 
       return updateCurrentProfileCache(
-        normalizeCurrentUserProfile({
-          ...newUserPayload,
-          _id: createResult.id
-        })
+        applyAvatarUrlFromSettings(
+          normalizeCurrentUserProfile({
+            ...newUserPayload,
+            _id: createResult.id
+          }),
+          avatarSettings
+        )
       );
     })().finally(() => {
       currentProfilePromise = null;
@@ -1680,14 +1828,38 @@ export const userProfileService = {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(updatePayload, 'avatarIndex')) {
+      const requestedAvatarIndex = Number(updatePayload.avatarIndex || 0);
+      if (!requestedAvatarIndex) {
+        throw new Error('请选择头像');
+      }
+
+      const avatarSettings = await getUserAvatarOptionsSettings();
+      const selectableAvatars = getSelectableUserAvatars(avatarSettings);
+      const isAllowedAvatar = selectableAvatars.some((avatar) => avatar.index === requestedAvatarIndex);
+
+      if (!isAllowedAvatar) {
+        throw new Error('所选头像不在可用头像列表中');
+      }
+
+      updatePayload.avatar_index = requestedAvatarIndex;
+      delete updatePayload.avatarIndex;
+      updatePayload.avatar = '';
+    }
+
     await db.collection(collections.users).doc(currentProfile.id).update(updatePayload);
 
     return updateCurrentProfileCache(
-      normalizeCurrentUserProfile({
-        ...currentProfile,
-        ...updatePayload,
-        _id: currentProfile.id
-      })
+      applyAvatarUrlFromSettings(
+        normalizeCurrentUserProfile({
+          ...currentProfile,
+          ...updatePayload,
+          _id: currentProfile.id
+        }),
+        Object.prototype.hasOwnProperty.call(updatePayload, 'avatar_index')
+          ? await getUserAvatarOptionsSettings()
+          : undefined
+      )
     );
   },
 
@@ -1722,6 +1894,147 @@ export const awarenessService = {
   async getTagMetadata(tagKey) {
     const settings = await getAwarenessTagSettings();
     return normalizeAwarenessTagSettingEntry(settings.tagsByKey?.[tagKey] || {});
+  },
+
+  async getTagModalSummary(tagKey) {
+    try {
+      const normalizedTagKey = String(tagKey || '').trim();
+      if (!normalizedTagKey) {
+        return { success: true, data: null };
+      }
+
+      const cachedSummary = readCachedAwarenessTagModalSummary(normalizedTagKey);
+      if (cachedSummary) {
+        return { success: true, data: cachedSummary };
+      }
+
+      const [settings, recordsResult] = await Promise.all([
+        getAwarenessTagSettings(),
+        db
+          .collection(collections.awarenessRecords)
+          .where({ tag_key: normalizedTagKey })
+          .limit(2000)
+          .get()
+      ]);
+
+      const records = getResponseData(recordsResult, collections.awarenessRecords)
+        .map(normalizeAwarenessRecord)
+        .filter((record) => record.tagKey === normalizedTagKey)
+        .sort((left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime());
+
+      const configuredSettings = normalizeAwarenessTagSettingEntry(settings.tagsByKey?.[normalizedTagKey] || {});
+      if (records.length === 0) {
+        const emptySummary = {
+          description: configuredSettings.description || '',
+          rewardPoints: configuredSettings.rewardPoints || 0,
+          totalCount: 0,
+          weeklyCount: 0,
+          weeklyChampion: null,
+          latestUser: null
+        };
+        writeCachedAwarenessTagModalSummary(normalizedTagKey, emptySummary);
+        return { success: true, data: emptySummary };
+      }
+
+      const latestRecord = records[0];
+      const weekWindowStartMs = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      const weeklyRecords = records.filter((record) => {
+        const timestamp = new Date(record.timestamp || 0).getTime();
+        return Number.isFinite(timestamp) && timestamp >= weekWindowStartMs;
+      });
+
+      const weeklyCountMap = new Map();
+      weeklyRecords.forEach((record) => {
+        const userKey = record.userId || record.authUid || record.authorKey || '';
+        if (!userKey) {
+          return;
+        }
+
+        const currentValue = weeklyCountMap.get(userKey) || {
+          count: 0,
+          latestTimestamp: 0,
+          userId: record.userId || '',
+          userName: record.userName || '匿名用户'
+        };
+
+        currentValue.count += 1;
+        currentValue.userName = record.userName || currentValue.userName;
+        currentValue.userId = record.userId || currentValue.userId;
+        currentValue.latestTimestamp = Math.max(
+          currentValue.latestTimestamp,
+          new Date(record.timestamp || 0).getTime() || 0
+        );
+        weeklyCountMap.set(userKey, currentValue);
+      });
+
+      const weeklyChampionBase = Array.from(weeklyCountMap.values()).sort((left, right) => {
+        if (right.count !== left.count) {
+          return right.count - left.count;
+        }
+
+        return right.latestTimestamp - left.latestTimestamp;
+      })[0] || null;
+
+      const userIdsToFetch = [...new Set([
+        latestRecord.userId || '',
+        weeklyChampionBase?.userId || ''
+      ].filter(Boolean))];
+
+      const userDocuments = await Promise.all(
+        userIdsToFetch.map(async (userId) => {
+          const result = await db.collection(collections.users).doc(userId).get();
+          return getFirstDocument(result, collections.users);
+        })
+      );
+
+      const shouldResolveAvatarPool = userDocuments.some((document) => Number(document?.avatar_index ?? document?.avatarIndex ?? 0) > 0);
+      const avatarSettings = shouldResolveAvatarPool ? await getUserAvatarOptionsSettings() : null;
+
+      const usersById = new Map(
+        userDocuments
+          .filter(Boolean)
+          .map((document) => [getDocumentId(document), document])
+      );
+
+      const latestUser = applyAvatarUrlFromSettings(
+        normalizeAwarenessDisplayUser(
+          usersById.get(latestRecord.userId || ''),
+          latestRecord.userName || '匿名用户'
+        ),
+        avatarSettings || undefined
+      );
+
+      const weeklyChampion = weeklyChampionBase
+        ? {
+            ...applyAvatarUrlFromSettings(
+              normalizeAwarenessDisplayUser(
+                usersById.get(weeklyChampionBase.userId || ''),
+                weeklyChampionBase.userName || '匿名用户'
+              ),
+              avatarSettings || undefined
+            ),
+            count: weeklyChampionBase.count
+          }
+        : null;
+
+      const summary = {
+        description: configuredSettings.description || '',
+        rewardPoints: configuredSettings.rewardPoints || 0,
+        totalCount: records.length,
+        weeklyCount: weeklyRecords.length,
+        weeklyChampion,
+        latestUser
+      };
+
+      writeCachedAwarenessTagModalSummary(normalizedTagKey, summary);
+      return {
+        success: true,
+        data: summary
+      };
+    } catch (error) {
+      console.error('获取觉察标签模态框摘要失败:', error);
+      return { success: false, error };
+    }
   },
 
   async resolveTagContentByShortCode(shortCode) {
@@ -2564,6 +2877,12 @@ export const wealthService = {
       balance: nextProfile.balance,
       history: nextProfile.wealthHistory
     };
+  }
+};
+
+export const avatarSettingsService = {
+  async getSettings() {
+    return getUserAvatarOptionsSettings();
   }
 };
 

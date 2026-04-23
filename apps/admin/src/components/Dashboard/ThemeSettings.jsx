@@ -5,17 +5,24 @@ import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 const ThemeSettings = ({
   settings,
   brandCarouselSettings,
+  userAvatarOptionsSettings,
   error,
   saving,
   savingCarousel,
+  savingAvatarOptions,
   onSave,
-  onSaveBrandCarousel
+  onSaveBrandCarousel,
+  onSaveUserAvatarOptions
 }) => {
+  const [activeTab, setActiveTab] = useState('theme');
   const [draftTheme, setDraftTheme] = useState(settings.theme);
   const [draftShowDebugCard, setDraftShowDebugCard] = useState(Boolean(settings.showDebugCard));
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
+  const [draftAvatarOptions, setDraftAvatarOptions] = useState(() => userAvatarOptionsSettings.avatars || []);
   const [uploadingSlideIndex, setUploadingSlideIndex] = useState(-1);
+  const [uploadingAvatarIndex, setUploadingAvatarIndex] = useState(-1);
   const [carouselFeedback, setCarouselFeedback] = useState('');
+  const [avatarFeedback, setAvatarFeedback] = useState('');
   const themeOptions = useMemo(() => Object.values(THEME_PRESETS), []);
   const activeTheme = getThemePreset(draftTheme);
 
@@ -30,6 +37,10 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftSlides(brandCarouselSettings.slides || []);
   }, [brandCarouselSettings.slides]);
+
+  useEffect(() => {
+    setDraftAvatarOptions(userAvatarOptionsSettings.avatars || []);
+  }, [userAvatarOptionsSettings.avatars]);
 
   const handleSlideCaptionChange = (index, value) => {
     setDraftSlides((currentSlides) => currentSlides.map((slide, slideIndex) => (
@@ -69,6 +80,39 @@ const ThemeSettings = ({
     }
   };
 
+  const handleUploadAvatarImage = async (index, file) => {
+    if (!file) {
+      return;
+    }
+
+    setUploadingAvatarIndex(index);
+    setAvatarFeedback('');
+
+    try {
+      const slot = draftAvatarOptions[index];
+      const uploadResult = await uploadImageAsWebp({
+        file,
+        cloudPath: `liwu/user-avatar-options/${slot.id}-${Date.now()}.webp`
+      });
+
+      setDraftAvatarOptions((currentOptions) => currentOptions.map((avatar, avatarIndex) => (
+        avatarIndex === index
+          ? {
+            ...avatar,
+            fileId: uploadResult.fileId,
+            imageUrl: uploadResult.imageUrl
+          }
+          : avatar
+      )));
+      setAvatarFeedback(`头像槽位 ${index + 1} 已上传成功，记得点击“保存头像设置”。`);
+    } catch (uploadError) {
+      console.error('用户头像上传失败:', uploadError);
+      setAvatarFeedback(uploadError.message || '用户头像上传失败');
+    } finally {
+      setUploadingAvatarIndex(-1);
+    }
+  };
+
   return (
     <section
       style={{
@@ -89,6 +133,33 @@ const ThemeSettings = ({
         <div style={errorBannerStyle}>{error}</div>
       )}
 
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        {[
+          { key: 'theme', label: '主题样式' },
+          { key: 'avatar', label: '用户头像' }
+        ].map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setActiveTab(item.key)}
+            style={{
+              border: 'none',
+              borderRadius: '999px',
+              backgroundColor: activeTab === item.key ? '#111827' : '#fff',
+              color: activeTab === item.key ? '#fff' : '#334155',
+              boxShadow: 'var(--shadow-sm)',
+              padding: '10px 16px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'theme' && (
       <div style={{ display: 'grid', gap: '16px' }}>
         <label style={fieldStyle}>
           <span style={fieldLabelStyle}>当前主题</span>
@@ -268,17 +339,126 @@ const ThemeSettings = ({
           </label>
         </div>
       </div>
+      )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
-        <button
-          type="button"
-          onClick={() => onSave({ ...settings, theme: draftTheme, showDebugCard: draftShowDebugCard })}
-          disabled={saving}
-          style={primaryButtonStyle}
-        >
-          {saving ? '保存中...' : '保存主题设置'}
-        </button>
-      </div>
+      {activeTab === 'avatar' && (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              user_avatar_options
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              用户头像
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              上传并维护 48 张 1:1 头像图片。用户只能从这 48 张头像中选择一张；新用户默认会从编号 1-6 的头像中随机获得一张。
+            </div>
+
+            {avatarFeedback && (
+              <div style={{ marginTop: '14px', ...(avatarFeedback.includes('失败') ? errorBannerStyle : successBannerStyle) }}>
+                {avatarFeedback}
+              </div>
+            )}
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+                gap: '14px',
+                marginTop: '18px'
+              }}
+            >
+              {draftAvatarOptions.map((avatar, index) => (
+                <div
+                  key={avatar.id}
+                  style={{
+                    borderRadius: '16px',
+                    border: '1px solid #e2e8f0',
+                    backgroundColor: '#fff',
+                    padding: '12px',
+                    display: 'grid',
+                    gap: '10px'
+                  }}
+                >
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textAlign: 'center' }}>
+                    #{avatar.index}
+                  </div>
+                  <div
+                    style={{
+                      width: '100%',
+                      aspectRatio: '1 / 1',
+                      borderRadius: '16px',
+                      overflow: 'hidden',
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {avatar.imageUrl ? (
+                      <img
+                        src={avatar.imageUrl}
+                        alt={avatar.id}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          display: 'block'
+                        }}
+                      />
+                    ) : (
+                      <div style={{ fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+                        未上传
+                      </div>
+                    )}
+                  </div>
+                  <label style={{ ...uploadButtonStyle, width: '100%', justifyContent: 'center' }}>
+                    {uploadingAvatarIndex === index ? '上传中...' : (avatar.imageUrl ? '替换图片' : '上传图片')}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      disabled={uploadingAvatarIndex === index}
+                      style={{ display: 'none' }}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        void handleUploadAvatarImage(index, file);
+                        event.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'theme' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button
+            type="button"
+            onClick={() => onSave({ ...settings, theme: draftTheme, showDebugCard: draftShowDebugCard })}
+            disabled={saving}
+            style={primaryButtonStyle}
+          >
+            {saving ? '保存中...' : '保存主题设置'}
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'avatar' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button
+            type="button"
+            onClick={() => onSaveUserAvatarOptions({ ...userAvatarOptionsSettings, avatars: draftAvatarOptions })}
+            disabled={savingAvatarOptions}
+            style={primaryButtonStyle}
+          >
+            {savingAvatarOptions ? '保存中...' : '保存头像设置'}
+          </button>
+        </div>
+      )}
     </section>
   );
 };

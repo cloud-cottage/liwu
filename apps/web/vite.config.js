@@ -11,6 +11,13 @@ export default defineConfig({
     }
   },
   server: {
+    proxy: {
+      '/api/cloudbase-proxy': {
+        target: 'https://liwu.yunduojihua.com',
+        changeOrigin: true,
+        secure: true
+      }
+    },
     fs: {
       allow: ['..']
     }

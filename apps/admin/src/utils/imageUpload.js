@@ -1,4 +1,4 @@
-import app from '../services/cloudbase.js'
+import app, { ensureAnonymousLogin } from '../services/cloudbase.js'
 
 export const convertImageToWebp = async (file) => {
   const objectUrl = URL.createObjectURL(file)
@@ -43,6 +43,7 @@ export const convertImageToWebp = async (file) => {
 }
 
 export const uploadImageAsWebp = async ({ file, cloudPath }) => {
+  await ensureAnonymousLogin()
   const webpFile = await convertImageToWebp(file)
   const uploadResult = await app.uploadFile({
     cloudPath,

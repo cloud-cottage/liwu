@@ -5,6 +5,7 @@ import {
   Copy,
   Share2,
   Sparkles,
+  UserRound,
   X
 } from 'lucide-react';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
@@ -173,6 +174,68 @@ const IlluminateCloudIcon = ({ size = 18, style = {}, ...rest }) => (
   </svg>
 );
 
+const TinyUserChip = ({ user, fallbackLabel = '暂无' }) => {
+  if (!user?.name) {
+    return (
+      <span style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
+        {fallbackLabel}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '8px',
+        minWidth: 0
+      }}
+    >
+      <span
+        style={{
+          width: '26px',
+          height: '26px',
+          borderRadius: '50%',
+          overflow: 'hidden',
+          backgroundColor: '#f1f5f9',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0
+        }}
+      >
+        {user.avatar ? (
+          <img
+            src={user.avatar}
+            alt={user.name}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block'
+            }}
+          />
+        ) : (
+          <UserRound size={15} color="#64748b" />
+        )}
+      </span>
+      <span
+        style={{
+          fontSize: '13px',
+          fontWeight: 600,
+          color: '#111827',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {user.name}
+      </span>
+    </span>
+  );
+};
+
 const AwareTagModal = ({
   tag,
   currentUser,
@@ -187,6 +250,7 @@ const AwareTagModal = ({
   }
 
   const accessMeta = getAccessMeta(tag.accessType);
+  const hasDescription = Boolean(tag.description?.trim());
   const blockedReason = pendingQueueItem
     ? getPendingQueueMessage(pendingQueueItem)
     : !isLoggedIn
@@ -195,8 +259,8 @@ const AwareTagModal = ({
         ? '当前身份还不能发布这条觉察，你可以先看看它的含义。'
         : '';
   const disabled = Boolean(blockedReason) || submitting;
-  const historicalCount = tag.totalCount || tag.count || 0;
-  const lastUserName = tag.lastUserName || '匿名用户';
+  const historicalCount = Math.max(0, Number(tag.totalCount || tag.count || 0));
+  const weeklyCount = Math.max(0, Number(tag.weeklyCount || 0));
 
   return (
     <div
@@ -226,7 +290,25 @@ const AwareTagModal = ({
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               aware_tag
             </div>
-            <div style={{ fontSize: '20px', fontWeight: 700, color: '#111827', marginTop: '6px' }}>{tag.content}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '6px' }}>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: '#111827' }}>{tag.content}</div>
+              {tag.accessType === 'student' && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    borderRadius: '999px',
+                    backgroundColor: 'rgba(15, 118, 110, 0.12)',
+                    color: '#0f766e',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    padding: '5px 10px'
+                  }}
+                >
+                  学员觉察
+                </span>
+              )}
+            </div>
           </div>
           <button
             type="button"
@@ -237,26 +319,23 @@ const AwareTagModal = ({
           </button>
         </div>
 
-        <div
-          style={{
-            borderRadius: '16px',
-            padding: '16px',
-            backgroundColor: accessMeta.backgroundColor,
-            border: `1px solid ${accessMeta.borderColor}`,
-            marginBottom: '16px'
-          }}
-        >
-          <div style={{ fontSize: '14px', color: '#334155', lineHeight: 1.8 }}>
-            {tag.description?.trim() ? tag.description.trim() : '无简介'}
+        {hasDescription && (
+          <div
+            style={{
+              borderRadius: '16px',
+              padding: '16px',
+              backgroundColor: accessMeta.backgroundColor,
+              border: `1px solid ${accessMeta.borderColor}`,
+              marginBottom: '16px'
+            }}
+          >
+            <div style={{ fontSize: '14px', color: '#334155', lineHeight: 1.8 }}>
+              {tag.description.trim()}
+            </div>
           </div>
-        </div>
+        )}
 
         <div style={{ display: 'grid', gap: '10px', marginBottom: '20px' }}>
-          {tag.accessType === 'student' && (
-            <div style={{ fontSize: '13px', color: '#0f766e', lineHeight: 1.7, fontWeight: 600 }}>
-              标签性质：学员觉察
-            </div>
-          )}
           {tag.actionHint && (
             <div style={{ fontSize: '13px', color: '#0f172a', lineHeight: 1.7, fontWeight: 600 }}>
               {tag.actionHint}
@@ -267,8 +346,38 @@ const AwareTagModal = ({
               {blockedReason}
             </div>
           )}
-          <div style={{ fontSize: '13px', color: '#475569' }}>历史标记总数：{historicalCount}</div>
-          <div style={{ fontSize: '13px', color: '#475569' }}>最近标记者：{lastUserName}</div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '13px',
+              color: '#475569',
+              lineHeight: 1.8
+            }}
+          >
+            <span>本周觉察 {weeklyCount} 次</span>
+            <span>-</span>
+            <span>本周觉察笃定者</span>
+            <TinyUserChip user={tag.weeklyChampion} />
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '13px',
+              color: '#475569',
+              lineHeight: 1.8
+            }}
+          >
+            <span>社区总觉察 {historicalCount} 次</span>
+            <span>-</span>
+            <span>最新觉察者</span>
+            <TinyUserChip user={tag.latestUser} />
+          </div>
         </div>
 
         <button
@@ -529,10 +638,15 @@ const Record = () => {
 
     if (existingTagResult.data) {
       try {
-        const metadata = await awarenessService.getTagMetadata(existingTagResult.data.key);
+        const summaryResult = await awarenessService.getTagModalSummary(existingTagResult.data.key);
+        const metadata = summaryResult.success ? summaryResult.data : null;
         setActiveAwareTag({
           ...existingTagResult.data,
-          description: metadata.description || existingTagResult.data.description || '',
+          description: metadata?.description || existingTagResult.data.description || '',
+          totalCount: metadata?.totalCount || existingTagResult.data.totalCount || 0,
+          weeklyCount: metadata?.weeklyCount || 0,
+          weeklyChampion: metadata?.weeklyChampion || null,
+          latestUser: metadata?.latestUser || null,
           actionHint: '社区已经有人发布过这个觉察，我也觉察它。'
         });
       } catch {
@@ -559,10 +673,15 @@ const Record = () => {
   const handleTagClick = async (tag) => {
     setError('');
     try {
-      const metadata = await awarenessService.getTagMetadata(tag.key);
+      const summaryResult = await awarenessService.getTagModalSummary(tag.key);
+      const metadata = summaryResult.success ? summaryResult.data : null;
       setActiveAwareTag({
         ...tag,
-        description: metadata.description || tag.description || '',
+        description: metadata?.description || tag.description || '',
+        totalCount: metadata?.totalCount || tag.totalCount || tag.count || 0,
+        weeklyCount: metadata?.weeklyCount || 0,
+        weeklyChampion: metadata?.weeklyChampion || null,
+        latestUser: metadata?.latestUser || null,
         actionHint: !canPublishTag(tag, currentUser)
           ? '社区已经有人发布过这个觉察，你可以先看看它的含义。'
           : ''

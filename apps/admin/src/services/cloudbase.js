@@ -14,12 +14,18 @@ const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
 
+const isLocalDevHost = (hostname = '') => (
+  hostname === 'localhost' ||
+  hostname === '127.0.0.1' ||
+  hostname === '0.0.0.0'
+);
+
 const shouldUseCloudBaseProxy = () => {
   if (typeof window === 'undefined') {
     return false;
   }
 
-  return window.location.hostname === 'liwu.yunduojihua.com';
+  return window.location.hostname === 'liwu.yunduojihua.com' || isLocalDevHost(window.location.hostname);
 };
 
 const isCloudBaseApiUrl = (value = '') => {
@@ -43,10 +49,29 @@ const installCloudBaseRequestProxy = () => {
   }
 
   const originalOpen = window.XMLHttpRequest.prototype.open;
+  const originalFetch = window.fetch.bind(window);
 
   window.XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
     const nextUrl = typeof url === 'string' && isCloudBaseApiUrl(url) ? toProxyUrl(url) : url;
     return originalOpen.call(this, method, nextUrl, ...rest);
+  };
+
+  window.fetch = function patchedFetch(input, init) {
+    const rawUrl = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input?.url;
+
+    if (!rawUrl || !isCloudBaseApiUrl(rawUrl)) {
+      return originalFetch(input, init);
+    }
+
+    if (typeof input === 'string' || input instanceof URL) {
+      return originalFetch(toProxyUrl(rawUrl), init);
+    }
+
+    return originalFetch(new Request(toProxyUrl(rawUrl), input), init);
   };
 
   window.__liwuCloudBaseProxyInstalled = true;

@@ -5,7 +5,8 @@ import DatabaseService, {
   DEFAULT_BRAND_CAROUSEL,
   DEFAULT_MEDITATION_SETTINGS,
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
-  DEFAULT_THEME_SETTINGS
+  DEFAULT_THEME_SETTINGS,
+  DEFAULT_USER_AVATAR_OPTIONS
 } from '../services/database.js';
 import DatabaseInitializer from '../services/databaseInit.js';
 
@@ -32,6 +33,7 @@ export const useDatabase = () => {
   const [badgeSettings, setBadgeSettings] = useState(DEFAULT_BADGE_SETTINGS);
   const [themeSettings, setThemeSettings] = useState(DEFAULT_THEME_SETTINGS);
   const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
+  const [userAvatarOptionsSettings, setUserAvatarOptionsSettings] = useState(DEFAULT_USER_AVATAR_OPTIONS);
   const [studentMembershipSettings, setStudentMembershipSettings] = useState(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [shopCategories, setShopCategories] = useState([]);
@@ -45,6 +47,7 @@ export const useDatabase = () => {
   const [savingBadgeSettings, setSavingBadgeSettings] = useState(false);
   const [savingThemeSettings, setSavingThemeSettings] = useState(false);
   const [savingBrandCarouselSettings, setSavingBrandCarouselSettings] = useState(false);
+  const [savingUserAvatarOptionsSettings, setSavingUserAvatarOptionsSettings] = useState(false);
   const [savingStudentMembershipSettings, setSavingStudentMembershipSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -55,13 +58,14 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
         DatabaseService.getBadgeSettings(),
         DatabaseService.getThemeSettings(),
         DatabaseService.getBrandCarouselSettings(),
+        DatabaseService.getUserAvatarOptionsSettings(),
         DatabaseService.getStudentMembershipSettings(),
         DatabaseService.getAwarenessTagOverview(),
         DatabaseService.getShopManagementData()
@@ -75,6 +79,7 @@ export const useDatabase = () => {
       setBadgeSettings(nextBadgeSettings);
       setThemeSettings(nextThemeSettings);
       setBrandCarouselSettings(nextBrandCarouselSettings);
+      setUserAvatarOptionsSettings(nextUserAvatarOptionsSettings);
       setStudentMembershipSettings(nextStudentMembershipSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
@@ -83,7 +88,7 @@ export const useDatabase = () => {
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextStudentMembershipSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextStudentMembershipSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -98,6 +103,7 @@ export const useDatabase = () => {
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
+      setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -133,6 +139,7 @@ export const useDatabase = () => {
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
+      setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -321,6 +328,23 @@ export const useDatabase = () => {
     }
   };
 
+  const updateUserAvatarOptionsSettings = async (settingsData) => {
+    try {
+      setSavingUserAvatarOptionsSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveUserAvatarOptionsSettings(settingsData);
+      setUserAvatarOptionsSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating user avatar options settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingUserAvatarOptionsSettings(false);
+    }
+  };
+
   const updateStudentMembershipSettings = async (settingsData) => {
     try {
       setSavingStudentMembershipSettings(true);
@@ -375,6 +399,7 @@ export const useDatabase = () => {
     badgeSettings,
     themeSettings,
     brandCarouselSettings,
+    userAvatarOptionsSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -388,6 +413,7 @@ export const useDatabase = () => {
     savingBadgeSettings,
     savingThemeSettings,
     savingBrandCarouselSettings,
+    savingUserAvatarOptionsSettings,
     savingStudentMembershipSettings,
     loading,
     error,
@@ -406,6 +432,7 @@ export const useDatabase = () => {
     updateBadgeSettings,
     updateThemeSettings,
     updateBrandCarouselSettings,
+    updateUserAvatarOptionsSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,
