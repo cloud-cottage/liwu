@@ -3,6 +3,7 @@ import { ArrowUpRight, Coins, Layers3, MapPin, Share2, Sparkles, X } from 'lucid
 import { useLocation } from 'react-router-dom';
 import ShareDialog from '../../components/Share/ShareDialog.jsx';
 import { shareService, shopService } from '../../services/cloudbase';
+import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useWealth } from '../../context/WealthContext';
 import './ShopScreen.css';
 
@@ -100,6 +101,7 @@ const ProductModal = ({
   product,
   addresses,
   orderSubmitting,
+  canShare,
   onShare,
   onClose,
   onSaveAddress,
@@ -161,25 +163,27 @@ const ProductModal = ({
     <div className="shop-modal-backdrop" onClick={onClose}>
       <div className="shop-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div style={{ position: 'absolute', top: '18px', right: '18px', display: 'flex', gap: '8px', zIndex: 2 }}>
-          <button
-            type="button"
-            onClick={() => onShare(product)}
-            aria-label="分享商品"
-            style={{
-              border: 'none',
-              width: '36px',
-              height: '36px',
-              borderRadius: '50%',
-              background: 'rgba(255, 255, 255, 0.82)',
-              color: '#475569',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer'
-            }}
-          >
-            <Share2 size={18} />
-          </button>
+          {canShare && (
+            <button
+              type="button"
+              onClick={() => onShare(product)}
+              aria-label="分享商品"
+              style={{
+                border: 'none',
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                background: 'rgba(255, 255, 255, 0.82)',
+                color: '#475569',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer'
+              }}
+            >
+              <Share2 size={18} />
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -321,6 +325,7 @@ const ProductModal = ({
 const ShopScreen = () => {
   const location = useLocation();
   const { balance, syncWalletFromCloud } = useWealth();
+  const { authStatus } = useCloudAwareness();
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [addresses, setAddresses] = useState([]);
@@ -330,6 +335,7 @@ const ShopScreen = () => {
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sharePayload, setSharePayload] = useState(null);
+  const canShare = Boolean(authStatus?.isAuthenticated);
 
   useEffect(() => {
     let cancelled = false;
@@ -470,27 +476,29 @@ const ShopScreen = () => {
             <p className="shop-hero-card__subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              onClick={handleShareShop}
-              aria-label="分享工坊"
-              title="分享工坊"
-              style={{
-                width: '46px',
-                height: '46px',
-                borderRadius: '999px',
-                border: '1px solid rgba(255, 255, 255, 0.26)',
-                backgroundColor: 'rgba(255, 255, 255, 0.18)',
-                color: '#fff',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                backdropFilter: 'blur(10px)'
-              }}
-            >
-              <Share2 size={18} />
-            </button>
+            {canShare && (
+              <button
+                type="button"
+                onClick={handleShareShop}
+                aria-label="分享工坊"
+                title="分享工坊"
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '999px',
+                  border: '1px solid rgba(255, 255, 255, 0.26)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                  color: '#fff',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  backdropFilter: 'blur(10px)'
+                }}
+              >
+                <Share2 size={18} />
+              </button>
+            )}
             <div className="shop-balance-card">
               <div className="shop-balance-card__label">
                 <Coins size={16} />
@@ -633,6 +641,7 @@ const ShopScreen = () => {
         product={activeProduct}
         addresses={addresses}
         orderSubmitting={orderSubmitting}
+        canShare={canShare}
         onShare={handleShareProduct}
         onClose={() => setActiveProduct(null)}
         onSaveAddress={handleSaveAddress}

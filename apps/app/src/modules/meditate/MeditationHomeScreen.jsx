@@ -37,28 +37,30 @@ const MeditationHome = () => {
                 >
                     静寂
                 </h1>
-                <button
-                    type="button"
-                    onClick={handleOpenShare}
-                    aria-label="分享静寂"
-                    title="分享静寂"
-                    style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '999px',
-                        border: '1px solid rgba(15, 23, 42, 0.08)',
-                        backgroundColor: '#fff',
-                        color: 'var(--color-text-secondary)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        boxShadow: 'var(--shadow-sm)',
-                        flexShrink: 0
-                    }}
-                >
-                    <Share2 size={16} />
-                </button>
+                {canPlayMeditation && (
+                    <button
+                        type="button"
+                        onClick={handleOpenShare}
+                        aria-label="分享静寂"
+                        title="分享静寂"
+                        style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '999px',
+                            border: '1px solid rgba(15, 23, 42, 0.08)',
+                            backgroundColor: '#fff',
+                            color: 'var(--color-text-secondary)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            boxShadow: 'var(--shadow-sm)',
+                            flexShrink: 0
+                        }}
+                    >
+                        <Share2 size={16} />
+                    </button>
+                )}
             </header>
 
             <section style={{
@@ -102,13 +104,8 @@ const MeditationHome = () => {
                         boxShadow: 'var(--shadow-md)'
                     }}
                 >
-                    {canPlayMeditation ? '开启冥想' : '登录后播放'}
+                    {canPlayMeditation ? '开启冥想' : '登录后开始今日冥想'}
                 </button>
-                {!canPlayMeditation && (
-                    <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                        游客模式可浏览冥想页内容，但不能开始播放。
-                    </div>
-                )}
             </section>
 
             <div

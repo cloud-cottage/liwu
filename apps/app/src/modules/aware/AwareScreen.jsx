@@ -702,7 +702,7 @@ const Record = () => {
                   setInputValue(event.target.value);
                   setError('');
                 }}
-                placeholder={canPublishAwareness ? '输入你的状态（6个汉字以内）' : '登录后可发布觉察标签'}
+                placeholder="属于你的此刻觉察"
                 maxLength={6}
                 style={{
                   width: '100%',
@@ -756,11 +756,6 @@ const Record = () => {
               {submitting ? '提交中...' : canPublishAwareness ? '觉察此刻' : '登录后可发布'}
             </button>
           </form>
-          {!canPublishAwareness && (
-            <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', lineHeight: 1.7 }}>
-              游客模式可浏览社区觉察内容，但不能发布觉察标签。
-            </div>
-          )}
         </div>
       )}
 
@@ -890,8 +885,7 @@ const Record = () => {
                     fontWeight: tag.totalCount === maxPopularTagCount ? 700 : 600,
                     lineHeight: 1.2,
                     whiteSpace: 'nowrap',
-                    boxShadow: isStudentTag ? '0 0 0 1px rgba(15, 118, 110, 0.08), var(--shadow-sm)' : 'var(--shadow-sm)',
-                    background: isStudentTag ? 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(240,253,250,0.96))' : '#fff'
+                    boxShadow: 'var(--shadow-sm)'
                   }}
                 >
                   <span>{tag.content}</span>
