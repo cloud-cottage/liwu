@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   CheckCircle2,
   Copy,
@@ -236,12 +236,101 @@ const TinyUserChip = ({ user, fallbackLabel = '暂无' }) => {
   );
 };
 
+const RelatedProductCard = ({ product, onOpen }) => {
+  if (!product?.id) {
+    return null;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(product.id)}
+      style={{
+        width: '100%',
+        border: '1px solid #e2e8f0',
+        borderRadius: '16px',
+        backgroundColor: '#fff',
+        padding: '12px',
+        display: 'grid',
+        gridTemplateColumns: '72px 1fr',
+        gap: '12px',
+        alignItems: 'center',
+        cursor: 'pointer',
+        textAlign: 'left'
+      }}
+    >
+      <div
+        style={{
+          width: '72px',
+          height: '72px',
+          borderRadius: '14px',
+          overflow: 'hidden',
+          backgroundColor: '#f8fafc',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#94a3b8',
+          fontSize: '12px'
+        }}
+      >
+        {product.coverImage ? (
+          <img
+            src={product.coverImage}
+            alt={product.name}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block'
+            }}
+          />
+        ) : (
+          '商品'
+        )}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          相关商品
+        </div>
+        <div
+          style={{
+            marginTop: '6px',
+            fontSize: '15px',
+            fontWeight: 700,
+            color: '#111827',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {product.name}
+        </div>
+        <div
+          style={{
+            marginTop: '4px',
+            fontSize: '13px',
+            color: '#64748b',
+            lineHeight: 1.6,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden'
+          }}
+        >
+          {product.subtitle || '去工坊看看这件与你此刻觉察相关的物品。'}
+        </div>
+      </div>
+    </button>
+  );
+};
+
 const AwareTagModal = ({
   tag,
   currentUser,
   isLoggedIn,
   pendingQueueItem,
   submitting,
+  onOpenRelatedProduct,
   onClose,
   onSubmit
 }) => {
@@ -380,6 +469,12 @@ const AwareTagModal = ({
           </div>
         </div>
 
+        {tag.relatedProduct && (
+          <div style={{ marginBottom: '18px' }}>
+            <RelatedProductCard product={tag.relatedProduct} onOpen={onOpenRelatedProduct} />
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => onSubmit(tag)}
@@ -414,6 +509,7 @@ const AwareTagModal = ({
 
 const Record = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     authStatus,
     currentUser,
@@ -643,6 +739,7 @@ const Record = () => {
         setActiveAwareTag({
           ...existingTagResult.data,
           description: metadata?.description || existingTagResult.data.description || '',
+          relatedProduct: metadata?.relatedProduct || null,
           totalCount: metadata?.totalCount || existingTagResult.data.totalCount || 0,
           weeklyCount: metadata?.weeklyCount || 0,
           weeklyChampion: metadata?.weeklyChampion || null,
@@ -678,6 +775,7 @@ const Record = () => {
       setActiveAwareTag({
         ...tag,
         description: metadata?.description || tag.description || '',
+        relatedProduct: metadata?.relatedProduct || null,
         totalCount: metadata?.totalCount || tag.totalCount || tag.count || 0,
         weeklyCount: metadata?.weeklyCount || 0,
         weeklyChampion: metadata?.weeklyChampion || null,
@@ -1021,6 +1119,10 @@ const Record = () => {
         isLoggedIn={canPublishAwareness}
         pendingQueueItem={pendingQueueItem}
         submitting={submitting}
+        onOpenRelatedProduct={(productId) => {
+          setActiveAwareTag(null);
+          navigate(`/s?p=${encodeURIComponent(productId)}`);
+        }}
         onClose={() => setActiveAwareTag(null)}
         onSubmit={(tag) => attemptPublishAwareness({ content: tag.content, accessType: tag.accessType, recordSource: 'follow' })}
       />

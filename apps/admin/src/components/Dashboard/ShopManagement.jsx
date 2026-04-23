@@ -134,6 +134,7 @@ const createProductDraft = (product = null, skus = []) => ({
   name: product?.name || '',
   subtitle: product?.subtitle || '',
   categoryId: product?.categoryId || '',
+  relatedProductId: product?.relatedProductId || '',
   productType: product?.productType || 'physical',
   coverImage: product?.coverImage || '',
   description: product?.description || '',
@@ -653,6 +654,7 @@ const ShopManagement = ({
       {editingProduct !== null && (
         <ProductEditor
           categories={categories}
+          products={products}
           draft={productDraft}
           saving={savingProduct}
           onClose={() => {
@@ -752,6 +754,7 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
 
 const ProductEditor = ({
   categories,
+  products,
   draft,
   saving,
   onClose,
@@ -839,6 +842,16 @@ const ProductEditor = ({
             {categories.map((category) => (
               <option key={category.id} value={category.id}>{category.name}</option>
             ))}
+          </select>
+        </Field>
+        <Field label="相关商品">
+          <select value={draft.relatedProductId} onChange={(event) => onChange('relatedProductId', event.target.value)} style={inputStyle}>
+            <option value="">不设置相关商品</option>
+            {products
+              .filter((product) => product.id !== draft.id)
+              .map((product) => (
+                <option key={product.id} value={product.id}>{product.name}</option>
+              ))}
           </select>
         </Field>
         <Field label="商品类型">

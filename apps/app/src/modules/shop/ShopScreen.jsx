@@ -85,6 +85,96 @@ const getProductSynopsis = (product = {}) => (
   product.subtitle || product.description || '等待补充商品描述'
 );
 
+const RelatedProductCard = ({ product, onOpen }) => {
+  if (!product?.id) {
+    return null;
+  }
+
+  const priceLabel = `${Number(product.pricePointsFrom || 0)} 福豆${product.priceCashFrom ? ` + ${formatCash(product.priceCashFrom)}` : ''}`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(product.id)}
+      style={{
+        width: '100%',
+        border: '1px solid #e2e8f0',
+        borderRadius: '16px',
+        backgroundColor: '#fff',
+        padding: '12px',
+        display: 'grid',
+        gridTemplateColumns: '72px 1fr',
+        gap: '12px',
+        alignItems: 'center',
+        cursor: 'pointer',
+        textAlign: 'left'
+      }}
+    >
+      <div
+        style={{
+          width: '72px',
+          height: '72px',
+          borderRadius: '14px',
+          overflow: 'hidden',
+          backgroundColor: '#f8fafc',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#94a3b8',
+          fontSize: '12px'
+        }}
+      >
+        {product.coverImage ? (
+          <img
+            src={product.coverImage}
+            alt={product.name}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block'
+            }}
+          />
+        ) : (
+          '商品'
+        )}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          相关商品
+        </div>
+        <div
+          style={{
+            marginTop: '6px',
+            fontSize: '15px',
+            fontWeight: 700,
+            color: '#111827',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {product.name}
+        </div>
+        <div
+          style={{
+            marginTop: '4px',
+            fontSize: '13px',
+            color: '#64748b',
+            lineHeight: 1.6,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden'
+          }}
+        >
+          {product.subtitle || priceLabel}
+        </div>
+      </div>
+    </button>
+  );
+};
+
 const getProductVisualStyle = (product = {}, tone) => (
   product.coverImage
     ? {
@@ -103,6 +193,7 @@ const ProductModal = ({
   orderSubmitting,
   canShare,
   onShare,
+  onOpenRelatedProduct,
   onClose,
   onSaveAddress,
   onCreateOrder
@@ -249,6 +340,12 @@ const ProductModal = ({
               <strong>{selectedSku?.rewardPointsReturn || 0}</strong>
             </div>
           </div>
+
+          {product.relatedProduct && (
+            <section className="shop-modal__section">
+              <RelatedProductCard product={product.relatedProduct} onOpen={onOpenRelatedProduct} />
+            </section>
+          )}
 
           {product.skus.length > 0 && (
             <section className="shop-modal__section">
@@ -643,6 +740,7 @@ const ShopScreen = () => {
         orderSubmitting={orderSubmitting}
         canShare={canShare}
         onShare={handleShareProduct}
+        onOpenRelatedProduct={handleOpenProduct}
         onClose={() => setActiveProduct(null)}
         onSaveAddress={handleSaveAddress}
         onCreateOrder={handleCreateOrder}

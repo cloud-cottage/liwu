@@ -187,6 +187,7 @@ const normalizeShopProduct = (product = {}) => ({
   name: product.name || '',
   subtitle: product.subtitle || '',
   categoryId: product.category_id || product.categoryId || '',
+  relatedProductId: product.related_product_id || product.relatedProductId || '',
   productType: product.product_type || product.productType || 'physical',
   coverImage: product.cover_image || product.coverImage || '',
   gallery: Array.isArray(product.gallery) ? product.gallery : [],
@@ -248,6 +249,7 @@ const toShopProductPayload = (productData = {}) => ({
   name: productData.name || '',
   subtitle: productData.subtitle || '',
   category_id: productData.categoryId || '',
+  related_product_id: productData.relatedProductId || '',
   product_type: productData.productType || 'physical',
   cover_image: productData.coverImage || '',
   gallery: productData.gallery || [],
@@ -364,7 +366,8 @@ const normalizeMeditationSettings = (settings = {}) => ({
 
 const normalizeAwarenessTagSettingEntry = (entry = {}) => ({
   description: entry.description || '',
-  rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0))
+  rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0)),
+  relatedProductId: entry.related_product_id || entry.relatedProductId || ''
 });
 
 const ADMIN_AWARENESS_TAG_MAX_LENGTH = 18;

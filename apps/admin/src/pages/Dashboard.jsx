@@ -707,6 +707,7 @@ const Dashboard = () => {
             key={awarenessTagSettings.documentId || 'default'}
             tags={awarenessTagOverview}
             settings={awarenessTagSettings}
+            products={shopProducts}
             error={settingsError}
             saving={savingAwarenessTagSettings}
             onSave={handleSaveAwarenessTagSettings}

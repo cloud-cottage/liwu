@@ -612,6 +612,7 @@ const normalizeShopProduct = (product = {}) => ({
   name: product.name || '',
   subtitle: product.subtitle || '',
   categoryId: product.category_id || product.categoryId || '',
+  relatedProductId: product.related_product_id || product.relatedProductId || '',
   productType: product.product_type || product.productType || 'physical',
   coverImage: product.cover_image || product.coverImage || '',
   gallery: product.gallery || [],
@@ -629,6 +630,31 @@ const normalizeShopProduct = (product = {}) => ({
   sortOrder: Number(product.sort_order ?? product.sortOrder ?? 0),
   tags: product.tags || []
 });
+
+const normalizeRelatedProductCard = (product = null) => {
+  if (!product?.id) {
+    return null;
+  }
+
+  return {
+    id: product.id,
+    name: product.name || '',
+    subtitle: product.subtitle || product.description || '',
+    coverImage: product.coverImage || '',
+    pricePointsFrom: Number(product.pricePointsFrom || 0),
+    priceCashFrom: Number(product.priceCashFrom || 0)
+  };
+};
+
+const formatRelatedProductPrice = (product = null) => {
+  if (!product?.id) {
+    return '';
+  }
+
+  const points = Number(product.pricePointsFrom || 0);
+  const cash = Number(product.priceCashFrom || 0);
+  return `${points} 福豆${cash ? ` + ¥${cash.toFixed(2)}` : ''}`;
+};
 
 const normalizeShopSku = (sku = {}) => ({
   id: getDocumentId(sku),
@@ -675,7 +701,8 @@ const normalizeShopOrder = (order = {}) => ({
 
 const normalizeAwarenessTagSettingEntry = (entry = {}) => ({
   description: entry.description || '',
-  rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0))
+  rewardPoints: Math.max(0, Number(entry.reward_points ?? entry.rewardPoints ?? 0)),
+  relatedProductId: entry.related_product_id || entry.relatedProductId || ''
 });
 
 const normalizeAwarenessTagSettingsMap = (tagsByKey = {}) => (
@@ -1927,11 +1954,21 @@ export const awarenessService = {
         const emptySummary = {
           description: configuredSettings.description || '',
           rewardPoints: configuredSettings.rewardPoints || 0,
+          relatedProductId: configuredSettings.relatedProductId || '',
           totalCount: 0,
           weeklyCount: 0,
           weeklyChampion: null,
-          latestUser: null
+          latestUser: null,
+          relatedProduct: null
         };
+        if (emptySummary.relatedProductId) {
+          try {
+            const relatedProduct = await shopService.getProductDetail(emptySummary.relatedProductId);
+            emptySummary.relatedProduct = normalizeRelatedProductCard(relatedProduct);
+          } catch (productError) {
+            console.error('获取觉察标签关联商品失败:', productError);
+          }
+        }
         writeCachedAwarenessTagModalSummary(normalizedTagKey, emptySummary);
         return { success: true, data: emptySummary };
       }
@@ -2020,11 +2057,24 @@ export const awarenessService = {
       const summary = {
         description: configuredSettings.description || '',
         rewardPoints: configuredSettings.rewardPoints || 0,
+        relatedProductId: configuredSettings.relatedProductId || '',
         totalCount: records.length,
         weeklyCount: weeklyRecords.length,
         weeklyChampion,
         latestUser
       };
+
+      if (summary.relatedProductId) {
+        try {
+          const relatedProduct = await shopService.getProductDetail(summary.relatedProductId);
+          summary.relatedProduct = normalizeRelatedProductCard(relatedProduct);
+        } catch (productError) {
+          console.error('获取觉察标签关联商品失败:', productError);
+          summary.relatedProduct = null;
+        }
+      } else {
+        summary.relatedProduct = null;
+      }
 
       writeCachedAwarenessTagModalSummary(normalizedTagKey, summary);
       return {
@@ -2942,10 +2992,24 @@ export const shopService = {
         .map(normalizeShopSku)
         .sort((left, right) => left.pricePoints - right.pricePoints);
 
+      let relatedProduct = null;
+      if (product.relatedProductId) {
+        try {
+          const relatedProductResult = await db.collection(collections.shopProducts).doc(product.relatedProductId).get();
+          const relatedProductDocument = getFirstDocument(relatedProductResult, collections.shopProducts);
+          if (relatedProductDocument) {
+            relatedProduct = normalizeRelatedProductCard(normalizeShopProduct(relatedProductDocument));
+          }
+        } catch (relatedProductError) {
+          console.error('获取商品关联商品失败:', relatedProductError);
+        }
+      }
+
       return {
         ...product,
         category,
-        skus
+        skus,
+        relatedProduct
       };
     } catch (error) {
       console.error('获取工坊商品详情失败:', error);

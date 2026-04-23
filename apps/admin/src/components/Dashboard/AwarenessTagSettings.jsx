@@ -112,16 +112,19 @@ const SortButton = ({ label, active, direction, onClick, align = 'left' }) => (
 
 const AwarenessTagDetailModal = ({
   tag,
+  products,
   draftContent,
   draftAccessType,
   draftDescription,
   draftRewardPoints,
+  draftRelatedProductId,
   saving,
   onClose,
   onContentChange,
   onAccessTypeChange,
   onDescriptionChange,
   onRewardPointsChange,
+  onRelatedProductChange,
   onSave
 }) => {
   if (!tag) {
@@ -314,6 +317,35 @@ const AwarenessTagDetailModal = ({
                 保存后，从当前时刻起，用户发布此觉察标签会获得对应数量的福豆。
               </div>
             </div>
+
+            <div>
+              <label htmlFor="awareness-tag-related-product" style={fieldLabelStyle}>相关商品</label>
+              <select
+                id="awareness-tag-related-product"
+                value={draftRelatedProductId}
+                onChange={(event) => onRelatedProductChange(event.target.value)}
+                style={{
+                  width: '100%',
+                  borderRadius: '14px',
+                  border: '1px solid #dbe4ee',
+                  padding: '12px 14px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  color: '#334155',
+                  backgroundColor: '#fff'
+                }}
+              >
+                <option value="">不设置相关商品</option>
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}
+                  </option>
+                ))}
+              </select>
+              <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                选择后，前台 aware_tag 模态框中会出现【相关商品】卡片。
+              </div>
+            </div>
           </div>
         </div>
 
@@ -370,6 +402,7 @@ const AwarenessTagDetailModal = ({
 const AwarenessTagSettings = ({
   tags,
   settings,
+  products,
   onSave,
   saving,
   error,
@@ -383,6 +416,7 @@ const AwarenessTagSettings = ({
   const [draftAccessType, setDraftAccessType] = useState('public');
   const [draftDescription, setDraftDescription] = useState('');
   const [draftRewardPoints, setDraftRewardPoints] = useState('0');
+  const [draftRelatedProductId, setDraftRelatedProductId] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
   const [mockLibrarySettings, setMockLibrarySettings] = useState(DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS);
   const [mockLexiconValue, setMockLexiconValue] = useState(buildLexiconEditorValue(DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS.lexicon));
@@ -399,6 +433,7 @@ const AwarenessTagSettings = ({
         ...tag,
         description: setting.description ?? tag.description ?? '',
         rewardPoints: normalizeRewardPoints(setting.rewardPoints ?? tag.rewardPoints),
+        relatedProductId: setting.relatedProductId || '',
         totalRewardPoints: Math.max(0, Number(tag.totalRewardPoints || 0))
       };
     })
@@ -475,6 +510,7 @@ const AwarenessTagSettings = ({
     setDraftAccessType(tag.accessType || 'public');
     setDraftDescription(tag.description || '');
     setDraftRewardPoints(String(tag.rewardPoints || 0));
+    setDraftRelatedProductId(tag.relatedProductId || '');
     setMessage({ type: '', text: '' });
   };
 
@@ -506,7 +542,8 @@ const AwarenessTagSettings = ({
       [nextTagKey]: {
         ...(settings.tagsByKey?.[selectedTag.key] || {}),
         description: draftDescription.trim(),
-        rewardPoints: normalizeRewardPoints(draftRewardPoints)
+        rewardPoints: normalizeRewardPoints(draftRewardPoints),
+        relatedProductId: String(draftRelatedProductId || '').trim()
       }
     };
 
@@ -760,10 +797,12 @@ const AwarenessTagSettings = ({
 
       <AwarenessTagDetailModal
         tag={selectedTag}
+        products={products}
         draftContent={draftContent}
         draftAccessType={draftAccessType}
         draftDescription={draftDescription}
         draftRewardPoints={draftRewardPoints}
+        draftRelatedProductId={draftRelatedProductId}
         saving={saving}
         onClose={() => {
           setSelectedTagKey('');
@@ -771,11 +810,13 @@ const AwarenessTagSettings = ({
           setDraftAccessType('public');
           setDraftDescription('');
           setDraftRewardPoints('0');
+          setDraftRelatedProductId('');
         }}
         onContentChange={setDraftContent}
         onAccessTypeChange={setDraftAccessType}
         onDescriptionChange={setDraftDescription}
         onRewardPointsChange={setDraftRewardPoints}
+        onRelatedProductChange={setDraftRelatedProductId}
         onSave={handleSave}
       />
         </>
