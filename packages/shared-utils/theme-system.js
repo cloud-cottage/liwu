@@ -153,6 +153,7 @@ export const THEME_PRESETS = {
 export const DEFAULT_CLIENT_THEME_SETTINGS = {
   documentId: null,
   theme: 'IvoryAndSage',
+  showDebugCard: true,
   missingCollection: false
 };
 
@@ -172,6 +173,7 @@ export const normalizeClientThemeSettings = (value = {}) => ({
     value.theme_miniprogram ||
     DEFAULT_CLIENT_THEME_SETTINGS.theme
   ).name,
+  showDebugCard: value.showDebugCard ?? value.show_debug_card ?? DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard,
   missingCollection: false
 });
 
@@ -180,6 +182,7 @@ export const toClientThemeSettingsPayload = (settings = {}) => {
 
   return {
     key: CLIENT_THEME_SETTINGS_KEY,
-    theme: normalized.theme
+    theme: normalized.theme,
+    show_debug_card: Boolean(normalized.showDebugCard)
   };
 };

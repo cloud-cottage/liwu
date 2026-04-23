@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import DatabaseService, { DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS } from '../../services/database.js';
 
 const tagNatureLabel = {
   public: '普通觉察',
@@ -46,6 +47,19 @@ const trimAwarenessTagValue = (value = '', maxLength = ADMIN_AWARENESS_TAG_MAX_L
 
   return result;
 };
+
+const buildLexiconEditorValue = (lexicon = []) => lexicon.join('\n');
+
+const parseLexiconEditorValue = (value = '') => (
+  Array.from(
+    new Set(
+      String(value || '')
+        .split(/\r?\n/g)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 200)
+);
 
 const formatDateTime = (value) => {
   if (!value) {
@@ -358,8 +372,10 @@ const AwarenessTagSettings = ({
   settings,
   onSave,
   saving,
-  error
+  error,
+  onRefresh
 }) => {
+  const [activeSection, setActiveSection] = useState('settings');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'totalCount', direction: 'desc' });
   const [selectedTagKey, setSelectedTagKey] = useState('');
@@ -368,6 +384,13 @@ const AwarenessTagSettings = ({
   const [draftDescription, setDraftDescription] = useState('');
   const [draftRewardPoints, setDraftRewardPoints] = useState('0');
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [mockLibrarySettings, setMockLibrarySettings] = useState(DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS);
+  const [mockLexiconValue, setMockLexiconValue] = useState(buildLexiconEditorValue(DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS.lexicon));
+  const [mockCount, setMockCount] = useState('34');
+  const [loadingMockLibrary, setLoadingMockLibrary] = useState(false);
+  const [savingMockLibrary, setSavingMockLibrary] = useState(false);
+  const [simulatingMockData, setSimulatingMockData] = useState(false);
+  const [mockMessage, setMockMessage] = useState({ type: '', text: '' });
 
   const mergedTags = useMemo(() => (
     tags.map((tag) => {
@@ -409,6 +432,35 @@ const AwarenessTagSettings = ({
       }
     });
   }, [mergedTags, searchQuery, sortConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      setLoadingMockLibrary(true);
+      try {
+        const nextSettings = await DatabaseService.getAwarenessMockLibrarySettings();
+        if (cancelled) {
+          return;
+        }
+
+        setMockLibrarySettings(nextSettings);
+        setMockLexiconValue(buildLexiconEditorValue(nextSettings.lexicon));
+      } catch (nextError) {
+        if (!cancelled) {
+          setMockMessage({ type: 'error', text: nextError.message || '模拟词库加载失败。' });
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingMockLibrary(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSort = (key) => {
     setSortConfig((current) => ({
@@ -479,8 +531,79 @@ const AwarenessTagSettings = ({
     setSelectedTagKey('');
   };
 
+  const handleSaveMockLibrary = async () => {
+    const nextLexicon = parseLexiconEditorValue(mockLexiconValue);
+    if (nextLexicon.length === 0) {
+      setMockMessage({ type: 'error', text: '请至少保留 1 条模拟词库词条。' });
+      return;
+    }
+
+    try {
+      setSavingMockLibrary(true);
+      const savedSettings = await DatabaseService.saveAwarenessMockLibrarySettings({ lexicon: nextLexicon });
+      setMockLibrarySettings(savedSettings);
+      setMockLexiconValue(buildLexiconEditorValue(savedSettings.lexicon));
+      setMockMessage({ type: 'success', text: `已保存模拟词库，共 ${savedSettings.lexicon.length} 条词条。` });
+    } catch (nextError) {
+      setMockMessage({ type: 'error', text: nextError.message || '模拟词库保存失败。' });
+    } finally {
+      setSavingMockLibrary(false);
+    }
+  };
+
+  const handleSimulateMockData = async () => {
+    try {
+      setSimulatingMockData(true);
+      const result = await DatabaseService.simulateAwarenessRecords(mockCount);
+      if (typeof onRefresh === 'function') {
+        await onRefresh();
+      }
+
+      const missingUsersText = result.missingUids.length > 0
+        ? ` 未找到的 uid：${result.missingUids.join('、')}。`
+        : '';
+
+      setMockMessage({
+        type: 'success',
+        text: `已生成 ${result.insertedCount} 条模拟觉察数据，执行时间 ${formatDateTime(result.executedAt)}，使用 ${result.usedUserCount} 位用户身份。${missingUsersText}`
+      });
+    } catch (nextError) {
+      setMockMessage({ type: 'error', text: nextError.message || '模拟数据生成失败。' });
+    } finally {
+      setSimulatingMockData(false);
+    }
+  };
+
   return (
     <div style={{ display: 'grid', gap: '20px' }}>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        {[
+          { key: 'settings', label: '觉察设置' },
+          { key: 'mock', label: '模拟数据' }
+        ].map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setActiveSection(item.key)}
+            style={{
+              border: 'none',
+              borderRadius: '999px',
+              backgroundColor: activeSection === item.key ? '#111827' : '#fff',
+              color: activeSection === item.key ? '#fff' : '#334155',
+              boxShadow: 'var(--shadow-sm)',
+              padding: '10px 16px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {activeSection === 'settings' && (
+        <>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: '0 0 8px', fontSize: '24px', color: '#333' }}>觉察设置</h2>
@@ -655,6 +778,161 @@ const AwarenessTagSettings = ({
         onRewardPointsChange={setDraftRewardPoints}
         onSave={handleSave}
       />
+        </>
+      )}
+
+      {activeSection === 'mock' && (
+        <>
+          <div
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: '16px',
+              padding: '24px',
+              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.06)',
+              display: 'grid',
+              gap: '18px'
+            }}
+          >
+            <div>
+              <h2 style={{ margin: '0 0 8px', fontSize: '24px', color: '#333' }}>模拟数据</h2>
+              <p style={{ margin: 0, color: '#666', fontSize: '14px', lineHeight: 1.6 }}>
+                使用 uid 33-66 的用户身份向觉察系统注入模拟数据。注入时间即你点击按钮的执行时间，标签内容会从下方词库中随机抽取。
+              </p>
+            </div>
+
+            {(mockMessage.text || error) && (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  backgroundColor: (error || mockMessage.type === 'error') ? '#fff3f3' : '#f1f8f4',
+                  color: (error || mockMessage.type === 'error') ? '#c62828' : '#2e7d32',
+                  fontSize: '13px',
+                  lineHeight: 1.6
+                }}
+              >
+                {error || mockMessage.text}
+              </div>
+            )}
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(180px, 240px) auto',
+                gap: '12px',
+                alignItems: 'end'
+              }}
+            >
+              <div>
+                <label htmlFor="awareness-mock-count" style={fieldLabelStyle}>模拟条数</label>
+                <input
+                  id="awareness-mock-count"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                  value={mockCount}
+                  onChange={(event) => setMockCount(event.target.value)}
+                  placeholder="34"
+                  style={{
+                    width: '100%',
+                    borderRadius: '14px',
+                    border: '1px solid #dbe4ee',
+                    padding: '12px 14px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
+                    color: '#334155'
+                  }}
+                />
+                <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                  单次最多生成 1000 条。
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSimulateMockData}
+                disabled={simulatingMockData || loadingMockLibrary}
+                style={{
+                  border: 'none',
+                  borderRadius: '12px',
+                  backgroundColor: '#111827',
+                  color: '#fff',
+                  padding: '12px 18px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: simulatingMockData || loadingMockLibrary ? 'default' : 'pointer',
+                  opacity: simulatingMockData || loadingMockLibrary ? 0.7 : 1,
+                  minWidth: '140px'
+                }}
+              >
+                {simulatingMockData ? '生成中...' : '生成模拟数据'}
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: '16px',
+              padding: '24px',
+              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.06)',
+              display: 'grid',
+              gap: '16px'
+            }}
+          >
+            <div>
+              <h3 style={{ margin: '0 0 8px', fontSize: '20px', color: '#111827' }}>模拟词库</h3>
+              <p style={{ margin: 0, color: '#666', fontSize: '13px', lineHeight: 1.7 }}>
+                一行一条词库词条，管理员可随时添加或编辑。模拟数据生成时会从这些词条中随机选取。
+              </p>
+            </div>
+
+            <textarea
+              value={mockLexiconValue}
+              onChange={(event) => setMockLexiconValue(event.target.value)}
+              placeholder="每行输入一条词库词条"
+              style={{
+                width: '100%',
+                minHeight: '280px',
+                borderRadius: '14px',
+                border: '1px solid #dbe4ee',
+                padding: '14px 16px',
+                fontSize: '14px',
+                lineHeight: 1.8,
+                resize: 'vertical',
+                boxSizing: 'border-box',
+                color: '#334155'
+              }}
+            />
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                当前词条数：{parseLexiconEditorValue(mockLexiconValue).length}
+                {mockLibrarySettings.missingCollection ? ' · 需先创建 app_settings 集合后才能保存词库。' : ''}
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveMockLibrary}
+                disabled={savingMockLibrary || loadingMockLibrary}
+                style={{
+                  border: 'none',
+                  borderRadius: '12px',
+                  backgroundColor: '#111827',
+                  color: '#fff',
+                  padding: '12px 18px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: savingMockLibrary || loadingMockLibrary ? 'default' : 'pointer',
+                  opacity: savingMockLibrary || loadingMockLibrary ? 0.7 : 1
+                }}
+              >
+                {savingMockLibrary ? '保存中...' : '保存词库'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

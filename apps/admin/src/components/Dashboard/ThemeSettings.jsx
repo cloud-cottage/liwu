@@ -12,6 +12,7 @@ const ThemeSettings = ({
   onSaveBrandCarousel
 }) => {
   const [draftTheme, setDraftTheme] = useState(settings.theme);
+  const [draftShowDebugCard, setDraftShowDebugCard] = useState(Boolean(settings.showDebugCard));
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
   const [uploadingSlideIndex, setUploadingSlideIndex] = useState(-1);
   const [carouselFeedback, setCarouselFeedback] = useState('');
@@ -21,6 +22,10 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftTheme(settings.theme);
   }, [settings.theme]);
+
+  useEffect(() => {
+    setDraftShowDebugCard(Boolean(settings.showDebugCard));
+  }, [settings.showDebugCard]);
 
   useEffect(() => {
     setDraftSlides(brandCarouselSettings.slides || []);
@@ -222,12 +227,52 @@ const ThemeSettings = ({
             </button>
           </div>
         </div>
+
+        <div style={previewCardStyle}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            profile_debug
+          </div>
+          <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+            调试卡片
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+            控制【我的】页面中的调试卡片显示与否，便于后续统一隐藏。
+          </div>
+
+          <label
+            style={{
+              marginTop: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              padding: '14px 16px',
+              borderRadius: '14px',
+              border: '1px solid #e2e8f0',
+              backgroundColor: '#ffffff',
+              cursor: 'pointer'
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>显示调试卡片</div>
+              <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
+                开启后，【我的】页面会显示登录方式与邮箱信息卡片。
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={draftShowDebugCard}
+              onChange={(event) => setDraftShowDebugCard(event.target.checked)}
+              style={{ width: '18px', height: '18px', flexShrink: 0 }}
+            />
+          </label>
+        </div>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
         <button
           type="button"
-          onClick={() => onSave({ ...settings, theme: draftTheme })}
+          onClick={() => onSave({ ...settings, theme: draftTheme, showDebugCard: draftShowDebugCard })}
           disabled={saving}
           style={primaryButtonStyle}
         >

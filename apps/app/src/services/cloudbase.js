@@ -476,6 +476,7 @@ const normalizeCurrentUserProfile = (document = {}) => ({
   uid: getUserUid(document) || 0,
   authUid: document.auth_uid || document.authUid || '',
   name: document.name || buildDefaultUserName(getUserUid(document) || 1),
+  avatar: document.avatar || '',
   email: document.email || '',
   phone: document.phone || '',
   status: document.status || 'active',
@@ -1298,6 +1299,53 @@ const buildShareLinks = ({ title, text, url }) => {
     telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
     linkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
     native: { title, text, url }
+  };
+};
+
+const buildClientShareUrl = async ({ path = '/', query = {} } = {}) => {
+  const inviteParams = {};
+
+  try {
+    const authStatus = await resolveAuthStatus({ allowAnonymous: true });
+    if (authStatus?.isAuthenticated) {
+      const currentProfile = await userProfileService.getCurrentProfile({ refresh: false, allowAnonymous: true });
+      if (currentProfile?.inviteCode) {
+        inviteParams.i = currentProfile.inviteCode;
+      }
+    }
+  } catch (error) {
+    console.error('生成分享链接失败:', error);
+  }
+
+  const baseUrl = typeof window === 'undefined'
+    ? new URL(path, 'https://liwu.local')
+    : new URL(path, window.location.origin);
+
+  Object.entries({ ...inviteParams, ...query }).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+
+    baseUrl.searchParams.set(key, String(value));
+  });
+
+  return typeof window === 'undefined'
+    ? `${baseUrl.pathname}${baseUrl.search}`
+    : baseUrl.toString();
+};
+
+const buildPageSharePayload = async ({ path, query = {}, title, text }) => {
+  const shareUrl = await buildClientShareUrl({ path, query });
+
+  return {
+    title,
+    text,
+    url: shareUrl,
+    links: buildShareLinks({
+      title,
+      text,
+      url: shareUrl
+    })
   };
 };
 
@@ -2125,6 +2173,37 @@ export const rewardSettingsService = {
         inviterRewardRate: 0
       };
     }
+  }
+};
+
+export const shareService = {
+  async buildMeditationSharePayload() {
+    return buildPageSharePayload({
+      path: '/m',
+      title: '理悟 · 静寂',
+      text: '我刚刚在「理悟」留给自己一段静寂时光，和我一起进入呼吸与安住吧。'
+    });
+  },
+
+  async buildShopSharePayload() {
+    return buildPageSharePayload({
+      path: '/s',
+      title: '理悟 · 工坊',
+      text: '我正在逛「理悟工坊」，这里有一些适合静心、阅读与日常安住的小器物，和我一起看看吧。'
+    });
+  },
+
+  async buildProductSharePayload(product = {}) {
+    const productName = String(product.name || '这件好物').trim();
+
+    return buildPageSharePayload({
+      path: '/s',
+      query: {
+        p: product.id || ''
+      },
+      title: `理悟 · ${productName}`,
+      text: `我在「理悟工坊」看到这件好物：${productName}，和我一起看看吧。`
+    });
   }
 };
 

@@ -405,8 +405,11 @@ const ShopManagement = ({
 
   const handleOrderStatusUpdate = async (orderId, nextStatus) => {
     setUpdatingOrderId(orderId);
-    await onUpdateOrderStatus(orderId, nextStatus);
-    setUpdatingOrderId('');
+    try {
+      await onUpdateOrderStatus(orderId, nextStatus);
+    } finally {
+      setUpdatingOrderId('');
+    }
   };
 
   return (
@@ -677,13 +680,14 @@ const ShopManagement = ({
 };
 
 const renderOrderActions = (order, updatingOrderId, onUpdate) => {
+  const actionOrderId = order.id || order.orderNo;
   const buttonStyle = {
     border: 'none',
     borderRadius: '10px',
     padding: '8px 12px',
     fontSize: '12px',
     fontWeight: 600,
-    cursor: updatingOrderId === order.id ? 'default' : 'pointer',
+    cursor: updatingOrderId === actionOrderId ? 'default' : 'pointer',
     backgroundColor: '#fff',
     color: '#0f172a',
     borderStyle: 'solid',
@@ -694,10 +698,10 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
   if (order.status === 'paid') {
     return (
       <>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'processing')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'processing')}>
           进入处理
         </button>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'cancelled')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'cancelled')}>
           取消并退款
         </button>
       </>
@@ -707,10 +711,10 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
   if (order.status === 'pending_payment') {
     return (
       <>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'paid')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'paid')}>
           确认已支付
         </button>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'cancelled')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'cancelled')}>
           取消订单
         </button>
       </>
@@ -720,10 +724,10 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
   if (order.status === 'processing') {
     return (
       <>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'shipped')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'shipped')}>
           标记发货
         </button>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'refunded')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'refunded')}>
           退款
         </button>
       </>
@@ -733,10 +737,10 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
   if (order.status === 'shipped') {
     return (
       <>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'completed')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'completed')}>
           完成订单
         </button>
-        <button type="button" style={buttonStyle} disabled={updatingOrderId === order.id} onClick={() => onUpdate(order.id, 'refunded')}>
+        <button type="button" style={buttonStyle} disabled={updatingOrderId === actionOrderId} onClick={() => onUpdate(actionOrderId, 'refunded')}>
           退款
         </button>
       </>

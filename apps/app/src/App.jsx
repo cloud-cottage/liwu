@@ -7,6 +7,7 @@ import Community from './pages/Community';
 import Profile from './modules/profile';
 import FortuneLedger from './pages/FortuneLedger';
 import Album from './pages/Album';
+import ProfileInfo from './pages/ProfileInfo';
 import MeditationHome from './modules/meditate';
 import MeditationPlayer from './modules/meditate/player';
 import Shop from './modules/shop';
@@ -42,6 +43,7 @@ function App() {
                 <Route path="record" element={<Navigate to="/a" replace />} />
                 <Route path="community" element={<Community />} />
                 <Route path="profile" element={<Profile />} />
+                <Route path="profile/info" element={<ProfileInfo />} />
                 <Route path="s" element={<Shop />} />
                 <Route path="shop" element={<Navigate to="/s" replace />} />
                 <Route path="fortune-ledger" element={<FortuneLedger />} />

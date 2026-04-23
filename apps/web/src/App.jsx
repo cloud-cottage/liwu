@@ -8,6 +8,7 @@ import Shop from '@app/modules/shop'
 import Community from '@app/pages/Community.jsx'
 import FortuneLedger from '@app/pages/FortuneLedger.jsx'
 import Album from '@app/pages/Album.jsx'
+import ProfileInfo from '@app/pages/ProfileInfo.jsx'
 import MeditationHome from '@app/modules/meditate'
 import MeditationPlayer from '@app/modules/meditate/player'
 import { CloudAwarenessProvider } from '@app/context/CloudAwarenessContext.jsx'
@@ -39,6 +40,7 @@ const App = () => (
             <Route path="record" element={<Navigate to="/a" replace />} />
             <Route path="community" element={<Community />} />
             <Route path="profile" element={<Profile />} />
+            <Route path="profile/info" element={<ProfileInfo />} />
             <Route path="s" element={<Shop />} />
             <Route path="shop" element={<Navigate to="/s" replace />} />
             <Route path="fortune-ledger" element={<FortuneLedger />} />

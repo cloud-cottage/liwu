@@ -31,8 +31,12 @@ import {
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
+const AWARENESS_MOCK_LIBRARY_SETTINGS_KEY = 'awareness_mock_library';
 const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
 const LIFETIME_STUDENT_EXPIRES_AT = '2999-12-31T23:59:59.000Z';
+const AWARENESS_MOCK_USER_UID_START = 33;
+const AWARENESS_MOCK_USER_UID_END = 66;
+const MAX_AWARENESS_MOCK_RECORDS_PER_RUN = 1000;
 
 export const DEFAULT_MEDITATION_SETTINGS = {
   rewardPoints: 50,
@@ -45,6 +49,33 @@ export const DEFAULT_MEDITATION_SETTINGS = {
 export const DEFAULT_AWARENESS_TAG_SETTINGS = {
   documentId: null,
   tagsByKey: {},
+  missingCollection: false
+};
+
+export const DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS = {
+  documentId: null,
+  lexicon: [
+    '合十礼',
+    '点油灯',
+    '观呼吸',
+    '安住',
+    '放轻松',
+    '心灯',
+    '向内看',
+    '照见',
+    '归于静',
+    '松肩',
+    '喝热水',
+    '伸展',
+    '静坐',
+    '写清理',
+    '落笔',
+    '缓一缓',
+    '晨间光',
+    '晚风',
+    '停一下',
+    '谢谢自己'
+  ],
   missingCollection: false
 };
 
@@ -82,12 +113,18 @@ const getDocuments = (result, collectionName) => {
     return result.data;
   }
 
+  if (result?.data && typeof result.data === 'object') {
+    return [result.data];
+  }
+
   if (result?.message) {
     throw new Error(result.message);
   }
 
   throw new Error(`CloudBase query failed for collection "${collectionName}"`);
 };
+
+const getFirstDocument = (result, collectionName) => getDocuments(result, collectionName)[0] || null;
 
 const normalizeCategory = (category) => ({
   id: getDocumentId(category),
@@ -326,6 +363,28 @@ const normalizeAwarenessTagSettings = (settings = {}) => ({
   missingCollection: false
 });
 
+const normalizeAwarenessMockLexicon = (entries = []) => {
+  const values = Array.isArray(entries)
+    ? entries
+    : String(entries || '')
+      .split(/\r?\n/g);
+
+  return Array.from(
+    new Set(
+      values
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean)
+        .slice(0, 200)
+    )
+  );
+};
+
+const normalizeAwarenessMockLibrarySettings = (settings = {}) => ({
+  documentId: getDocumentId(settings) || null,
+  lexicon: normalizeAwarenessMockLexicon(settings.lexicon || settings.words || DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS.lexicon),
+  missingCollection: false
+});
+
 const toUserPayload = (userData) => {
   const rest = { ...userData };
   const joinDate = rest.joinDate;
@@ -412,6 +471,11 @@ const toAwarenessTagSettingsPayload = (settingsData) => ({
   )
 });
 
+const toAwarenessMockLibraryPayload = (settingsData = {}) => ({
+  key: AWARENESS_MOCK_LIBRARY_SETTINGS_KEY,
+  lexicon: normalizeAwarenessMockLexicon(settingsData.lexicon || [])
+});
+
 const toBadgeSettingsPayload = (settingsData = {}) => ({
   key: BADGE_SETTINGS_KEY,
   version: Math.max(1, Number(settingsData.version || 1)),
@@ -454,6 +518,19 @@ const resolveStudentMembershipPlanKeyFromOrder = (orderDocument = {}, orderItems
     ''
   );
 };
+
+const chunkArray = (items = [], chunkSize = 50) => {
+  const normalizedChunkSize = Math.max(1, Number(chunkSize) || 1);
+  const result = [];
+
+  for (let index = 0; index < items.length; index += normalizedChunkSize) {
+    result.push(items.slice(index, index + normalizedChunkSize));
+  }
+
+  return result;
+};
+
+const getRandomItem = (items = []) => items[Math.floor(Math.random() * items.length)];
 
 const DEFAULT_USER_DASHBOARD_STATS = {
   earnedBadgeCount: 0,
@@ -667,13 +744,21 @@ class DatabaseService {
     try {
       await ensureAnonymousLogin();
 
-      const orderResult = await db.collection(collections.shopOrders).doc(orderId).get();
-      const orderDocument = getDocumentId(orderResult?.data || {}) ? orderResult.data : null;
+      let orderDocument = getFirstDocument(await db.collection(collections.shopOrders).doc(orderId).get(), collections.shopOrders);
+
+      if (!orderDocument && orderId) {
+        orderDocument = getFirstDocument(
+          await db.collection(collections.shopOrders).where({ order_no: orderId }).limit(1).get(),
+          collections.shopOrders
+        );
+      }
+
       if (!orderDocument) {
         throw new Error('订单不存在');
       }
 
       const order = normalizeShopOrder(orderDocument);
+      const resolvedOrderId = order.id || getDocumentId(orderDocument) || orderId;
       const nowIso = new Date().toISOString();
       const updatePayload = {
         status: nextStatus,
@@ -693,9 +778,8 @@ class DatabaseService {
       }
 
       if (nextStatus === 'paid' && order.status !== 'paid' && order.totalCash > 0 && (order.rewardPointsAwarded + order.badgeBonusPointsAwarded) === 0) {
-        const userResult = await db.collection(collections.users).doc(order.userId).get();
-        const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
-        const orderItemsResult = await db.collection(collections.shopOrderItems).where({ order_id: orderId }).limit(20).get().catch(() => ({ data: [] }));
+        const userDocument = getFirstDocument(await db.collection(collections.users).doc(order.userId).get(), collections.users);
+        const orderItemsResult = await db.collection(collections.shopOrderItems).where({ order_id: resolvedOrderId }).limit(20).get().catch(() => ({ data: [] }));
         const orderItems = getDocuments(orderItemsResult, collections.shopOrderItems);
         const membershipPlanKey = resolveStudentMembershipPlanKeyFromOrder(orderDocument, orderItems);
 
@@ -722,7 +806,7 @@ class DatabaseService {
               delta: totalRewardPoints,
               balance_after: nextBalance,
               biz_type: 'shop_cash_reward',
-              biz_id: order.id,
+              biz_id: resolvedOrderId,
               description: `工坊消费奖励：${order.orderNo}`,
               operator_id: 'admin',
               created_at: nowIso
@@ -764,8 +848,7 @@ class DatabaseService {
       }
 
       if ((nextStatus === 'cancelled' || nextStatus === 'refunded') && order.totalPoints > 0 && order.status !== 'cancelled' && order.status !== 'refunded') {
-        const userResult = await db.collection(collections.users).doc(order.userId).get();
-        const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
+        const userDocument = getFirstDocument(await db.collection(collections.users).doc(order.userId).get(), collections.users);
 
         if (userDocument) {
           const nextBalance = Number(userDocument.balance || 0) + order.totalPoints;
@@ -781,7 +864,7 @@ class DatabaseService {
             delta: order.totalPoints,
             balance_after: nextBalance,
             biz_type: 'shop_refund',
-            biz_id: order.id,
+            biz_id: resolvedOrderId,
             description: `工坊退款：${order.orderNo}`,
             operator_id: 'admin',
             created_at: nowIso
@@ -796,8 +879,7 @@ class DatabaseService {
       }
 
       if ((nextStatus === 'cancelled' || nextStatus === 'refunded') && (order.rewardPointsAwarded > 0 || order.badgeBonusPointsAwarded > 0) && order.status !== 'cancelled' && order.status !== 'refunded') {
-        const userResult = await db.collection(collections.users).doc(order.userId).get();
-        const userDocument = getDocumentId(userResult?.data || {}) ? userResult.data : null;
+        const userDocument = getFirstDocument(await db.collection(collections.users).doc(order.userId).get(), collections.users);
 
         if (userDocument) {
           const totalRewardToRevoke = order.rewardPointsAwarded + order.badgeBonusPointsAwarded;
@@ -814,7 +896,7 @@ class DatabaseService {
             delta: -totalRewardToRevoke,
             balance_after: nextBalance,
             biz_type: 'shop_reward_reversal',
-            biz_id: order.id,
+            biz_id: resolvedOrderId,
             description: `工坊奖励撤回：${order.orderNo}`,
             operator_id: 'admin',
             created_at: nowIso
@@ -831,7 +913,7 @@ class DatabaseService {
         }
       }
 
-      await db.collection(collections.shopOrders).doc(orderId).update(updatePayload);
+      await db.collection(collections.shopOrders).doc(resolvedOrderId).update(updatePayload);
     } catch (error) {
       console.error('Error updating shop order status:', error);
       throw error;
@@ -1027,6 +1109,175 @@ class DatabaseService {
         .slice(0, limit);
     } catch (error) {
       console.error('Error fetching awareness tag overview:', error);
+      throw error;
+    }
+  }
+
+  static async getAwarenessMockLibrarySettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: AWARENESS_MOCK_LIBRARY_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS };
+      }
+
+      return normalizeAwarenessMockLibrarySettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_AWARENESS_MOCK_LIBRARY_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching awareness mock library settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveAwarenessMockLibrarySettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: AWARENESS_MOCK_LIBRARY_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const lexicon = normalizeAwarenessMockLexicon(settingsData.lexicon || []);
+      if (lexicon.length === 0) {
+        throw new Error('请至少保留 1 条模拟词库词条。');
+      }
+
+      const existingDocument = getFirstDocument(existingResult, collections.appSettings);
+      const payload = {
+        ...toAwarenessMockLibraryPayload({ lexicon }),
+        updated_at: new Date()
+      };
+
+      if (existingDocument) {
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeAwarenessMockLibrarySettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeAwarenessMockLibrarySettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving awareness mock library settings:', error);
+      throw error;
+    }
+  }
+
+  static async simulateAwarenessRecords(recordCount) {
+    try {
+      await ensureAnonymousLogin();
+      const normalizedCount = Math.floor(Number(recordCount) || 0);
+
+      if (normalizedCount <= 0) {
+        throw new Error('请输入大于 0 的模拟条数。');
+      }
+
+      if (normalizedCount > MAX_AWARENESS_MOCK_RECORDS_PER_RUN) {
+        throw new Error(`单次最多生成 ${MAX_AWARENESS_MOCK_RECORDS_PER_RUN} 条模拟数据。`);
+      }
+
+      const [usersResult, mockLibrarySettings] = await Promise.all([
+        db.collection(collections.users).limit(5000).get(),
+        this.getAwarenessMockLibrarySettings()
+      ]);
+
+      const lexicon = normalizeAwarenessMockLexicon(mockLibrarySettings.lexicon);
+      if (lexicon.length === 0) {
+        throw new Error('模拟词库为空，请先保存词库内容。');
+      }
+
+      const eligibleUsers = getDocuments(usersResult, collections.users)
+        .map(normalizeUser)
+        .filter((user) => user.uid >= AWARENESS_MOCK_USER_UID_START && user.uid <= AWARENESS_MOCK_USER_UID_END);
+
+      if (eligibleUsers.length === 0) {
+        throw new Error(`未找到 uid ${AWARENESS_MOCK_USER_UID_START}-${AWARENESS_MOCK_USER_UID_END} 的用户。`);
+      }
+
+      const expectedUids = Array.from(
+        { length: AWARENESS_MOCK_USER_UID_END - AWARENESS_MOCK_USER_UID_START + 1 },
+        (_, index) => AWARENESS_MOCK_USER_UID_START + index
+      );
+      const existingUidSet = new Set(eligibleUsers.map((user) => user.uid));
+      const missingUids = expectedUids.filter((uid) => !existingUidSet.has(uid));
+
+      const nowIso = new Date().toISOString();
+      const createdAt = new Date(nowIso);
+      const records = Array.from({ length: normalizedCount }, () => {
+        const targetUser = getRandomItem(eligibleUsers);
+        const content = getRandomItem(lexicon);
+        const accessType = 'public';
+        const userName = targetUser.name || `觉醒伙伴${targetUser.uid}`;
+        const authorKey = targetUser.authUid || targetUser.id || `uid_${targetUser.uid}`;
+
+        return {
+          author_key: authorKey,
+          user_id: targetUser.id,
+          auth_uid: targetUser.authUid || '',
+          user_name: userName,
+          content,
+          access_type: accessType,
+          tag_key: `${content}::${accessType}`,
+          share_tag_code: '',
+          record_source: 'admin_mock_seed',
+          reward_points_awarded: 0,
+          reward_points_setting_snapshot: 0,
+          created_at: createdAt,
+          created_at_client: nowIso,
+          timestamp: nowIso,
+          updated_at: createdAt
+        };
+      });
+
+      for (const chunk of chunkArray(records, 50)) {
+        await Promise.all(
+          chunk.map((record) => db.collection(collections.awarenessRecords).add(record))
+        );
+      }
+
+      return {
+        insertedCount: normalizedCount,
+        executedAt: nowIso,
+        usedUserCount: eligibleUsers.length,
+        missingUids,
+        lexiconSize: lexicon.length
+      };
+    } catch (error) {
+      console.error('Error simulating awareness records:', error);
       throw error;
     }
   }

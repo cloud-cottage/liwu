@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Award, BookOpen, LogOut, MessageSquareText, Smartphone, UserRound, X } from 'lucide-react';
+import { Award, BookOpen, MessageSquareText, Smartphone, UserRound, X } from 'lucide-react';
+import { DEFAULT_CLIENT_THEME_SETTINGS } from '@liwu/shared-utils/theme-system.js';
 import FortuneBeanIcon from '../../components/Icons/FortuneBeanIcon.jsx';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useBadgeState } from '../../hooks/useBadgeState.js';
-import { authService, studentMembershipService, userProfileService } from '../../services/cloudbase';
+import { authService, studentMembershipService, themeSettingsService } from '../../services/cloudbase';
+import MembershipOrderModal from './MembershipOrderModal.jsx';
 
 const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/g, '').trim();
 
 const isValidPhoneNumber = (value = '') => /^(?:\+?86)?1\d{10}$/.test(normalizePhoneInput(value));
-const MAX_PROFILE_NAME_LENGTH = 16;
-const formatCurrency = (value = 0) => `¥${Number(value || 0).toFixed(2)}`;
 
 const getLoginMethodLabel = (loginMethod = '') => {
   if (loginMethod === 'phone') {
@@ -86,13 +86,14 @@ const IconEntryButton = ({ label, onClick, children }) => (
 
 const compactCardButtonStyle = {
   width: '100%',
-  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(214, 140, 101, 0.08))',
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 238, 0.96))',
   padding: '14px 16px',
-  borderRadius: '14px',
+  borderRadius: '18px',
   boxShadow: 'var(--shadow-sm)',
   cursor: 'pointer',
   textAlign: 'left',
-  border: '1px solid rgba(214, 140, 101, 0.14)'
+  border: '1px solid rgba(214, 140, 101, 0.12)',
+  minHeight: '96px'
 };
 
 const compactCardMetaTextStyle = {
@@ -100,6 +101,14 @@ const compactCardMetaTextStyle = {
   fontWeight: 700,
   color: '#5b6472',
   flexShrink: 0
+};
+
+const statusCardHeaderTextStyle = {
+  fontSize: '11px',
+  fontWeight: 700,
+  color: '#7c6855',
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase'
 };
 
 const iconEntryButtonStyle = {
@@ -110,6 +119,21 @@ const iconEntryButtonStyle = {
   backgroundColor: 'rgba(255, 255, 255, 0.88)',
   color: '#334155',
   display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
+  boxShadow: 'var(--shadow-sm)',
+  flexShrink: 0
+};
+
+const inlineNameIconButtonStyle = {
+  width: '30px',
+  height: '30px',
+  borderRadius: '999px',
+  border: '1px solid rgba(15, 23, 42, 0.08)',
+  backgroundColor: 'rgba(255, 255, 255, 0.92)',
+  color: '#475569',
+  display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
   cursor: 'pointer',
@@ -348,143 +372,6 @@ const LoginModal = ({
   );
 };
 
-const MembershipOrderModal = ({
-  open,
-  settings,
-  loading,
-  submitting,
-  selectedPlanKey,
-  onSelectPlan,
-  onClose,
-  onSubmit
-}) => {
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 41,
-        backgroundColor: 'rgba(15, 23, 42, 0.45)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '20px'
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '440px',
-          backgroundColor: '#fff',
-          borderRadius: '20px',
-          padding: '22px',
-          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)'
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-          <div>
-            <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>付费学员</div>
-            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-              选择一个方案后，会创建一笔待支付订单。
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              color: '#64748b',
-              padding: '4px'
-            }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {loading ? (
-          <div
-            style={{
-              padding: '14px 16px',
-              borderRadius: '12px',
-              backgroundColor: '#eff6ff',
-              color: '#1d4ed8',
-              fontSize: '14px'
-            }}
-          >
-            正在同步学员方案...
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'grid', gap: '12px' }}>
-              {(settings?.plans || []).map((plan) => {
-                const active = selectedPlanKey === plan.key;
-                return (
-                  <button
-                    key={plan.key}
-                    type="button"
-                    onClick={() => onSelectPlan(plan.key)}
-                    style={{
-                      width: '100%',
-                      borderRadius: '16px',
-                      border: active ? '1px solid var(--color-accent-clay)' : '1px solid #e2e8f0',
-                      background: active ? 'rgba(214, 140, 101, 0.08)' : '#fff',
-                      padding: '14px 16px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      textAlign: 'left',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>{plan.label}</div>
-                      <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
-                        {plan.isLifetime ? '一次开通，长期有效' : `开通 ${plan.durationMonths} 个月学员身份`}
-                      </div>
-                    </div>
-                    <div style={{ fontSize: '18px', fontWeight: 700, color: '#111827' }}>
-                      {formatCurrency(plan.priceCash)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '18px' }}>
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={submitting}
-                style={inlineSecondaryButtonStyle}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={onSubmit}
-                disabled={submitting || !selectedPlanKey}
-                style={{
-                  ...inlinePrimaryButtonStyle,
-                  opacity: submitting || !selectedPlanKey ? 0.7 : 1,
-                  cursor: submitting || !selectedPlanKey ? 'default' : 'pointer'
-                }}
-              >
-                {submitting ? '创建中...' : '创建订单'}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-};
-
 const Profile = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -507,20 +394,35 @@ const Profile = () => {
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState('');
-  const [savingName, setSavingName] = useState(false);
   const [membershipSettings, setMembershipSettings] = useState(null);
   const [loadingMembershipSettings, setLoadingMembershipSettings] = useState(false);
   const [isMembershipModalOpen, setIsMembershipModalOpen] = useState(false);
   const [selectedMembershipPlanKey, setSelectedMembershipPlanKey] = useState('');
   const [submittingMembershipOrder, setSubmittingMembershipOrder] = useState(false);
+  const [showDebugCard, setShowDebugCard] = useState(DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard);
 
   const recentEntries = useMemo(() => history.slice(0, 5), [history]);
 
   useEffect(() => {
-    setNameDraft(currentUser?.name || '');
-  }, [currentUser?.name]);
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const nextSettings = await themeSettingsService.getSettings();
+        if (!cancelled) {
+          setShowDebugCard(Boolean(nextSettings.showDebugCard ?? DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard));
+        }
+      } catch {
+        if (!cancelled) {
+          setShowDebugCard(DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isMembershipModalOpen) {
@@ -690,28 +592,6 @@ const Profile = () => {
     }
   };
 
-  const handleLogout = async () => {
-    setErrorMessage('');
-    setFeedbackMessage('');
-
-    const result = await authService.signOut();
-    if (!result.success) {
-      setErrorMessage(result.error?.message || '退出登录失败');
-      return;
-    }
-
-    await Promise.all([
-      syncAuthState({ allowAnonymous: false }),
-      syncWalletFromCloud({ allowAnonymous: false })
-    ]);
-
-    setPhoneNumber('');
-    setVerificationCode('');
-    setCodeRequested(false);
-    setIsLoginModalOpen(false);
-    setFeedbackMessage('已退出登录');
-  };
-
   const handleOpenMembershipEntry = () => {
     setErrorMessage('');
     setFeedbackMessage('');
@@ -746,35 +626,64 @@ const Profile = () => {
     }
   };
 
-  const handleSaveName = async () => {
-    const normalizedName = String(nameDraft || '').trim();
-
-    if (!normalizedName) {
-      setErrorMessage('请输入用户名');
-      return;
-    }
-
-    setSavingName(true);
-    setErrorMessage('');
-    setFeedbackMessage('');
-
-    try {
-      await userProfileService.updateCurrentProfile({ name: normalizedName });
-      await Promise.all([
-        syncAuthState({ allowAnonymous: false }),
-        refreshData({ force: true, allowAnonymous: true })
-      ]);
-      setFeedbackMessage('用户名已更新');
-      setIsEditingName(false);
-    } catch (error) {
-      setErrorMessage(error.message || '用户名更新失败');
-    } finally {
-      setSavingName(false);
-    }
-  };
+  const boundPhoneNumber = currentUser?.phone || authStatus.phoneNumber || '';
+  const hasBoundPhone = Boolean(String(boundPhoneNumber || '').trim());
+  const inviteCode = currentUser?.inviteCode || '';
+  const debugEmail = currentUser?.email || authStatus.email || '';
 
   return (
     <div style={{ padding: '20px', paddingBottom: '80px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '18px' }}>
+        <button
+          type="button"
+          onClick={() => navigate('/album')}
+          style={compactCardButtonStyle}
+        >
+          <div style={{ width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              <BookOpen size={17} color="var(--color-accent-clay)" />
+              <span style={statusCardHeaderTextStyle}>花开纪念册</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', minWidth: 0 }}>
+              <span style={compactCardMetaTextStyle}>
+                {equippedBadge ? '已佩戴' : '待佩戴'}
+              </span>
+              <span
+                style={{
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  color: '#111827',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {equippedBadge?.displayName || equippedBadge?.name || '选择一枚徽章'}
+              </span>
+              <BadgeMeaningIcon size={16} style={{ color: 'var(--color-accent-clay)', flexShrink: 0 }} aria-label="徽章" />
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => navigate('/fortune-ledger')}
+          style={compactCardButtonStyle}
+        >
+          <div style={{ width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              <WealthCardIcon size={17} color="var(--color-accent-clay)" />
+              <span style={statusCardHeaderTextStyle}>福豆</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', minWidth: 0 }}>
+              <span style={compactCardMetaTextStyle}>当前状态</span>
+              <span style={{ fontSize: '18px', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap' }}>{balance}</span>
+              <FortuneBeanIcon size={16} style={{ color: 'var(--color-accent-clay)', flexShrink: 0 }} aria-label="福豆" />
+            </div>
+          </div>
+        </button>
+      </div>
+
       <section
         style={{
           backgroundColor: '#fff',
@@ -786,7 +695,11 @@ const Profile = () => {
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-            <div
+            <button
+              type="button"
+              onClick={() => navigate('/profile/info')}
+              aria-label="个人信息"
+              title="个人信息"
               style={{
                 width: '64px',
                 height: '64px',
@@ -795,83 +708,66 @@ const Profile = () => {
                 marginRight: '16px',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                border: 'none',
+                padding: 0,
+                overflow: 'hidden',
+                cursor: 'pointer',
+                flexShrink: 0
               }}
             >
-              <UserRound size={28} color="var(--color-accent-ink)" />
-            </div>
-            <div>
-              <h2 style={{ fontSize: '20px', margin: 0, fontFamily: 'var(--font-serif)' }}>
-                {getDisplayName(authStatus, currentUser)}
-              </h2>
-              {authStatus.isAuthenticated && (
-                <div style={{ marginTop: '8px' }}>
-                  {isEditingName ? (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <input
-                          type="text"
-                          value={nameDraft}
-                          maxLength={MAX_PROFILE_NAME_LENGTH}
-                          onChange={(event) => setNameDraft(event.target.value)}
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            border: '1px solid #dbe4ee',
-                            fontSize: '13px',
-                            minWidth: '180px'
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={handleSaveName}
-                          disabled={savingName}
-                          style={inlinePrimaryButtonStyle}
-                        >
-                          {savingName ? '保存中...' : '保存用户名'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsEditingName(false);
-                            setNameDraft(currentUser?.name || '');
-                          }}
-                          disabled={savingName}
-                          style={inlineSecondaryButtonStyle}
-                        >
-                          取消
-                        </button>
-                      </div>
-                      <div style={{ marginTop: '6px', fontSize: '11px', color: '#64748b' }}>
-                        用户名每 3 天可修改一次。
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setErrorMessage('');
-                        setFeedbackMessage('');
-                        setIsEditingName(true);
-                      }}
-                      style={inlineSecondaryButtonStyle}
-                    >
-                      修改用户名
-                    </button>
-                  )}
-                </div>
+              {currentUser?.avatar ? (
+                <img
+                  src={currentUser.avatar}
+                  alt="用户头像"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    display: 'block'
+                  }}
+                />
+              ) : (
+                <UserRound size={28} color="var(--color-accent-ink)" />
               )}
+            </button>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <h2 style={{ fontSize: '20px', margin: 0, fontFamily: 'var(--font-serif)' }}>
+                  {getDisplayName(authStatus, currentUser)}
+                </h2>
+                <button
+                  type="button"
+                  onClick={handleOpenMembershipEntry}
+                  aria-label={currentUser?.isStudent ? '续费学员' : '付费学员'}
+                  title={currentUser?.isStudent ? '续费学员' : '付费学员'}
+                  style={{
+                    ...inlineNameIconButtonStyle,
+                    width: '32px',
+                    height: '32px',
+                    color: currentUser?.isStudent ? '#b45309' : '#8b5e34',
+                    backgroundColor: currentUser?.isStudent ? 'rgba(217, 119, 6, 0.12)' : 'rgba(214, 140, 101, 0.12)'
+                  }}
+                >
+                  <MembershipIcon size={16} />
+                </button>
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
                 <span
                   style={{
                     fontSize: '12px',
-                    color: authStatus.isAuthenticated ? '#0f766e' : '#2563eb',
-                    backgroundColor: authStatus.isAuthenticated ? 'rgba(15, 118, 110, 0.12)' : 'rgba(37, 99, 235, 0.12)',
-                    padding: '4px 10px',
-                    borderRadius: '999px'
+                    color: hasBoundPhone ? '#0f766e' : '#94a3b8',
+                    backgroundColor: hasBoundPhone ? 'rgba(15, 118, 110, 0.12)' : 'rgba(148, 163, 184, 0.16)',
+                    padding: '4px 8px',
+                    borderRadius: '999px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
                   }}
+                  aria-label={hasBoundPhone ? '已绑定手机号' : '未绑定手机号'}
+                  title={hasBoundPhone ? '已绑定手机号' : '未绑定手机号'}
                 >
-                  {authStatus.isAnonymous ? '游客模式' : getLoginMethodLabel(authStatus.loginMethod)}
+                  <Smartphone size={14} />
                 </span>
                 {currentUser?.isStudent && (
                   <span
@@ -887,22 +783,10 @@ const Profile = () => {
                   </span>
                 )}
               </div>
-              <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', margin: '10px 0 0' }}>
-                手机号：{currentUser?.phone || authStatus.phoneNumber || '未绑定'}
-              </p>
-              <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
-                邀请码：{currentUser?.inviteCode || '生成中'}
-              </p>
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-            <IconEntryButton
-              label="付费学员"
-              onClick={handleOpenMembershipEntry}
-            >
-              <MembershipIcon size={24} />
-            </IconEntryButton>
             <IconEntryButton
               label="工坊入口"
               onClick={() => navigate('/s')}
@@ -969,34 +853,6 @@ const Profile = () => {
           </div>
         )}
 
-        {authStatus.isAuthenticated && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
-              登录方式：{getLoginMethodLabel(authStatus.loginMethod)}<br />
-              {currentUser?.email || authStatus.email ? `邮箱：${currentUser?.email || authStatus.email}` : '邮箱：未绑定'}
-            </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              style={{
-                border: 'none',
-                borderRadius: '12px',
-                background: 'var(--theme-button-primary-bg)',
-                color: 'var(--theme-button-primary-text)',
-                padding: '12px 16px',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              <LogOut size={16} />
-              退出登录
-            </button>
-          </div>
-        )}
       </section>
 
       <LoginModal
@@ -1034,57 +890,6 @@ const Profile = () => {
         onClose={() => setIsMembershipModalOpen(false)}
         onSubmit={handleCreateMembershipOrder}
       />
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '30px' }}>
-        <button
-          type="button"
-          onClick={() => navigate('/album')}
-          style={compactCardButtonStyle}
-        >
-          <div style={{ width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <BookOpen size={18} color="var(--color-accent-clay)" />
-              <span style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>花开纪念册</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', minWidth: 0 }}>
-              <span style={compactCardMetaTextStyle}>
-                {equippedBadge ? '已佩戴' : '未佩戴'}
-              </span>
-              <span
-                style={{
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  color: '#111827',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {equippedBadge?.displayName || equippedBadge?.name || '选择一枚徽章'}
-              </span>
-              <BadgeMeaningIcon size={16} style={{ color: 'var(--color-accent-clay)', flexShrink: 0 }} aria-label="徽章" />
-            </div>
-          </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => navigate('/fortune-ledger')}
-          style={compactCardButtonStyle}
-        >
-          <div style={{ width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <WealthCardIcon size={18} color="var(--color-accent-clay)" />
-              <span style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>福豆</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', minWidth: 0 }}>
-              <span style={compactCardMetaTextStyle}>已拥有</span>
-              <span style={{ fontSize: '16px', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap' }}>{balance}</span>
-              <FortuneBeanIcon size={16} style={{ color: 'var(--color-accent-clay)', flexShrink: 0 }} aria-label="福豆" />
-            </div>
-          </div>
-        </button>
-      </div>
 
       <section>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
@@ -1135,6 +940,28 @@ const Profile = () => {
           </div>
         )}
       </section>
+
+      {showDebugCard && (
+        <section
+          style={{
+            backgroundColor: '#fff',
+            borderRadius: '14px',
+            padding: '16px',
+            boxShadow: 'var(--shadow-sm)',
+            marginTop: '24px'
+          }}
+        >
+          <div style={{ fontSize: '13px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+            调试
+          </div>
+          <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
+            登录方式：{getLoginMethodLabel(authStatus.loginMethod)}<br />
+            手机号：{boundPhoneNumber || '未绑定'}<br />
+            邀请码：{inviteCode || '生成中'}<br />
+            {debugEmail ? `邮箱：${debugEmail}` : '邮箱：未绑定'}
+          </div>
+        </section>
+      )}
     </div>
   );
 };

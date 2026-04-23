@@ -79,7 +79,8 @@ const Dashboard = () => {
     updateBrandCarouselSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
-    updateShopOrderStatus
+    updateShopOrderStatus,
+    refresh
   } = useDatabase();
 
   const handleRefreshCloudbase = () => {
@@ -689,12 +690,13 @@ const Dashboard = () => {
 
         {!loading && !error && activeTab === 'awareness' && (
           <AwarenessTagSettings
-            key={`${awarenessTagSettings.documentId || 'default'}-${awarenessTagOverview.length}`}
+            key={awarenessTagSettings.documentId || 'default'}
             tags={awarenessTagOverview}
             settings={awarenessTagSettings}
             error={settingsError}
             saving={savingAwarenessTagSettings}
             onSave={handleSaveAwarenessTagSettings}
+            onRefresh={refresh}
           />
         )}
 

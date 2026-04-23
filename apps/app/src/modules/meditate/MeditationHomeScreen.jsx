@@ -1,21 +1,32 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wind } from 'lucide-react';
+import { Share2, Wind } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
+import ShareDialog from '../../components/Share/ShareDialog.jsx';
+import { shareService } from '../../services/cloudbase.js';
 
 const MeditationHome = () => {
     const navigate = useNavigate();
     const { meditationStats } = useWealth();
     const { authStatus } = useCloudAwareness();
+    const [sharePayload, setSharePayload] = useState(null);
     const totalCount = Math.max(0, Number(meditationStats.sessionCount || 0));
     const todayCount = Math.max(0, Number(meditationStats.todayCount || 0));
     const pastCount = Math.max(0, totalCount - todayCount);
     const canPlayMeditation = Boolean(authStatus?.isAuthenticated);
 
+    const handleOpenShare = async () => {
+        try {
+            setSharePayload(await shareService.buildMeditationSharePayload());
+        } catch (error) {
+            console.error('冥想页分享信息生成失败:', error);
+        }
+    };
+
     return (
         <div className="page-container" style={{ padding: '20px' }}>
-            <header style={{ marginBottom: '16px' }}>
+            <header style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
                 <h1
                     style={{
                         fontSize: '28px',
@@ -26,6 +37,28 @@ const MeditationHome = () => {
                 >
                     静寂
                 </h1>
+                <button
+                    type="button"
+                    onClick={handleOpenShare}
+                    aria-label="分享静寂"
+                    title="分享静寂"
+                    style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '999px',
+                        border: '1px solid rgba(15, 23, 42, 0.08)',
+                        backgroundColor: '#fff',
+                        color: 'var(--color-text-secondary)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        boxShadow: 'var(--shadow-sm)',
+                        flexShrink: 0
+                    }}
+                >
+                    <Share2 size={16} />
+                </button>
             </header>
 
             <section style={{
@@ -89,6 +122,12 @@ const MeditationHome = () => {
                     往日 {pastCount} → 今日 {todayCount} → 来日 ∞
                 </div>
             </div>
+
+            <ShareDialog
+                payload={sharePayload}
+                onClose={() => setSharePayload(null)}
+                title="分享静寂"
+            />
         </div>
     );
 };

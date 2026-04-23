@@ -3,10 +3,8 @@ import { useLocation } from 'react-router-dom';
 import {
   CheckCircle2,
   Copy,
-  Lock,
   Share2,
   Sparkles,
-  TrendingUp,
   X
 } from 'lucide-react';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
@@ -17,15 +15,11 @@ const AWARENESS_PENDING_QUEUE_KEY_PREFIX = 'liwu_awareness_pending_queue_v1';
 
 const ACCESS_TYPE_META = {
   public: {
-    label: '普通觉察',
-    hint: '所有人可发布',
     color: '#2563eb',
     backgroundColor: 'rgba(37, 99, 235, 0.1)',
     borderColor: 'rgba(37, 99, 235, 0.18)'
   },
   student: {
-    label: '学员觉察',
-    hint: '仅学员可发布',
     color: '#0f766e',
     backgroundColor: 'rgba(15, 118, 110, 0.1)',
     borderColor: 'rgba(15, 118, 110, 0.18)'
@@ -37,19 +31,48 @@ const getAccessMeta = (accessType) => ACCESS_TYPE_META[accessType] || ACCESS_TYP
 const canPublishTag = (tag, currentUser) => tag.accessType !== 'student' || Boolean(currentUser?.isStudent);
 
 const getTagCloudFontSize = (count, maxCount) => {
-  if (!maxCount || count >= maxCount) {
-    return 24;
-  }
-
-  if (count >= Math.max(2, Math.ceil(maxCount * 0.66))) {
-    return 20;
-  }
-
-  if (count >= Math.max(2, Math.ceil(maxCount * 0.4))) {
+  if (!maxCount) {
     return 17;
   }
 
-  return 15;
+  const safeCount = Math.max(1, Number(count || 0));
+  const ratio = Math.max(0.18, Math.min(1, safeCount / maxCount));
+  return Math.round(14 + (ratio * 16));
+};
+
+const WORD_CLOUD_SLOTS = [
+  { x: 50, y: 46 },
+  { x: 34, y: 37 },
+  { x: 66, y: 38 },
+  { x: 41, y: 60 },
+  { x: 61, y: 60 },
+  { x: 23, y: 50 },
+  { x: 77, y: 51 },
+  { x: 50, y: 27 },
+  { x: 18, y: 66 },
+  { x: 82, y: 66 },
+  { x: 31, y: 74 },
+  { x: 69, y: 75 },
+  { x: 50, y: 82 },
+  { x: 13, y: 39 },
+  { x: 87, y: 40 },
+  { x: 50, y: 15 }
+];
+
+const getStableSeedFromText = (value = '') => (
+  Array.from(String(value)).reduce((sum, char, index) => sum + (char.charCodeAt(0) * (index + 1)), 0)
+);
+
+const getWordCloudPlacement = (tagKey, index) => {
+  const slot = WORD_CLOUD_SLOTS[index % WORD_CLOUD_SLOTS.length];
+  const seed = getStableSeedFromText(tagKey);
+  const offsetX = ((seed % 7) - 3) * 2;
+  const offsetY = ((Math.floor(seed / 7) % 7) - 3) * 2;
+
+  return {
+    left: `calc(${slot.x}% + ${offsetX}px)`,
+    top: `calc(${slot.y}% + ${offsetY}px)`
+  };
 };
 
 const buildAwarenessQueueStorageKey = (userKey = 'guest') => `${AWARENESS_PENDING_QUEUE_KEY_PREFIX}:${userKey}`;
@@ -143,6 +166,13 @@ const InlineToast = ({ message, onClose }) => {
   );
 };
 
+const IlluminateCloudIcon = ({ size = 18, style = {}, ...rest }) => (
+  <svg viewBox="0 0 1024 1024" width={size} height={size} fill="currentColor" xmlns="http://www.w3.org/2000/svg" style={style} {...rest}>
+    <path d="M896 96a96 96 0 0 1 96 96v320a96 96 0 0 1-96 96h-32v64a96 96 0 0 1-96 96H372.64l-212.448 170.752V768H128a96 96 0 0 1-96-96V352a96 96 0 0 1 96-96h32V192a96 96 0 0 1 90.368-95.84L256 96z m-128 224H128a32 32 0 0 0-32 32v320a32 32 0 0 0 32 32h96.192v101.216L350.08 704H768a32 32 0 0 0 32-32V352a32 32 0 0 0-32-32z m128-160H256a32 32 0 0 0-32 32v64h544a96 96 0 0 1 96 96v192h32a32 32 0 0 0 31.776-28.256L928 512V192a32 32 0 0 0-32-32z" />
+    <path d="M272 480a48 48 0 1 1 0 96 48 48 0 0 1 0-96z m192 0a48 48 0 1 1 0 96 48 48 0 0 1 0-96z m192 0a48 48 0 1 1 0 96 48 48 0 0 1 0-96z" />
+  </svg>
+);
+
 const AwareTagModal = ({
   tag,
   currentUser,
@@ -162,7 +192,7 @@ const AwareTagModal = ({
     : !isLoggedIn
       ? '登录后可发布这条觉察。'
       : !canPublishTag(tag, currentUser)
-        ? '这是学员觉察标签，你可以查看详情，但当前身份还不能发布。'
+        ? '当前身份还不能发布这条觉察，你可以先看看它的含义。'
         : '';
   const disabled = Boolean(blockedReason) || submitting;
   const historicalCount = tag.totalCount || tag.count || 0;
@@ -221,26 +251,12 @@ const AwareTagModal = ({
           </div>
         </div>
 
-        {tag.accessType === 'student' && (
-          <div style={{ marginBottom: '12px' }}>
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                borderRadius: '999px',
-                backgroundColor: 'rgba(15, 118, 110, 0.12)',
-                color: '#0f766e',
-                fontSize: '12px',
-                fontWeight: 600,
-                padding: '6px 10px'
-              }}
-            >
-              学员觉察
-            </span>
-          </div>
-        )}
-
         <div style={{ display: 'grid', gap: '10px', marginBottom: '20px' }}>
+          {tag.accessType === 'student' && (
+            <div style={{ fontSize: '13px', color: '#0f766e', lineHeight: 1.7, fontWeight: 600 }}>
+              标签性质：学员觉察
+            </div>
+          )}
           {tag.actionHint && (
             <div style={{ fontSize: '13px', color: '#0f172a', lineHeight: 1.7, fontWeight: 600 }}>
               {tag.actionHint}
@@ -277,7 +293,7 @@ const AwareTagModal = ({
             : !isLoggedIn
               ? '登录后可发布'
               : !canPublishTag(tag, currentUser)
-                ? '仅学员可发布'
+                ? '当前不可发布'
                 : submitting
                   ? '发布中...'
                   : '我也觉察它'}
@@ -305,7 +321,6 @@ const Record = () => {
   const [inputValue, setInputValue] = useState(initialSharedTag);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [selectedAccessType, setSelectedAccessType] = useState('public');
   const [activeAwareTag, setActiveAwareTag] = useState(null);
   const [creationPromptOpen, setCreationPromptOpen] = useState(false);
   const [sharePayload, setSharePayload] = useState(null);
@@ -409,7 +424,6 @@ const Record = () => {
       setPendingQueueItem(null);
       setError('');
       setInputValue('');
-      setSelectedAccessType('public');
       setSharePayload(result.sharePayload);
       setShareStatus('');
       showToast(`队列中的觉察「${pendingQueueItem.content}」已自动发布。`);
@@ -429,7 +443,6 @@ const Record = () => {
     setError('');
     setActiveAwareTag(null);
     setInputValue('');
-    setSelectedAccessType('public');
     setSharePayload(result.sharePayload);
     setShareStatus('');
   };
@@ -538,7 +551,7 @@ const Record = () => {
 
     await attemptPublishAwareness({
       content: trimmedValue,
-      accessType: currentUser?.isStudent ? selectedAccessType : 'public',
+      accessType: 'public',
       recordSource: 'manual'
     });
   };
@@ -623,8 +636,6 @@ const Record = () => {
   const openPlatformShare = (url) => {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
-
-  const accessMeta = getAccessMeta(selectedAccessType);
 
   return (
     <div
@@ -719,39 +730,6 @@ const Record = () => {
               </div>
             </div>
 
-            {currentUser?.isStudent && (
-              <div style={{ marginBottom: '18px' }}>
-                <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '10px' }}>
-                  发布类型
-                </div>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                  {Object.entries(ACCESS_TYPE_META).map(([type, meta]) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setSelectedAccessType(type)}
-                      style={{
-                        border: selectedAccessType === type ? `1px solid ${meta.color}` : `1px solid ${meta.borderColor}`,
-                        backgroundColor: meta.backgroundColor,
-                        color: meta.color,
-                        borderRadius: '12px',
-                        padding: '10px 14px',
-                        cursor: 'pointer',
-                        minWidth: '136px',
-                        textAlign: 'left'
-                      }}
-                    >
-                      <div style={{ fontSize: '14px', fontWeight: 600 }}>{meta.label}</div>
-                      <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>{meta.hint}</div>
-                    </button>
-                  ))}
-                </div>
-                <div style={{ fontSize: '12px', color: accessMeta.color, marginTop: '10px' }}>
-                  {selectedAccessType === 'student' ? '所有人都能看到此标签，但只有学员可以继续发布。' : '任何用户都可以继续发布此标签。'}
-                </div>
-              </div>
-            )}
-
             <button
               type="submit"
               disabled={submitting || loading || !canPublishAwareness}
@@ -845,7 +823,7 @@ const Record = () => {
                   style={{
                     padding: '10px 14px',
                     backgroundColor: '#fff',
-                    border: `1px solid ${meta.borderColor}`,
+                    border: tag.accessType === 'student' ? '1px dashed #0f766e' : `1px solid ${meta.borderColor}`,
                     borderRadius: '20px',
                     cursor: 'pointer',
                     display: 'flex',
@@ -854,7 +832,6 @@ const Record = () => {
                     boxShadow: 'var(--shadow-sm)'
                   }}
                 >
-                  {tag.accessType === 'student' && <Lock size={14} color={meta.color} />}
                   <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{tag.content}</span>
                   <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{tag.count}次</span>
                 </button>
@@ -867,62 +844,56 @@ const Record = () => {
       {popularTags.length > 0 && (
         <div style={{ marginBottom: '24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-            <TrendingUp size={18} color="var(--color-accent-clay)" />
+            <IlluminateCloudIcon size={18} style={{ color: 'var(--color-accent-clay)' }} />
             <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--color-text-primary)', margin: 0 }}>
-              同心同照亮
+              同心照亮
             </h2>
           </div>
           <div
             style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '12px 16px',
-              alignItems: 'center',
+              position: 'relative',
               backgroundColor: '#fff',
               borderRadius: '18px',
-              padding: '20px',
-              boxShadow: 'var(--shadow-sm)'
+              minHeight: '320px',
+              padding: '24px',
+              boxShadow: 'var(--shadow-sm)',
+              background: 'radial-gradient(circle at center, rgba(214, 140, 101, 0.08) 0%, rgba(255, 255, 255, 1) 62%)',
+              overflow: 'hidden'
             }}
           >
-            {popularTags.map((tag) => {
+            {popularTags.map((tag, index) => {
               const meta = getAccessMeta(tag.accessType);
-              const isStudentRestricted = tag.accessType === 'student' && !canPublishTag(tag, currentUser);
+              const isStudentTag = tag.accessType === 'student';
               const fontSize = getTagCloudFontSize(tag.totalCount || 0, maxPopularTagCount);
+              const placement = getWordCloudPlacement(tag.key, index);
 
               return (
                 <button
                   key={tag.key}
                   onClick={() => handleTagClick(tag)}
                   style={{
+                    position: 'absolute',
+                    left: placement.left,
+                    top: placement.top,
+                    transform: 'translate(-50%, -50%)',
                     padding: '10px 14px',
                     backgroundColor: '#fff',
-                    border: isStudentRestricted ? '1px dashed #0f766e' : `1px solid ${meta.borderColor}`,
-                    borderRadius: '20px',
+                    border: isStudentTag ? '1px dashed #0f766e' : `1px solid ${meta.borderColor}`,
+                    borderRadius: '999px',
                     cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '8px',
-                    color: meta.color,
+                    justifyContent: 'center',
+                    gap: '6px',
+                    color: 'var(--color-text-primary)',
                     fontSize,
                     fontWeight: tag.totalCount === maxPopularTagCount ? 700 : 600,
                     lineHeight: 1.2,
-                    boxShadow: isStudentRestricted ? '0 0 0 1px rgba(15, 118, 110, 0.08), var(--shadow-sm)' : 'var(--shadow-sm)'
+                    whiteSpace: 'nowrap',
+                    boxShadow: isStudentTag ? '0 0 0 1px rgba(15, 118, 110, 0.08), var(--shadow-sm)' : 'var(--shadow-sm)',
+                    background: isStudentTag ? 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(240,253,250,0.96))' : '#fff'
                   }}
                 >
-                  {tag.accessType === 'student' && (
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        color: '#0f766e',
-                        backgroundColor: 'rgba(15, 118, 110, 0.1)',
-                        borderRadius: '999px',
-                        padding: '4px 8px'
-                      }}
-                    >
-                      学员
-                    </span>
-                  )}
                   <span>{tag.content}</span>
                 </button>
               );
@@ -976,7 +947,7 @@ const Record = () => {
             </div>
 
             <div style={{ fontSize: '14px', color: '#475569', lineHeight: 1.8 }}>
-              创建新的觉察标签需要学员用户身份。先去社区已经存在的觉察标签里看一看，也许此刻就有适合你的那一个。
+              创建新的觉察标签需要相应的身份权限。先去社区已经存在的觉察标签里看一看，也许此刻就有适合你的那一个。
             </div>
 
             <button

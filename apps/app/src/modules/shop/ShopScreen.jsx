@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, Coins, Layers3, MapPin, Sparkles, X } from 'lucide-react';
+import { ArrowUpRight, Coins, Layers3, MapPin, Share2, Sparkles, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
-import { shopService } from '../../services/cloudbase';
+import ShareDialog from '../../components/Share/ShareDialog.jsx';
+import { shareService, shopService } from '../../services/cloudbase';
 import { useWealth } from '../../context/WealthContext';
 import './ShopScreen.css';
 
@@ -99,6 +100,7 @@ const ProductModal = ({
   product,
   addresses,
   orderSubmitting,
+  onShare,
   onClose,
   onSaveAddress,
   onCreateOrder
@@ -158,9 +160,46 @@ const ProductModal = ({
   return (
     <div className="shop-modal-backdrop" onClick={onClose}>
       <div className="shop-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-        <button type="button" onClick={onClose} className="shop-modal__close" aria-label="关闭商品详情">
-          <X size={18} />
-        </button>
+        <div style={{ position: 'absolute', top: '18px', right: '18px', display: 'flex', gap: '8px', zIndex: 2 }}>
+          <button
+            type="button"
+            onClick={() => onShare(product)}
+            aria-label="分享商品"
+            style={{
+              border: 'none',
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              background: 'rgba(255, 255, 255, 0.82)',
+              color: '#475569',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <Share2 size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭商品详情"
+            style={{
+              border: 'none',
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              background: 'rgba(255, 255, 255, 0.82)',
+              color: '#475569',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
 
         <div className="shop-modal__hero" style={getProductVisualStyle(product, tone)}>
           <div className="shop-modal__chips">
@@ -290,6 +329,7 @@ const ShopScreen = () => {
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sharePayload, setSharePayload] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -347,7 +387,10 @@ const ShopScreen = () => {
     () => categories.find((item) => item.id === selectedCategoryId) || null,
     [categories, selectedCategoryId]
   );
-  const requestedProductId = useMemo(() => new URLSearchParams(location.search).get('product')?.trim() || '', [location.search]);
+  const requestedProductId = useMemo(() => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get('p')?.trim() || searchParams.get('product')?.trim() || '';
+  }, [location.search]);
 
   const highlightedCategoryDescription = selectedCategory?.description
     || '从日常仪式、空间器物到心意礼物，挑一件适合此刻练习的物品。';
@@ -401,6 +444,22 @@ const ShopScreen = () => {
     }
   };
 
+  const handleShareShop = async () => {
+    try {
+      setSharePayload(await shareService.buildShopSharePayload());
+    } catch (error) {
+      console.error('工坊页分享信息生成失败:', error);
+    }
+  };
+
+  const handleShareProduct = async (product) => {
+    try {
+      setSharePayload(await shareService.buildProductSharePayload(product));
+    } catch (error) {
+      console.error('商品分享信息生成失败:', error);
+    }
+  };
+
   return (
     <div className="page-container shop-page">
       <section className="shop-hero-card">
@@ -410,12 +469,35 @@ const ShopScreen = () => {
             <h1 className="shop-hero-card__title">工坊</h1>
             <p className="shop-hero-card__subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</p>
           </div>
-          <div className="shop-balance-card">
-            <div className="shop-balance-card__label">
-              <Coins size={16} />
-              <span>当前福豆</span>
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={handleShareShop}
+              aria-label="分享工坊"
+              title="分享工坊"
+              style={{
+                width: '46px',
+                height: '46px',
+                borderRadius: '999px',
+                border: '1px solid rgba(255, 255, 255, 0.26)',
+                backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                color: '#fff',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                backdropFilter: 'blur(10px)'
+              }}
+            >
+              <Share2 size={18} />
+            </button>
+            <div className="shop-balance-card">
+              <div className="shop-balance-card__label">
+                <Coins size={16} />
+                <span>当前福豆</span>
+              </div>
+              <div className="shop-balance-card__value">{balance}</div>
             </div>
-            <div className="shop-balance-card__value">{balance}</div>
           </div>
         </div>
 
@@ -551,9 +633,16 @@ const ShopScreen = () => {
         product={activeProduct}
         addresses={addresses}
         orderSubmitting={orderSubmitting}
+        onShare={handleShareProduct}
         onClose={() => setActiveProduct(null)}
         onSaveAddress={handleSaveAddress}
         onCreateOrder={handleCreateOrder}
+      />
+
+      <ShareDialog
+        payload={sharePayload}
+        onClose={() => setSharePayload(null)}
+        title="分享理悟"
       />
     </div>
   );
