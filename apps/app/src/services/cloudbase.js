@@ -26,6 +26,11 @@ import {
   normalizeBrandCarouselSettings
 } from '@liwu/shared-utils/home-carousel-settings.js';
 import {
+  AWARENESS_DISPLAY_SETTINGS_KEY,
+  DEFAULT_AWARENESS_DISPLAY_SETTINGS,
+  normalizeAwarenessDisplaySettings
+} from '@liwu/shared-utils/awareness-display-settings.js';
+import {
   DEFAULT_USER_AVATAR_OPTIONS_SETTINGS,
   USER_AVATAR_OPTIONS_SETTINGS_KEY,
   getAvatarOptionByIndex,
@@ -789,6 +794,31 @@ const getAwarenessTagSettings = async () => {
   } catch (error) {
     console.error('获取觉察标签配置失败:', error);
     return { tagsByKey: {} };
+  }
+};
+
+const getAwarenessDisplaySettings = async () => {
+  try {
+    await ensureAnonymousLogin();
+    const result = await db
+      .collection(collections.appSettings)
+      .where({ key: AWARENESS_DISPLAY_SETTINGS_KEY })
+      .limit(1)
+      .get();
+
+    if (isMissingCollectionResponse(result)) {
+      return { ...DEFAULT_AWARENESS_DISPLAY_SETTINGS };
+    }
+
+    const document = getFirstDocument(result, collections.appSettings);
+    if (!document) {
+      return { ...DEFAULT_AWARENESS_DISPLAY_SETTINGS };
+    }
+
+    return normalizeAwarenessDisplaySettings(document);
+  } catch (error) {
+    console.error('获取觉察显示设置失败:', error);
+    return { ...DEFAULT_AWARENESS_DISPLAY_SETTINGS };
   }
 };
 
@@ -2446,7 +2476,7 @@ export const awarenessService = {
     }
   },
 
-  async getPopularTags(limit = 16) {
+  async getPopularTags(limit = DEFAULT_AWARENESS_POPULAR_TAG_COUNT) {
     try {
       const [recentRecordsResult, awarenessTagSettings] = await Promise.all([
         this.getRecentRecords(5000),
@@ -2756,6 +2786,12 @@ export const brandCarouselSettingsService = {
       console.error('获取品牌轮播图设置失败:', error);
       return { ...DEFAULT_BRAND_CAROUSEL_SETTINGS };
     }
+  }
+};
+
+export const awarenessDisplaySettingsService = {
+  async getSettings() {
+    return getAwarenessDisplaySettings();
   }
 };
 

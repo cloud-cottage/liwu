@@ -21,6 +21,12 @@ import {
   toBrandCarouselSettingsPayload
 } from '@liwu/shared-utils/home-carousel-settings.js';
 import {
+  AWARENESS_DISPLAY_SETTINGS_KEY,
+  DEFAULT_AWARENESS_DISPLAY_SETTINGS,
+  normalizeAwarenessDisplaySettings,
+  toAwarenessDisplaySettingsPayload
+} from '@liwu/shared-utils/awareness-display-settings.js';
+import {
   DEFAULT_USER_AVATAR_OPTIONS_SETTINGS,
   USER_AVATAR_OPTIONS_SETTINGS_KEY,
   normalizeUserAvatarOptionsSettings,
@@ -92,6 +98,10 @@ export const DEFAULT_BADGE_SETTINGS = {
 
 export const DEFAULT_THEME_SETTINGS = {
   ...DEFAULT_CLIENT_THEME_SETTINGS
+};
+
+export const DEFAULT_AWARENESS_DISPLAY = {
+  ...DEFAULT_AWARENESS_DISPLAY_SETTINGS
 };
 
 export const DEFAULT_BRAND_CAROUSEL = {
@@ -1516,6 +1526,43 @@ class DatabaseService {
     }
   }
 
+  static async getAwarenessDisplaySettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: AWARENESS_DISPLAY_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_AWARENESS_DISPLAY,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_AWARENESS_DISPLAY };
+      }
+
+      return normalizeAwarenessDisplaySettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_AWARENESS_DISPLAY,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching awareness display settings:', error);
+      throw error;
+    }
+  }
+
   static async getStudentMembershipSettings() {
     try {
       await ensureAnonymousLogin();
@@ -1639,6 +1686,51 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving theme settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveAwarenessDisplaySettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: AWARENESS_DISPLAY_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toAwarenessDisplaySettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeAwarenessDisplaySettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeAwarenessDisplaySettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving awareness display settings:', error);
       throw error;
     }
   }

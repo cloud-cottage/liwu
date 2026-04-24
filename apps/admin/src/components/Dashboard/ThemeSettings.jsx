@@ -4,19 +4,23 @@ import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 
 const ThemeSettings = ({
   settings,
+  awarenessDisplaySettings,
   brandCarouselSettings,
   userAvatarOptionsSettings,
   error,
   saving,
+  savingAwarenessDisplay,
   savingCarousel,
   savingAvatarOptions,
   onSave,
+  onSaveAwarenessDisplay,
   onSaveBrandCarousel,
   onSaveUserAvatarOptions
 }) => {
   const [activeTab, setActiveTab] = useState('theme');
   const [draftTheme, setDraftTheme] = useState(settings.theme);
   const [draftShowDebugCard, setDraftShowDebugCard] = useState(Boolean(settings.showDebugCard));
+  const [draftPopularTagCount, setDraftPopularTagCount] = useState(Number(awarenessDisplaySettings.popularTagCount || 33));
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
   const [draftAvatarOptions, setDraftAvatarOptions] = useState(() => userAvatarOptionsSettings.avatars || []);
   const [uploadingSlideIndex, setUploadingSlideIndex] = useState(-1);
@@ -33,6 +37,10 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftShowDebugCard(Boolean(settings.showDebugCard));
   }, [settings.showDebugCard]);
+
+  useEffect(() => {
+    setDraftPopularTagCount(Number(awarenessDisplaySettings.popularTagCount || 33));
+  }, [awarenessDisplaySettings.popularTagCount]);
 
   useEffect(() => {
     setDraftSlides(brandCarouselSettings.slides || []);
@@ -136,6 +144,7 @@ const ThemeSettings = ({
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
         {[
           { key: 'theme', label: '主题样式' },
+          { key: 'awareness', label: '觉察' },
           { key: 'avatar', label: '用户头像' }
         ].map((item) => (
           <button
@@ -434,6 +443,39 @@ const ThemeSettings = ({
         </div>
       )}
 
+      {activeTab === 'awareness' && (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              awareness_display
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              觉察
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              设置【觉察】页面词云中最多显示多少个标签。该参数会影响同心照亮词云聚合区。
+            </div>
+
+            <label style={{ ...fieldStyle, marginTop: '18px', maxWidth: '280px' }}>
+              <span style={fieldLabelStyle}>词云显示数量</span>
+              <input
+                type="number"
+                min="1"
+                max="200"
+                step="1"
+                value={draftPopularTagCount}
+                onChange={(event) => setDraftPopularTagCount(Math.max(1, Math.min(200, Number(event.target.value) || 1)))}
+                style={fieldInputStyle}
+              />
+            </label>
+
+            <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+              默认值为 33。你可以根据词云密度在 1-200 之间调整。
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'theme' && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
           <button
@@ -456,6 +498,19 @@ const ThemeSettings = ({
             style={primaryButtonStyle}
           >
             {savingAvatarOptions ? '保存中...' : '保存头像设置'}
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'awareness' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button
+            type="button"
+            onClick={() => onSaveAwarenessDisplay({ ...awarenessDisplaySettings, popularTagCount: draftPopularTagCount })}
+            disabled={savingAwarenessDisplay}
+            style={primaryButtonStyle}
+          >
+            {savingAwarenessDisplay ? '保存中...' : '保存觉察设置'}
           </button>
         </div>
       )}

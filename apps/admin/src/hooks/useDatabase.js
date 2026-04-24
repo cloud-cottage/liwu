@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import DatabaseService, {
   DEFAULT_AWARENESS_TAG_SETTINGS,
+  DEFAULT_AWARENESS_DISPLAY,
   DEFAULT_BADGE_SETTINGS,
   DEFAULT_BRAND_CAROUSEL,
   DEFAULT_MEDITATION_SETTINGS,
@@ -30,6 +31,7 @@ export const useDatabase = () => {
   const [categories, setCategories] = useState([]);
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
+  const [awarenessDisplaySettings, setAwarenessDisplaySettings] = useState(DEFAULT_AWARENESS_DISPLAY);
   const [badgeSettings, setBadgeSettings] = useState(DEFAULT_BADGE_SETTINGS);
   const [themeSettings, setThemeSettings] = useState(DEFAULT_THEME_SETTINGS);
   const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
@@ -44,6 +46,7 @@ export const useDatabase = () => {
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
+  const [savingAwarenessDisplaySettings, setSavingAwarenessDisplaySettings] = useState(false);
   const [savingBadgeSettings, setSavingBadgeSettings] = useState(false);
   const [savingThemeSettings, setSavingThemeSettings] = useState(false);
   const [savingBrandCarouselSettings, setSavingBrandCarouselSettings] = useState(false);
@@ -58,10 +61,11 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessDisplaySettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
+        DatabaseService.getAwarenessDisplaySettings(),
         DatabaseService.getBadgeSettings(),
         DatabaseService.getThemeSettings(),
         DatabaseService.getBrandCarouselSettings(),
@@ -76,6 +80,7 @@ export const useDatabase = () => {
       setCategories(dashboardData.categories);
       setMeditationSettings(nextMeditationSettings);
       setAwarenessTagSettings(nextAwarenessTagSettings);
+      setAwarenessDisplaySettings(nextAwarenessDisplaySettings);
       setBadgeSettings(nextBadgeSettings);
       setThemeSettings(nextThemeSettings);
       setBrandCarouselSettings(nextBrandCarouselSettings);
@@ -88,7 +93,7 @@ export const useDatabase = () => {
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextStudentMembershipSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextStudentMembershipSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -100,6 +105,7 @@ export const useDatabase = () => {
       setCategories([]);
       setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
+      setAwarenessDisplaySettings(DEFAULT_AWARENESS_DISPLAY);
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
@@ -136,6 +142,7 @@ export const useDatabase = () => {
       setTags([]);
       setCategories([]);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
+      setAwarenessDisplaySettings(DEFAULT_AWARENESS_DISPLAY);
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
@@ -277,6 +284,23 @@ export const useDatabase = () => {
     }
   };
 
+  const updateAwarenessDisplaySettings = async (settingsData) => {
+    try {
+      setSavingAwarenessDisplaySettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveAwarenessDisplaySettings(settingsData);
+      setAwarenessDisplaySettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating awareness display settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingAwarenessDisplaySettings(false);
+    }
+  };
+
   const updateBadgeSettings = async (settingsData) => {
     try {
       setSavingBadgeSettings(true);
@@ -396,6 +420,7 @@ export const useDatabase = () => {
     categories,
     meditationSettings,
     awarenessTagSettings,
+    awarenessDisplaySettings,
     badgeSettings,
     themeSettings,
     brandCarouselSettings,
@@ -410,6 +435,7 @@ export const useDatabase = () => {
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
+    savingAwarenessDisplaySettings,
     savingBadgeSettings,
     savingThemeSettings,
     savingBrandCarouselSettings,
@@ -429,6 +455,7 @@ export const useDatabase = () => {
     getUserTags,
     updateMeditationSettings,
     updateAwarenessTagSettings,
+    updateAwarenessDisplaySettings,
     updateBadgeSettings,
     updateThemeSettings,
     updateBrandCarouselSettings,

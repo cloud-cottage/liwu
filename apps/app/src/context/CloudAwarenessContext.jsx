@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { DEFAULT_AWARENESS_POPULAR_TAG_COUNT } from '@liwu/shared-utils/awareness-display-settings.js';
 import { useWealth } from './WealthContext.jsx';
-import { awarenessService, authService, badgeService, userProfileService } from '../services/cloudbase';
+import { awarenessDisplaySettingsService, awarenessService, authService, badgeService, userProfileService } from '../services/cloudbase';
 
 const CloudAwarenessContext = createContext();
 const PUBLIC_CACHE_KEY = 'liwu_awareness_public_cache_v1';
@@ -9,7 +10,6 @@ const USER_CACHE_PREFIX = 'liwu_awareness_user_cache_v1';
 const PUBLIC_CACHE_TTL_MS = 5 * 60 * 1000;
 const USER_CACHE_TTL_MS = 2 * 60 * 1000;
 const MAX_RECENT_RECORDS = 40;
-const MAX_POPULAR_TAGS = 16;
 
 const readCache = (key) => {
   if (typeof window === 'undefined') {
@@ -45,7 +45,7 @@ const isExpired = (fetchedAt, ttl) => {
   return Date.now() - new Date(fetchedAt).getTime() > ttl;
 };
 
-const upsertTagCount = (tags, record, countField) => {
+const upsertTagCount = (tags, record, countField, maxPopularTags = DEFAULT_AWARENESS_POPULAR_TAG_COUNT) => {
   const nextTags = [...tags];
   const matchedIndex = nextTags.findIndex((item) => item.key === record.tagKey);
 
@@ -73,7 +73,7 @@ const upsertTagCount = (tags, record, countField) => {
 
       return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
     })
-    .slice(0, countField === 'totalCount' ? MAX_POPULAR_TAGS : nextTags.length);
+    .slice(0, countField === 'totalCount' ? maxPopularTags : nextTags.length);
 };
 
 const prependRecentRecord = (records, record) => [
@@ -102,12 +102,13 @@ export const CloudAwarenessProvider = ({ children }) => {
   const [userTags, setUserTags] = useState([]);
   const [popularTags, setPopularTags] = useState([]);
   const [recentRecords, setRecentRecords] = useState([]);
+  const [popularTagDisplayCount, setPopularTagDisplayCount] = useState(DEFAULT_AWARENESS_POPULAR_TAG_COUNT);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
-  const hydrateCaches = useCallback((authUid = 'guest') => {
+  const hydrateCaches = useCallback((authUid = 'guest', expectedPopularTagCount = DEFAULT_AWARENESS_POPULAR_TAG_COUNT) => {
     const publicCache = readCache(PUBLIC_CACHE_KEY);
     const userCache = readCache(buildUserCacheKey(authUid));
 
@@ -133,13 +134,17 @@ export const CloudAwarenessProvider = ({ children }) => {
       hasPublicCache: Boolean(publicCache),
       hasUserCache: Boolean(userCache),
       publicStale: isExpired(publicCache?.fetchedAt, PUBLIC_CACHE_TTL_MS),
-      userStale: isExpired(userCache?.fetchedAt, USER_CACHE_TTL_MS)
+      userStale: isExpired(userCache?.fetchedAt, USER_CACHE_TTL_MS),
+      publicLimitMismatch:
+        publicCache?.popularTagCount == null ||
+        Number(publicCache.popularTagCount) !== Number(expectedPopularTagCount || DEFAULT_AWARENESS_POPULAR_TAG_COUNT)
     };
   }, []);
 
-  const persistCaches = useCallback((nextAuthUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt) => {
+  const persistCaches = useCallback((nextAuthUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt, nextPopularTagCount = DEFAULT_AWARENESS_POPULAR_TAG_COUNT) => {
     writeCache(PUBLIC_CACHE_KEY, {
       fetchedAt,
+      popularTagCount: nextPopularTagCount,
       popularTags: nextPopularTags,
       recentRecords: nextRecentRecords
     });
@@ -180,6 +185,9 @@ export const CloudAwarenessProvider = ({ children }) => {
         refresh: force,
         allowAnonymous
       });
+      const nextAwarenessDisplaySettings = await awarenessDisplaySettingsService.getSettings();
+      const nextPopularTagDisplayCount = Number(nextAwarenessDisplaySettings.popularTagCount || DEFAULT_AWARENESS_POPULAR_TAG_COUNT);
+      setPopularTagDisplayCount(nextPopularTagDisplayCount);
 
       const nextAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
       setAuthStatus(nextAuthStatus);
@@ -189,14 +197,14 @@ export const CloudAwarenessProvider = ({ children }) => {
         void badgeService.claimDailyCloudSign();
       }
 
-      const cacheSummary = hydrateCaches(nextCurrentUser?.authUid || nextAuthStatus.authUid || 'guest');
-      if (!force && cacheSummary.hasPublicCache && cacheSummary.hasUserCache && !cacheSummary.publicStale && !cacheSummary.userStale) {
+      const cacheSummary = hydrateCaches(nextCurrentUser?.authUid || nextAuthStatus.authUid || 'guest', nextPopularTagDisplayCount);
+      if (!force && cacheSummary.hasPublicCache && cacheSummary.hasUserCache && !cacheSummary.publicStale && !cacheSummary.userStale && !cacheSummary.publicLimitMismatch) {
         return;
       }
 
       const [userTagsResult, popularTagsResult, recentRecordsResult] = await Promise.all([
         nextCurrentUser ? awarenessService.getUserTags() : Promise.resolve({ success: true, data: [] }),
-        awarenessService.getPopularTags(),
+        awarenessService.getPopularTags(nextPopularTagDisplayCount),
         awarenessService.getRecentRecords(MAX_RECENT_RECORDS)
       ]);
 
@@ -211,10 +219,11 @@ export const CloudAwarenessProvider = ({ children }) => {
       setLastUpdatedAt(fetchedAt);
 
       if (nextCurrentUser?.authUid) {
-        persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt);
+        persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt, nextPopularTagDisplayCount);
       } else {
         writeCache(PUBLIC_CACHE_KEY, {
           fetchedAt,
+          popularTagCount: nextPopularTagDisplayCount,
           popularTags: nextPopularTags,
           recentRecords: nextRecentRecords
         });
@@ -241,7 +250,7 @@ export const CloudAwarenessProvider = ({ children }) => {
 
     const initializeCloudbase = async () => {
       try {
-        let cacheSummary = hydrateCaches('guest');
+        let cacheSummary = hydrateCaches('guest', popularTagDisplayCount);
 
         if (authService.hasOAuthRedirectParams()) {
           if (!disposed) {
@@ -252,7 +261,7 @@ export const CloudAwarenessProvider = ({ children }) => {
 
         const currentAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
         if (currentAuthStatus.authUid) {
-          cacheSummary = hydrateCaches(currentAuthStatus.authUid);
+          cacheSummary = hydrateCaches(currentAuthStatus.authUid, popularTagDisplayCount);
         }
 
         if (disposed) {
@@ -296,7 +305,7 @@ export const CloudAwarenessProvider = ({ children }) => {
 
       const nextCurrentUser = await userProfileService.getCurrentProfile({ refresh: true, allowAnonymous: true });
       const nextUserTags = upsertTagCount(userTags, result.record, 'count');
-      const nextPopularTags = upsertTagCount(popularTags, result.record, 'totalCount');
+      const nextPopularTags = upsertTagCount(popularTags, result.record, 'totalCount', popularTagDisplayCount);
       const nextRecentRecords = prependRecentRecord(recentRecords, result.record);
       const fetchedAt = new Date().toISOString();
       const sharePayload = await awarenessService.buildSharePayloadFromRecord(result.record);
@@ -308,7 +317,7 @@ export const CloudAwarenessProvider = ({ children }) => {
       setLastUpdatedAt(fetchedAt);
 
       if (nextCurrentUser?.authUid) {
-        persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt);
+        persistCaches(nextCurrentUser.authUid, nextUserTags, nextPopularTags, nextRecentRecords, fetchedAt, popularTagDisplayCount);
       }
 
       const rewardEntry = Array.isArray(result.reward?.history)
@@ -329,7 +338,7 @@ export const CloudAwarenessProvider = ({ children }) => {
       console.error('提交觉察失败:', submitError);
       return { success: false, error: submitError };
     }
-  }, [persistCaches, popularTags, pushRewardToast, recentRecords, syncWalletFromCloud, userTags]);
+  }, [persistCaches, popularTagDisplayCount, popularTags, pushRewardToast, recentRecords, syncWalletFromCloud, userTags]);
 
   const refreshData = useCallback(async (options = {}) => {
     await loadData({

@@ -47,6 +47,7 @@ const Dashboard = () => {
     categories,
     meditationSettings,
     awarenessTagSettings,
+    awarenessDisplaySettings,
     badgeSettings,
     themeSettings,
     brandCarouselSettings,
@@ -61,6 +62,7 @@ const Dashboard = () => {
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
+    savingAwarenessDisplaySettings,
     savingBadgeSettings,
     savingThemeSettings,
     savingBrandCarouselSettings,
@@ -76,6 +78,7 @@ const Dashboard = () => {
     updateUserTags,
     updateMeditationSettings,
     updateAwarenessTagSettings,
+    updateAwarenessDisplaySettings,
     updateBadgeSettings,
     updateThemeSettings,
     updateBrandCarouselSettings,
@@ -153,6 +156,14 @@ const Dashboard = () => {
       await updateAwarenessTagSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update awareness tag settings:', err);
+    }
+  };
+
+  const handleSaveAwarenessDisplaySettings = async (nextSettings) => {
+    try {
+      await updateAwarenessDisplaySettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update awareness display settings:', err);
     }
   };
 
@@ -690,13 +701,16 @@ const Dashboard = () => {
           <ThemeSettings
             key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
             settings={themeSettings}
+            awarenessDisplaySettings={awarenessDisplaySettings}
             brandCarouselSettings={brandCarouselSettings}
             userAvatarOptionsSettings={userAvatarOptionsSettings}
             error={settingsError}
             saving={savingThemeSettings}
+            savingAwarenessDisplay={savingAwarenessDisplaySettings}
             savingCarousel={savingBrandCarouselSettings}
             savingAvatarOptions={savingUserAvatarOptionsSettings}
             onSave={handleSaveThemeSettings}
+            onSaveAwarenessDisplay={handleSaveAwarenessDisplaySettings}
             onSaveBrandCarousel={handleSaveBrandCarouselSettings}
             onSaveUserAvatarOptions={handleSaveUserAvatarOptionsSettings}
           />
