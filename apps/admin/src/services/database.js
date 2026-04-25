@@ -49,6 +49,8 @@ const LIFETIME_STUDENT_EXPIRES_AT = '2999-12-31T23:59:59.000Z';
 const AWARENESS_MOCK_USER_UID_START = 33;
 const AWARENESS_MOCK_USER_UID_END = 66;
 const MAX_AWARENESS_MOCK_RECORDS_PER_RUN = 1000;
+const DASHBOARD_SERIES_DAYS = 7;
+const DASHBOARD_TIMEZONE = 'Asia/Shanghai';
 
 export const DEFAULT_MEDITATION_SETTINGS = {
   rewardPoints: 50,
@@ -114,6 +116,12 @@ export const DEFAULT_USER_AVATAR_OPTIONS = {
 
 export const DEFAULT_STUDENT_MEMBERSHIP_SETTINGS = {
   ...SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS
+};
+
+export const DEFAULT_DASHBOARD_OVERVIEW_STATS = {
+  awarenessDailyCounts: [],
+  meditationDailyCounts: [],
+  meditationDailyDurationMinutes: []
 };
 
 const isMissingCollectionIssue = (value) => {
@@ -583,6 +591,49 @@ const getTimestampValue = (value) => {
   return Number.isFinite(nextTimestamp) ? nextTimestamp : 0;
 };
 
+const dashboardDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: DASHBOARD_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+const toDashboardDateKey = (value = new Date()) => (
+  dashboardDateFormatter.format(new Date(value))
+);
+
+const buildRecentDateKeys = (days = DASHBOARD_SERIES_DAYS) => {
+  const result = [];
+  const today = new Date();
+
+  for (let index = days - 1; index >= 0; index -= 1) {
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() - index);
+    result.push(toDashboardDateKey(nextDate));
+  }
+
+  return result;
+};
+
+const buildDashboardSeries = (records = [], getDateKey, getValue, days = DASHBOARD_SERIES_DAYS) => {
+  const targetDateKeys = buildRecentDateKeys(days);
+  const aggregatedMap = new Map(targetDateKeys.map((dateKey) => [dateKey, 0]));
+
+  records.forEach((record) => {
+    const dateKey = getDateKey(record);
+    if (!aggregatedMap.has(dateKey)) {
+      return;
+    }
+
+    aggregatedMap.set(dateKey, Number(aggregatedMap.get(dateKey) || 0) + Number(getValue(record) || 0));
+  });
+
+  return targetDateKeys.map((dateKey) => ({
+    dateKey,
+    value: Number(aggregatedMap.get(dateKey) || 0)
+  }));
+};
+
 const buildDashboardUserStatsMap = ({
   pointLedgerEntries = [],
   awarenessRecords = [],
@@ -652,6 +703,42 @@ const buildDashboardUserStatsMap = ({
   });
 
   return userStatsById;
+};
+
+const buildDashboardOverviewStats = ({
+  pointLedgerEntries = [],
+  awarenessRecords = []
+} = {}) => {
+  const awarenessDailyCounts = buildDashboardSeries(
+    awarenessRecords,
+    (record) => toDashboardDateKey(record.created_at_client || record.timestamp || record.created_at || record.createdAt || new Date()),
+    () => 1
+  );
+
+  const meditationEntries = pointLedgerEntries.filter((entry) => (
+    (entry.biz_type || entry.bizType || '') === BADGE_ACTIVITY_TYPES.meditation
+  ));
+
+  const meditationDailyCounts = buildDashboardSeries(
+    meditationEntries,
+    (entry) => entry.activity_date_key || entry.activityDateKey || toDashboardDateKey(entry.created_at || entry.createdAt || new Date()),
+    () => 1
+  );
+
+  const meditationDailyDurationMinutes = buildDashboardSeries(
+    meditationEntries,
+    (entry) => entry.activity_date_key || entry.activityDateKey || toDashboardDateKey(entry.created_at || entry.createdAt || new Date()),
+    (entry) => Math.max(0, Number(entry.meta?.duration || 0)) / 60
+  ).map((item) => ({
+    ...item,
+    value: Number(item.value.toFixed(1))
+  }));
+
+  return {
+    awarenessDailyCounts,
+    meditationDailyCounts,
+    meditationDailyDurationMinutes
+  };
 };
 
 const attachTagsToUsers = (users, tags, categories, userTagLinks, userStatsById = new Map()) => {
@@ -2163,10 +2250,17 @@ class DatabaseService {
         this.getUserAvatarOptionsSettings()
       ]);
 
+      const pointLedgerEntries = getDocuments(pointLedgerResult, collections.pointLedger);
+      const awarenessRecords = getDocuments(awarenessRecordsResult, collections.awarenessRecords);
+      const badgeProfiles = getDocuments(badgeProfilesResult, collections.badgeProfiles);
       const userStatsById = buildDashboardUserStatsMap({
-        pointLedgerEntries: getDocuments(pointLedgerResult, collections.pointLedger),
-        awarenessRecords: getDocuments(awarenessRecordsResult, collections.awarenessRecords),
-        badgeProfiles: getDocuments(badgeProfilesResult, collections.badgeProfiles)
+        pointLedgerEntries,
+        awarenessRecords,
+        badgeProfiles
+      });
+      const overviewStats = buildDashboardOverviewStats({
+        pointLedgerEntries,
+        awarenessRecords
       });
 
       const dashboardData = attachTagsToUsers(
@@ -2185,6 +2279,7 @@ class DatabaseService {
 
       return {
         ...dashboardData,
+        overviewStats,
         users: dashboardData.users.map((user) => ({
           ...user,
           avatar: avatarUrlByIndex.get(user.avatarIndex) || user.avatar || ''

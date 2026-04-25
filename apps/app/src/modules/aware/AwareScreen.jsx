@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -41,39 +41,150 @@ const getTagCloudFontSize = (count, maxCount) => {
   return Math.round(14 + (ratio * 16));
 };
 
-const WORD_CLOUD_SLOTS = [
-  { x: 50, y: 46 },
-  { x: 34, y: 37 },
-  { x: 66, y: 38 },
-  { x: 41, y: 60 },
-  { x: 61, y: 60 },
-  { x: 23, y: 50 },
-  { x: 77, y: 51 },
-  { x: 50, y: 27 },
-  { x: 18, y: 66 },
-  { x: 82, y: 66 },
-  { x: 31, y: 74 },
-  { x: 69, y: 75 },
-  { x: 50, y: 82 },
-  { x: 13, y: 39 },
-  { x: 87, y: 40 },
-  { x: 50, y: 15 }
-];
+const WORD_CLOUD_MIN_WIDTH = 520;
+const WORD_CLOUD_MIN_HEIGHT = 640;
+const WORD_CLOUD_COLLISION_GAP = 8;
+const WORD_CLOUD_HORIZONTAL_PADDING = 30;
+const WORD_CLOUD_VERTICAL_PADDING = 20;
+const WORD_CLOUD_SCAN_STEP = 8;
+const WORD_CLOUD_FONT_FAMILY = "'Noto Sans SC', 'PingFang SC', system-ui, sans-serif";
 
 const getStableSeedFromText = (value = '') => (
   Array.from(String(value)).reduce((sum, char, index) => sum + (char.charCodeAt(0) * (index + 1)), 0)
 );
 
-const getWordCloudPlacement = (tagKey, index) => {
-  const slot = WORD_CLOUD_SLOTS[index % WORD_CLOUD_SLOTS.length];
-  const seed = getStableSeedFromText(tagKey);
-  const offsetX = ((seed % 7) - 3) * 2;
-  const offsetY = ((Math.floor(seed / 7) % 7) - 3) * 2;
+const estimateWordCloudTagSize = (tag, fontSize, measureContext) => {
+  if (measureContext) {
+    measureContext.font = `600 ${fontSize}px ${WORD_CLOUD_FONT_FAMILY}`;
+  }
+
+  const measuredWidth = measureContext
+    ? Math.ceil(measureContext.measureText(tag.content || '').width)
+    : Math.ceil(String(tag.content || '').length * fontSize * 0.95);
 
   return {
-    left: `calc(${slot.x}% + ${offsetX}px)`,
-    top: `calc(${slot.y}% + ${offsetY}px)`
+    width: Math.max(64, measuredWidth + WORD_CLOUD_HORIZONTAL_PADDING),
+    height: Math.max(38, Math.ceil(fontSize * 1.25) + WORD_CLOUD_VERTICAL_PADDING)
   };
+};
+
+const rectanglesOverlap = (left, right, gap = WORD_CLOUD_COLLISION_GAP) => !(
+  left.x + left.width + gap <= right.x ||
+  right.x + right.width + gap <= left.x ||
+  left.y + left.height + gap <= right.y ||
+  right.y + right.height + gap <= left.y
+);
+
+const isRectangleInBounds = (rect, width, height) => (
+  rect.x >= 0 &&
+  rect.y >= 0 &&
+  rect.x + rect.width <= width &&
+  rect.y + rect.height <= height
+);
+
+const buildWordCloudLayout = (tags, width, height, maxCount) => {
+  const layoutWidth = Math.max(WORD_CLOUD_MIN_WIDTH, Math.floor(width || 0));
+  const layoutHeight = Math.max(WORD_CLOUD_MIN_HEIGHT, Math.floor(height || 0));
+  const centerX = layoutWidth / 2;
+  const centerY = layoutHeight / 2;
+  const placedRects = [];
+  const measureContext = typeof document !== 'undefined'
+    ? document.createElement('canvas').getContext('2d')
+    : null;
+
+  const layout = tags.map((tag, index) => {
+    const fontSize = getTagCloudFontSize(tag.totalCount || 0, maxCount);
+    const size = estimateWordCloudTagSize(tag, fontSize, measureContext);
+    const seed = getStableSeedFromText(tag.key || tag.content || `${index}`);
+    let chosenRect = null;
+
+    for (let attempt = 0; attempt < 900; attempt += 1) {
+      const angle = (seed % 360) * (Math.PI / 180) + (attempt * 0.58);
+      const radius = 4 + Math.pow(attempt, 0.88) * 4.6;
+      const candidateCenterX = centerX + Math.cos(angle) * radius;
+      const candidateCenterY = centerY + Math.sin(angle) * radius * 0.78;
+      const candidateRect = {
+        x: Math.round(candidateCenterX - (size.width / 2)),
+        y: Math.round(candidateCenterY - (size.height / 2)),
+        width: size.width,
+        height: size.height
+      };
+
+      if (!isRectangleInBounds(candidateRect, layoutWidth, layoutHeight)) {
+        continue;
+      }
+
+      if (placedRects.every((rect) => !rectanglesOverlap(candidateRect, rect))) {
+        chosenRect = candidateRect;
+        break;
+      }
+    }
+
+    if (!chosenRect) {
+      outerLoop:
+      for (let y = WORD_CLOUD_SCAN_STEP; y <= layoutHeight - size.height - WORD_CLOUD_SCAN_STEP; y += WORD_CLOUD_SCAN_STEP) {
+        for (let x = WORD_CLOUD_SCAN_STEP; x <= layoutWidth - size.width - WORD_CLOUD_SCAN_STEP; x += WORD_CLOUD_SCAN_STEP) {
+          const candidateRect = {
+            x,
+            y,
+            width: size.width,
+            height: size.height
+          };
+
+          if (placedRects.every((rect) => !rectanglesOverlap(candidateRect, rect, 4))) {
+            chosenRect = candidateRect;
+            break outerLoop;
+          }
+        }
+      }
+    }
+
+    if (!chosenRect) {
+      chosenRect = {
+        x: Math.max(0, Math.round(centerX - (size.width / 2))),
+        y: Math.min(
+          layoutHeight - size.height,
+          Math.max(0, Math.round((index * (size.height + 6)) % Math.max(size.height + 6, layoutHeight - size.height)))
+        ),
+        width: size.width,
+        height: size.height
+      };
+    }
+
+    placedRects.push(chosenRect);
+
+    return {
+      key: tag.key,
+      fontSize,
+      rect: chosenRect
+    };
+  });
+
+  const clusterBounds = layout.reduce((bounds, item) => ({
+    minX: Math.min(bounds.minX, item.rect.x),
+    minY: Math.min(bounds.minY, item.rect.y),
+    maxX: Math.max(bounds.maxX, item.rect.x + item.rect.width),
+    maxY: Math.max(bounds.maxY, item.rect.y + item.rect.height)
+  }), {
+    minX: layoutWidth,
+    minY: layoutHeight,
+    maxX: 0,
+    maxY: 0
+  });
+
+  const clusterCenterX = (clusterBounds.minX + clusterBounds.maxX) / 2;
+  const clusterCenterY = (clusterBounds.minY + clusterBounds.maxY) / 2;
+  const offsetX = Math.round(centerX - clusterCenterX);
+  const offsetY = Math.round(centerY - clusterCenterY);
+
+  return layout.map((item) => ({
+    ...item,
+    rect: {
+      ...item.rect,
+      x: Math.min(Math.max(0, item.rect.x + offsetX), layoutWidth - item.rect.width),
+      y: Math.min(Math.max(0, item.rect.y + offsetY), layoutHeight - item.rect.height)
+    }
+  }));
 };
 
 const buildAwarenessQueueStorageKey = (userKey = 'guest') => `${AWARENESS_PENDING_QUEUE_KEY_PREFIX}:${userKey}`;
@@ -533,11 +644,21 @@ const Record = () => {
   const [toastMessage, setToastMessage] = useState('');
   const [pendingQueueItem, setPendingQueueItem] = useState(null);
   const [queueTick, setQueueTick] = useState(0);
+  const [wordCloudBounds, setWordCloudBounds] = useState({ width: WORD_CLOUD_MIN_WIDTH, height: WORD_CLOUD_MIN_HEIGHT });
+  const wordCloudRef = useRef(null);
   const maxPopularTagCount = useMemo(() => (
     popularTags.reduce((currentMax, tag) => Math.max(currentMax, tag.totalCount || 0), 0)
   ), [popularTags]);
+  const wordCloudMinHeight = useMemo(
+    () => Math.max(WORD_CLOUD_MIN_HEIGHT, 280 + (popularTags.length * 12)),
+    [popularTags.length]
+  );
   const canPublishAwareness = Boolean(authStatus?.isAuthenticated);
   const queueUserKey = currentUser?.id || authStatus?.authUid || '';
+  const wordCloudLayout = useMemo(
+    () => buildWordCloudLayout(popularTags, wordCloudBounds.width, wordCloudBounds.height || wordCloudMinHeight, maxPopularTagCount),
+    [popularTags, wordCloudBounds.height, wordCloudBounds.width, wordCloudMinHeight, maxPopularTagCount]
+  );
 
   const showToast = (message) => {
     setToastMessage(message);
@@ -581,6 +702,34 @@ const Record = () => {
 
     return () => window.clearTimeout(timerId);
   }, [toastMessage]);
+
+  useEffect(() => {
+    if (!wordCloudRef.current || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+
+    const updateBounds = () => {
+      const node = wordCloudRef.current;
+      if (!node) {
+        return;
+      }
+
+      setWordCloudBounds({
+        width: Math.max(WORD_CLOUD_MIN_WIDTH, Math.floor(node.clientWidth || 0)),
+        height: Math.max(wordCloudMinHeight, Math.floor(node.clientHeight || 0))
+      });
+    };
+
+    updateBounds();
+
+    const observer = new ResizeObserver(() => {
+      updateBounds();
+    });
+
+    observer.observe(wordCloudRef.current);
+
+    return () => observer.disconnect();
+  }, [wordCloudMinHeight]);
 
   useEffect(() => {
     if (!queueUserKey) {
@@ -1063,21 +1212,34 @@ const Record = () => {
           </div>
           <div
             style={{
-              position: 'relative',
               backgroundColor: '#fff',
               borderRadius: '18px',
-              minHeight: '320px',
-              padding: '24px',
+              minHeight: `${wordCloudMinHeight}px`,
+              padding: '32px 24px',
               boxShadow: 'var(--shadow-sm)',
               background: 'radial-gradient(circle at center, rgba(214, 140, 101, 0.08) 0%, rgba(255, 255, 255, 1) 62%)',
               overflow: 'hidden'
             }}
           >
+            <div
+              ref={wordCloudRef}
+              style={{
+                position: 'relative',
+                width: '100%',
+                minHeight: `${wordCloudMinHeight}px`
+              }}
+            >
             {popularTags.map((tag, index) => {
               const meta = getAccessMeta(tag.accessType);
               const isStudentTag = tag.accessType === 'student';
-              const fontSize = getTagCloudFontSize(tag.totalCount || 0, maxPopularTagCount);
-              const placement = getWordCloudPlacement(tag.key, index);
+              const layoutItem = wordCloudLayout.find((item) => item.key === tag.key);
+              const fontSize = layoutItem?.fontSize || getTagCloudFontSize(tag.totalCount || 0, maxPopularTagCount);
+              const rect = layoutItem?.rect || {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 44
+              };
 
               return (
                 <button
@@ -1085,10 +1247,12 @@ const Record = () => {
                   onClick={() => handleTagClick(tag)}
                   style={{
                     position: 'absolute',
-                    left: placement.left,
-                    top: placement.top,
-                    transform: 'translate(-50%, -50%)',
-                    padding: '10px 14px',
+                    left: `${rect.x}px`,
+                    top: `${rect.y}px`,
+                    width: `${rect.width}px`,
+                    minHeight: `${rect.height}px`,
+                    padding: '0 14px',
+                    boxSizing: 'border-box',
                     backgroundColor: '#fff',
                     border: isStudentTag ? '1px dashed #0f766e' : `1px solid ${meta.borderColor}`,
                     borderRadius: '999px',
@@ -1109,6 +1273,7 @@ const Record = () => {
                 </button>
               );
             })}
+            </div>
           </div>
         </div>
       )}

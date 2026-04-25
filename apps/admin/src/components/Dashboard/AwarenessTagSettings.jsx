@@ -647,6 +647,9 @@ const AwarenessTagSettings = ({
           <p style={{ margin: 0, color: '#666', fontSize: '14px', lineHeight: 1.6 }}>
             搜索觉察标签，按列排序，并在模态框中维护标签简介与奖励数量。
           </p>
+          <div style={{ marginTop: '8px', fontSize: '13px', color: '#475569', lineHeight: 1.6 }}>
+            当前觉察标签总数：{mergedTags.length}
+          </div>
         </div>
         <input
           type="search"

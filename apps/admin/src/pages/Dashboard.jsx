@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import UserList from '../components/Dashboard/UserList';
 import UserEditModal from '../components/Dashboard/UserEditModal';
 import TagManager from '../components/Dashboard/TagManager';
@@ -45,6 +45,7 @@ const Dashboard = () => {
     users,
     tags,
     categories,
+    overviewStats,
     meditationSettings,
     awarenessTagSettings,
     awarenessDisplaySettings,
@@ -224,12 +225,111 @@ const Dashboard = () => {
   };
 
   const totalUsers = users.length;
-  const activeUsers = users.filter(user => user.status === 'active').length;
-  const usersWithTags = users.filter(user => user.tags.length > 0).length;
-  const totalTagAssignments = users.reduce((sum, user) => sum + user.tags.length, 0);
+  const totalAwarenessTags = awarenessTagOverview.length;
   const totalShopProducts = shopProducts.length;
   const totalShopOrders = shopOrders.length;
-  const totalShopSkus = shopSkus.length;
+  const listedShopProducts = shopProducts.filter((product) => product.status === 'active').length;
+
+  const recentDateKeys = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    const today = new Date();
+
+    return Array.from({ length: 7 }, (_, index) => {
+      const nextDate = new Date(today);
+      nextDate.setDate(today.getDate() - (6 - index));
+      return formatter.format(nextDate);
+    });
+  }, []);
+
+  const userLoginSeries = useMemo(() => {
+    const counterMap = new Map(recentDateKeys.map((dateKey) => [dateKey, 0]));
+    users.forEach((user) => {
+      const timestamp = new Date(user.lastActive || 0).getTime();
+      if (!Number.isFinite(timestamp) || timestamp <= 0) {
+        return;
+      }
+
+      const dateKey = recentDateKeys.find((key) => key === new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date(timestamp)));
+      if (!dateKey) {
+        return;
+      }
+
+      counterMap.set(dateKey, Number(counterMap.get(dateKey) || 0) + 1);
+    });
+
+    return recentDateKeys.map((dateKey) => ({
+      label: dateKey.slice(5).replace('-', '/'),
+      value: Number(counterMap.get(dateKey) || 0)
+    }));
+  }, [recentDateKeys, users]);
+
+  const sevenDayLoggedInUsers = useMemo(
+    () => userLoginSeries.reduce((total, item) => total + item.value, 0),
+    [userLoginSeries]
+  );
+
+  const awarenessSeries = useMemo(
+    () => (overviewStats.awarenessDailyCounts || []).map((item) => ({
+      label: String(item.dateKey || '').slice(5).replace('-', '/'),
+      value: Number(item.value || 0)
+    })),
+    [overviewStats.awarenessDailyCounts]
+  );
+
+  const meditationCountSeries = useMemo(
+    () => (overviewStats.meditationDailyCounts || []).map((item) => ({
+      label: String(item.dateKey || '').slice(5).replace('-', '/'),
+      value: Number(item.value || 0)
+    })),
+    [overviewStats.meditationDailyCounts]
+  );
+
+  const meditationDurationSeries = useMemo(
+    () => (overviewStats.meditationDailyDurationMinutes || []).map((item) => ({
+      label: String(item.dateKey || '').slice(5).replace('-', '/'),
+      value: Number(item.value || 0)
+    })),
+    [overviewStats.meditationDailyDurationMinutes]
+  );
+
+  const shopOrderSeries = useMemo(() => {
+    const counterMap = new Map(recentDateKeys.map((dateKey) => [dateKey, 0]));
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+
+    shopOrders.forEach((order) => {
+      const timestamp = new Date(order.createdAt || 0).getTime();
+      if (!Number.isFinite(timestamp) || timestamp <= 0) {
+        return;
+      }
+
+      const dateKey = formatter.format(new Date(timestamp));
+      if (!counterMap.has(dateKey)) {
+        return;
+      }
+
+      counterMap.set(dateKey, Number(counterMap.get(dateKey) || 0) + 1);
+    });
+
+    return recentDateKeys.map((dateKey) => ({
+      label: dateKey.slice(5).replace('-', '/'),
+      value: Number(counterMap.get(dateKey) || 0)
+    }));
+  }, [recentDateKeys, shopOrders]);
 
   return (
     <div style={{ 
@@ -493,104 +593,80 @@ const Dashboard = () => {
 
         {/* Overview Tab */}
         {!loading && !error && activeTab === 'overview' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', marginBottom: '32px' }}>
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#2196F3', marginBottom: '12px' }}>
-                {totalUsers}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '24px', marginBottom: '32px' }}>
+            <OverviewCard title="用户">
+              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '24px', alignItems: 'center' }}>
+                <DonutMetric
+                  primaryValue={sevenDayLoggedInUsers}
+                  secondaryValue={Math.max(0, totalUsers - sevenDayLoggedInUsers)}
+                  primaryLabel="七日内登录用户"
+                  secondaryLabel="总用户数"
+                  primaryColor="#2563eb"
+                  secondaryColor="#dbeafe"
+                  centerLabel={`${sevenDayLoggedInUsers}/${totalUsers}`}
+                />
+                <LineMetric
+                  title="每日登录用户数"
+                  series={userLoginSeries}
+                  color="#2563eb"
+                />
               </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>总用户数</div>
-            </div>
-            
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#4CAF50', marginBottom: '12px' }}>
-                {activeUsers}
-              </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>活跃用户</div>
-            </div>
-            
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#FF9800', marginBottom: '12px' }}>
-                {usersWithTags}
-              </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>已打标签用户</div>
-            </div>
-            
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#9C27B0', marginBottom: '12px' }}>
-                {totalTagAssignments}
-              </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>标签分配总数</div>
-            </div>
+            </OverviewCard>
 
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#0f766e', marginBottom: '12px' }}>
-                {totalShopProducts}
+            <OverviewCard title="觉察">
+              <div style={{ display: 'grid', gap: '20px' }}>
+                <div>
+                  <div style={metricKickerStyle}>觉察标签总数</div>
+                  <div style={metricBigValueStyle}>{totalAwarenessTags}</div>
+                </div>
+                <LineMetric
+                  title="每日标记觉察数"
+                  series={awarenessSeries}
+                  color="#0f766e"
+                />
               </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>工坊商品数</div>
-            </div>
+            </OverviewCard>
 
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#b45309', marginBottom: '12px' }}>
-                {totalShopSkus}
+            <OverviewCard title="工坊">
+              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '24px', alignItems: 'center' }}>
+                <DonutMetric
+                  primaryValue={listedShopProducts}
+                  secondaryValue={Math.max(0, totalShopProducts - listedShopProducts)}
+                  primaryLabel="商品上架数"
+                  secondaryLabel="商品总数"
+                  primaryColor="#b45309"
+                  secondaryColor="#fde7d2"
+                  centerLabel={`${listedShopProducts}/${totalShopProducts}`}
+                />
+                <LineMetric
+                  title="每日订单数量"
+                  series={shopOrderSeries}
+                  color="#b45309"
+                />
               </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>工坊规格数</div>
-            </div>
+            </OverviewCard>
 
-            <div style={{
-              backgroundColor: '#fff',
-              padding: '32px',
-              borderRadius: '16px',
-              boxShadow: 'var(--shadow-sm)',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-            }}>
-              <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#1d4ed8', marginBottom: '12px' }}>
-                {totalShopOrders}
+            <OverviewCard title="冥想">
+              <div style={{ display: 'grid', gap: '20px' }}>
+                <MultiLineMetric
+                  title="每日冥想播放次数 / 每日冥想播放时长"
+                  seriesList={[
+                    {
+                      key: 'count',
+                      label: '播放次数',
+                      color: '#6b8e23',
+                      series: meditationCountSeries
+                    },
+                    {
+                      key: 'duration',
+                      label: '播放时长',
+                      color: '#8f5fd7',
+                      series: meditationDurationSeries
+                    }
+                  ]}
+                />
               </div>
-              <div style={{ fontSize: '16px', color: '#666' }}>工坊订单数</div>
-            </div>
+            </OverviewCard>
           </div>
         )}
 
@@ -765,6 +841,213 @@ const Dashboard = () => {
       )}
     </div>
   );
+};
+
+const OverviewCard = ({ title, children }) => (
+  <section
+    style={{
+      backgroundColor: '#fff',
+      padding: '28px',
+      borderRadius: '20px',
+      boxShadow: 'var(--shadow-sm)',
+      display: 'grid',
+      gap: '20px'
+    }}
+  >
+    <div style={{ fontSize: '24px', fontWeight: 700, color: '#111827' }}>{title}</div>
+    {children}
+  </section>
+);
+
+const DonutMetric = ({
+  primaryValue,
+  secondaryValue,
+  primaryLabel,
+  secondaryLabel,
+  primaryColor,
+  secondaryColor,
+  centerLabel
+}) => {
+  const totalValue = Math.max(1, Number(primaryValue || 0) + Number(secondaryValue || 0));
+  const ratio = Math.max(0, Math.min(1, Number(primaryValue || 0) / totalValue));
+  const angle = Math.round(ratio * 360);
+
+  return (
+    <div style={{ display: 'grid', gap: '16px', justifyItems: 'center' }}>
+      <div
+        style={{
+          width: '164px',
+          height: '164px',
+          borderRadius: '50%',
+          background: `conic-gradient(${primaryColor} 0deg ${angle}deg, ${secondaryColor} ${angle}deg 360deg)`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative'
+        }}
+      >
+        <div
+          style={{
+            width: '106px',
+            height: '106px',
+            borderRadius: '50%',
+            backgroundColor: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            padding: '8px',
+            boxSizing: 'border-box',
+            fontSize: '18px',
+            fontWeight: 700,
+            color: '#111827',
+            lineHeight: 1.3
+          }}
+        >
+          {centerLabel}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: '8px', width: '100%' }}>
+        <LegendItem color={primaryColor} label={primaryLabel} value={primaryValue} />
+        <LegendItem color={secondaryColor} label={secondaryLabel} value={secondaryValue} />
+      </div>
+    </div>
+  );
+};
+
+const LegendItem = ({ color, label, value }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', fontSize: '13px', color: '#475569' }}>
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+      <span style={{ width: '10px', height: '10px', borderRadius: '999px', backgroundColor: color, flexShrink: 0 }} />
+      <span>{label}</span>
+    </div>
+    <strong style={{ fontSize: '14px', color: '#111827' }}>{value}</strong>
+  </div>
+);
+
+const LineMetric = ({ title, series, color, suffix = '' }) => {
+  const safeSeries = Array.isArray(series) && series.length > 0
+    ? series
+    : Array.from({ length: 7 }, (_, index) => ({ label: `${index + 1}`, value: 0 }));
+  const maxValue = Math.max(...safeSeries.map((item) => Number(item.value || 0)), 1);
+  const points = safeSeries.map((item, index) => {
+    const x = safeSeries.length === 1 ? 0 : (index / (safeSeries.length - 1)) * 100;
+    const y = 100 - ((Number(item.value || 0) / maxValue) * 100);
+    return `${x},${y}`;
+  }).join(' ');
+  const latestValue = Number(safeSeries[safeSeries.length - 1]?.value || 0);
+
+  return (
+    <div style={{ display: 'grid', gap: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline' }}>
+        <div style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>{title}</div>
+        <div style={{ fontSize: '13px', color: '#64748b' }}>
+          最新 {latestValue}{suffix}
+        </div>
+      </div>
+
+      <div style={{ position: 'relative', height: '144px', borderRadius: '16px', backgroundColor: '#f8fafc', padding: '14px 14px 28px', boxSizing: 'border-box' }}>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+          {[25, 50, 75].map((line) => (
+            <line key={line} x1="0" y1={line} x2="100" y2={line} stroke="#e2e8f0" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+          ))}
+          <polyline
+            fill="none"
+            stroke={color}
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={points}
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+        <div style={{ position: 'absolute', left: '14px', right: '14px', bottom: '10px', display: 'grid', gridTemplateColumns: `repeat(${safeSeries.length}, minmax(0, 1fr))`, gap: '8px' }}>
+          {safeSeries.map((item) => (
+            <div key={item.label} style={{ fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+              {item.label}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MultiLineMetric = ({ title, seriesList = [] }) => {
+  const normalizedSeriesList = seriesList.filter((item) => Array.isArray(item.series) && item.series.length > 0);
+  const fallbackSeries = Array.from({ length: 7 }, (_, index) => ({ label: `${index + 1}`, value: 0 }));
+  const baseSeries = normalizedSeriesList[0]?.series || fallbackSeries;
+  const maxValue = Math.max(
+    1,
+    ...normalizedSeriesList.flatMap((item) => item.series.map((point) => Number(point.value || 0)))
+  );
+
+  const buildPoints = (series) => series.map((item, index) => {
+    const x = series.length === 1 ? 0 : (index / (series.length - 1)) * 100;
+    const y = 100 - ((Number(item.value || 0) / maxValue) * 100);
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <div style={{ display: 'grid', gap: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>{title}</div>
+        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+          {normalizedSeriesList.map((item) => (
+            <div key={item.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#475569' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '999px', backgroundColor: item.color }} />
+              <span>{item.label}</span>
+              <strong style={{ color: '#111827' }}>{Number(item.series[item.series.length - 1]?.value || 0)}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ position: 'relative', height: '160px', borderRadius: '16px', backgroundColor: '#f8fafc', padding: '14px 14px 28px', boxSizing: 'border-box' }}>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+          {[25, 50, 75].map((line) => (
+            <line key={line} x1="0" y1={line} x2="100" y2={line} stroke="#e2e8f0" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+          ))}
+          {normalizedSeriesList.map((item) => (
+            <polyline
+              key={item.key}
+              fill="none"
+              stroke={item.color}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              points={buildPoints(item.series)}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+        <div style={{ position: 'absolute', left: '14px', right: '14px', bottom: '10px', display: 'grid', gridTemplateColumns: `repeat(${baseSeries.length}, minmax(0, 1fr))`, gap: '8px' }}>
+          {baseSeries.map((item) => (
+            <div key={item.label} style={{ fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+              {item.label}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const metricKickerStyle = {
+  fontSize: '12px',
+  fontWeight: 700,
+  color: '#94a3b8',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase'
+};
+
+const metricBigValueStyle = {
+  marginTop: '8px',
+  fontSize: '42px',
+  fontWeight: 700,
+  color: '#111827',
+  lineHeight: 1
 };
 
 export default Dashboard;

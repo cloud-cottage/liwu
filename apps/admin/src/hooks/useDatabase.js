@@ -29,6 +29,11 @@ export const useDatabase = () => {
   const [users, setUsers] = useState([]);
   const [tags, setTags] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [overviewStats, setOverviewStats] = useState({
+    awarenessDailyCounts: [],
+    meditationDailyCounts: [],
+    meditationDailyDurationMinutes: []
+  });
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
   const [awarenessDisplaySettings, setAwarenessDisplaySettings] = useState(DEFAULT_AWARENESS_DISPLAY);
@@ -78,6 +83,11 @@ export const useDatabase = () => {
       setUsers(dashboardData.users);
       setTags(dashboardData.tags);
       setCategories(dashboardData.categories);
+      setOverviewStats(dashboardData.overviewStats || {
+        awarenessDailyCounts: [],
+        meditationDailyCounts: [],
+        meditationDailyDurationMinutes: []
+      });
       setMeditationSettings(nextMeditationSettings);
       setAwarenessTagSettings(nextAwarenessTagSettings);
       setAwarenessDisplaySettings(nextAwarenessDisplaySettings);
@@ -103,6 +113,11 @@ export const useDatabase = () => {
       setUsers([]);
       setTags([]);
       setCategories([]);
+      setOverviewStats({
+        awarenessDailyCounts: [],
+        meditationDailyCounts: [],
+        meditationDailyDurationMinutes: []
+      });
       setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setAwarenessDisplaySettings(DEFAULT_AWARENESS_DISPLAY);
@@ -141,6 +156,11 @@ export const useDatabase = () => {
       setUsers([]);
       setTags([]);
       setCategories([]);
+      setOverviewStats({
+        awarenessDailyCounts: [],
+        meditationDailyCounts: [],
+        meditationDailyDurationMinutes: []
+      });
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setAwarenessDisplaySettings(DEFAULT_AWARENESS_DISPLAY);
       setBadgeSettings(DEFAULT_BADGE_SETTINGS);
@@ -418,6 +438,7 @@ export const useDatabase = () => {
     users,
     tags,
     categories,
+    overviewStats,
     meditationSettings,
     awarenessTagSettings,
     awarenessDisplaySettings,
