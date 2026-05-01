@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+  ArrowRight,
   CheckCircle2,
   Copy,
   Share2,
@@ -1006,7 +1007,7 @@ const Record = () => {
   return (
     <div
       style={{
-        padding: '20px',
+        padding: '18px',
         paddingBottom: '100px',
         minHeight: '100vh',
         backgroundColor: 'var(--color-bg-primary)'
@@ -1014,20 +1015,111 @@ const Record = () => {
     >
       <InlineToast message={toastMessage} onClose={() => setToastMessage('')} />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-        <div>
-          <h1
+      <header
+        style={{
+          marginTop: '8px',
+          marginBottom: '18px',
+          padding: '18px',
+          borderRadius: '24px',
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,245,239,0.94))',
+          boxShadow: 'var(--shadow-sm)',
+          border: '1px solid rgba(143, 165, 138, 0.12)'
+        }}
+      >
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+          <span
             style={{
-              fontSize: '28px',
-              fontFamily: 'var(--font-serif)',
-              color: 'var(--color-text-primary)',
-              margin: 0
+              padding: '6px 10px',
+              borderRadius: '999px',
+              background: 'rgba(143, 165, 138, 0.12)',
+              color: 'var(--color-accent-clay)',
+              fontSize: '11px',
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase'
             }}
           >
-            觉察
-          </h1>
+            Awareness
+          </span>
         </div>
-      </div>
+
+        <h1
+          style={{
+            fontSize: '32px',
+            fontFamily: 'var(--font-serif)',
+            color: 'var(--color-text-primary)',
+            margin: 0
+          }}
+        >
+          觉察
+        </h1>
+        <p style={{ color: 'var(--color-text-secondary)', marginTop: '10px', lineHeight: 1.7 }}>
+          把此刻命名清楚，再安静地把它交还给自己。
+        </p>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '12px',
+            marginTop: '16px'
+          }}
+        >
+          <div
+            style={{
+              padding: '14px',
+              borderRadius: '18px',
+              background: 'rgba(248, 245, 239, 0.92)',
+              border: '1px solid rgba(143, 165, 138, 0.12)'
+            }}
+          >
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#4d5a4b' }}>当前身份</div>
+            <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: 700, color: '#111827' }}>
+              {authStatus.isAuthenticated ? (currentUser?.isStudent ? '学员' : '普通用户') : '游客'}
+            </div>
+          </div>
+
+          <div
+            style={{
+              padding: '14px',
+              borderRadius: '18px',
+              background: 'rgba(248, 245, 239, 0.92)',
+              border: '1px solid rgba(143, 165, 138, 0.12)'
+            }}
+          >
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#4d5a4b' }}>我的常用</div>
+            <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: 700, color: '#111827' }}>
+              {userTags.length} 条
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            const targetSection = document.getElementById('awareness-composer-card');
+            targetSection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+          style={{
+            marginTop: '14px',
+            border: 'none',
+            borderRadius: '999px',
+            padding: '10px 14px',
+            background: 'var(--theme-button-primary-bg)',
+            color: 'var(--theme-button-primary-text)',
+            fontSize: '12px',
+            fontWeight: 700,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            cursor: 'pointer',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <span>开始觉察</span>
+          <ArrowRight size={14} />
+        </button>
+      </header>
 
       {(error || cloudError) && (
         <div
@@ -1048,14 +1140,18 @@ const Record = () => {
 
       {!pendingQueueItem && (
         <div
+          id="awareness-composer-card"
           style={{
-            backgroundColor: '#fff',
+            background: 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,245,239,0.94))',
             padding: '24px',
-            borderRadius: '16px',
+            borderRadius: '20px',
             boxShadow: 'var(--shadow-sm)',
             marginBottom: '24px'
           }}
         >
+          <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: '#8fa58a', textTransform: 'uppercase', marginBottom: '12px' }}>
+            觉察此刻
+          </div>
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: '16px' }}>
               <input

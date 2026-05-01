@@ -1,3 +1,7 @@
+.orders-page-shell {
+  padding-bottom: 44rpx;
+}
+
 .order-list {
   display: grid;
   gap: 18rpx;
@@ -5,18 +9,47 @@
 
 .order-card {
   display: grid;
-  gap: 10rpx;
+  gap: 18rpx;
+  background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,245,239,0.94) 100%);
+}
+
+.order-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
 }
 
 .order-no {
   font-size: 28rpx;
+  line-height: 1.5;
   font-weight: 700;
-  color: #0f172a;
+  color: #1f2937;
+  word-break: break-all;
 }
 
-.order-meta {
+.order-summary {
+  display: grid;
+  gap: 12rpx;
+}
+
+.order-summary-item {
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.order-summary-label {
   font-size: 22rpx;
-  color: #64748b;
+  color: #6b7280;
+}
+
+.order-summary-value {
+  margin-top: 8rpx;
+  font-size: 25rpx;
+  line-height: 1.5;
+  color: #1f2937;
+  font-weight: 600;
 }
 
 .order-items {
@@ -26,23 +59,29 @@
 
 .order-item {
   padding: 16rpx 18rpx;
-  border-radius: 18rpx;
-  background: #f8fafc;
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1rpx solid rgba(143, 165, 138, 0.12);
 }
 
 .order-item-name {
   font-size: 24rpx;
   font-weight: 600;
-  color: #0f172a;
+  color: #1f2937;
 }
 
 .order-item-subtitle {
   margin-top: 6rpx;
-  font-size: 20rpx;
-  color: #64748b;
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: #6b7280;
+}
+
+.empty-card {
+  text-align: center;
 }
 
 .empty-text {
   font-size: 24rpx;
-  color: #94a3b8;
+  color: #6b7280;
 }

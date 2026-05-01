@@ -1,5 +1,5 @@
 const { getProfilePageData, saveLocalProfile } = require('../../utils/profile')
-const { openMiniRoute } = require('../../utils/navigation')
+const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
 
 Page({
   data: {
@@ -7,6 +7,7 @@ Page({
     saving: false,
     profile: null,
     recentTags: [],
+    recentWealthEntries: [],
     awareCount: 0,
     form: {
       name: '',
@@ -17,6 +18,10 @@ Page({
 
   onLoad() {
     void this.loadPageData()
+  },
+
+  onShow() {
+    syncMiniTabBar(this, '/pages/profile/index')
   },
 
   async onPullDownRefresh() {
@@ -32,7 +37,9 @@ Page({
       this.setData({
         loading: false,
         profile: pageData.profile,
+        profileInitial: (pageData.profile.name || '悟').slice(0, 1),
         recentTags: pageData.tags,
+        recentWealthEntries: pageData.recentWealthEntries,
         awareCount: pageData.awareCount,
         form: {
           name: pageData.profile.name,
@@ -65,7 +72,11 @@ Page({
       app.globalData.profile = nextProfile
       this.setData({
         saving: false,
-        profile: nextProfile
+        profile: {
+          ...this.data.profile,
+          ...nextProfile
+        },
+        profileInitial: (nextProfile.name || '悟').slice(0, 1)
       })
       wx.showToast({
         title: '已保存',
@@ -86,6 +97,10 @@ Page({
 
   handleGoAddresses() {
     openMiniRoute('/pages/profile/addresses/index')
+  },
+
+  handleShowAlbumSoon() {
+    openMiniRoute('/pages/profile/album/index')
   },
 
   onShareAppMessage() {

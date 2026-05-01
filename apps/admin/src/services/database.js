@@ -42,8 +42,13 @@ import {
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
+const MEDITATION_AUDIO_LIBRARY_KEY = 'meditation_audio_library';
+const MEDITATION_COMPOSITION_SETTINGS_KEY = 'meditation_composition_settings';
+const MEDITATION_CALENDAR_KEY = 'meditation_calendar';
+const MEDITATION_LIBRARY_KEY = 'meditation_library';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
 const AWARENESS_MOCK_LIBRARY_SETTINGS_KEY = 'awareness_mock_library';
+const CLIENT_DISTRIBUTION_SETTINGS_KEY = 'client_distribution_settings';
 const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
 const LIFETIME_STUDENT_EXPIRES_AT = '2999-12-31T23:59:59.000Z';
 const AWARENESS_MOCK_USER_UID_START = 33;
@@ -114,8 +119,42 @@ export const DEFAULT_USER_AVATAR_OPTIONS = {
   ...DEFAULT_USER_AVATAR_OPTIONS_SETTINGS
 };
 
+export const DEFAULT_CLIENT_DISTRIBUTION_SETTINGS = {
+  documentId: null,
+  previewUrl: '',
+  androidApkUrl: '',
+  iosDistributionUrl: '',
+  missingCollection: false
+};
+
 export const DEFAULT_STUDENT_MEMBERSHIP_SETTINGS = {
   ...SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS
+};
+
+export const MEDITATION_AUDIO_LIBRARY_TYPES = ['bowl', 'greeting', 'nature', 'breath', 'quote', 'goodbye'];
+
+export const DEFAULT_MEDITATION_AUDIO_LIBRARY = {
+  documentId: null,
+  items: [],
+  missingCollection: false
+};
+
+export const DEFAULT_MEDITATION_COMPOSITION_SETTINGS = {
+  documentId: null,
+  segments: [],
+  missingCollection: false
+};
+
+export const DEFAULT_MEDITATION_CALENDAR = {
+  documentId: null,
+  days: {},
+  missingCollection: false
+};
+
+export const DEFAULT_MEDITATION_LIBRARY = {
+  documentId: null,
+  meditations: [],
+  missingCollection: false
 };
 
 export const DEFAULT_DASHBOARD_OVERVIEW_STATS = {
@@ -263,6 +302,14 @@ const normalizeShopOrderItem = (item = {}) => ({
   productType: item.product_type || item.productType || 'physical'
 });
 
+const normalizeClientDistributionSettings = (document = {}) => ({
+  documentId: getDocumentId(document) || null,
+  previewUrl: document.preview_url || document.previewUrl || '',
+  androidApkUrl: document.android_apk_url || document.androidApkUrl || '',
+  iosDistributionUrl: document.ios_distribution_url || document.iosDistributionUrl || '',
+  missingCollection: false
+});
+
 const toShopProductPayload = (productData = {}) => ({
   name: productData.name || '',
   subtitle: productData.subtitle || '',
@@ -298,6 +345,13 @@ const toShopSkuPayload = (skuData = {}, productId) => ({
   lock_stock: Number(skuData.lockStock || 0),
   status: skuData.status || 'active',
   weight: Number(skuData.weight || 0)
+});
+
+const toClientDistributionSettingsPayload = (settingsData = {}) => ({
+  key: CLIENT_DISTRIBUTION_SETTINGS_KEY,
+  preview_url: String(settingsData.previewUrl || '').trim(),
+  android_apk_url: String(settingsData.androidApkUrl || '').trim(),
+  ios_distribution_url: String(settingsData.iosDistributionUrl || '').trim()
 });
 
 const createWealthHistoryEntry = ({ amount, description, source, relatedUserId = '' }) => ({
@@ -781,6 +835,124 @@ const attachTagsToUsers = (users, tags, categories, userTagLinks, userStatsById 
     categories: categories.map(normalizeCategory)
   };
 };
+
+const normalizeMeditationAudioItem = (item = {}) => ({
+  id: item._id || item.id || '',
+  type: item.type || 'bowl',
+  title: item.title || '',
+  fileId: item.file_id || item.fileId || '',
+  audioUrl: item.audio_url || item.audioUrl || '',
+  duration: Number(item.duration ?? 0),
+  ttsText: item.tts_text || item.ttsText || '',
+  createdAt: item.created_at || item.createdAt || ''
+});
+
+const normalizeMeditationAudioLibrary = (doc = {}) => ({
+  documentId: getDocumentId(doc) || null,
+  items: Array.isArray(doc.items) ? doc.items.map(normalizeMeditationAudioItem) : [],
+  missingCollection: false
+});
+
+const normalizeMeditationSegment = (seg = {}) => ({
+  id: seg.id || '',
+  type: seg.type || 'bowl',
+  startSeconds: Number(seg.start_seconds ?? seg.startSeconds ?? 0),
+  durationSeconds: Number(seg.duration_seconds ?? seg.durationSeconds ?? 0),
+  audioItemId: seg.audio_item_id || seg.audioItemId || ''
+});
+
+const normalizeMeditationCompositionSettings = (doc = {}) => ({
+  documentId: getDocumentId(doc) || null,
+  segments: Array.isArray(doc.segments) ? doc.segments.map(normalizeMeditationSegment) : [],
+  missingCollection: false
+});
+
+const normalizeMeditationCalendarDay = (day = {}) => ({
+  morning: day.morning || '',
+  noon: day.noon || '',
+  afternoon: day.afternoon || '',
+  evening: day.evening || ''
+});
+
+const normalizeMeditationCalendar = (doc = {}) => ({
+  documentId: getDocumentId(doc) || null,
+  days: Object.fromEntries(
+    Object.entries(doc.days || {}).map(([dateKey, day]) => [dateKey, normalizeMeditationCalendarDay(day)])
+  ),
+  missingCollection: false
+});
+
+const toMeditationAudioLibraryPayload = (data = {}) => ({
+  key: MEDITATION_AUDIO_LIBRARY_KEY,
+  items: Array.isArray(data.items) ? data.items.map((item) => ({
+    id: item.id || '',
+    type: item.type || 'bowl',
+    title: item.title || '',
+    file_id: item.fileId || item.file_id || '',
+    audio_url: item.audioUrl || item.audio_url || '',
+    duration: Number(item.duration ?? 0),
+    tts_text: item.ttsText || item.tts_text || '',
+    created_at: item.createdAt || item.created_at || new Date().toISOString()
+  })) : []
+});
+
+const toMeditationCompositionSettingsPayload = (data = {}) => ({
+  key: MEDITATION_COMPOSITION_SETTINGS_KEY,
+  segments: Array.isArray(data.segments) ? data.segments.map((seg) => ({
+    id: seg.id || '',
+    type: seg.type || 'bowl',
+    start_seconds: Number(seg.startSeconds ?? seg.start_seconds ?? 0),
+    duration_seconds: Number(seg.durationSeconds ?? seg.duration_seconds ?? 0),
+    audio_item_id: seg.audioItemId || seg.audio_item_id || ''
+  })) : []
+});
+
+const toMeditationCalendarPayload = (data = {}) => ({
+  key: MEDITATION_CALENDAR_KEY,
+  days: Object.fromEntries(
+    Object.entries(data.days || {}).map(([dateKey, day]) => [dateKey, {
+      morning: day.morning || '',
+      noon: day.noon || '',
+      afternoon: day.afternoon || '',
+      evening: day.evening || ''
+    }])
+  )
+});
+
+const normalizeMeditationLibraryItem = (item = {}) => ({
+  id: item.id || '',
+  name: item.name || '',
+  sections: {
+    bowl: Array.isArray(item.sections?.bowl) ? item.sections.bowl : [],
+    greeting: Array.isArray(item.sections?.greeting) ? item.sections.greeting : [],
+    nature: Array.isArray(item.sections?.nature) ? item.sections.nature : [],
+    breath: Array.isArray(item.sections?.breath) ? item.sections.breath : [],
+    quote: Array.isArray(item.sections?.quote) ? item.sections.quote : [],
+    goodbye: Array.isArray(item.sections?.goodbye) ? item.sections.goodbye : []
+  }
+});
+
+const normalizeMeditationLibrary = (doc = {}) => ({
+  documentId: getDocumentId(doc) || null,
+  meditations: Array.isArray(doc.meditations) ? doc.meditations.map(normalizeMeditationLibraryItem) : [],
+  missingCollection: false
+});
+
+const toMeditationLibraryPayload = (data = {}) => ({
+  key: MEDITATION_LIBRARY_KEY,
+  meditations: Array.isArray(data.meditations) ? data.meditations.map((item) => ({
+    id: item.id || '',
+    name: item.name || '',
+    sections: {
+      bowl: Array.isArray(item.sections?.bowl) ? item.sections.bowl : [],
+      greeting: Array.isArray(item.sections?.greeting) ? item.sections.greeting : [],
+      nature: Array.isArray(item.sections?.nature) ? item.sections.nature : [],
+      breath: Array.isArray(item.sections?.breath) ? item.sections.breath : [],
+      quote: Array.isArray(item.sections?.quote) ? item.sections.quote : [],
+      goodbye: Array.isArray(item.sections?.goodbye) ? item.sections.goodbye : []
+    }
+  })) : []
+});
 
 class DatabaseService {
   static async getShopManagementData() {
@@ -2001,6 +2173,85 @@ class DatabaseService {
     }
   }
 
+  static async getClientDistributionSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: CLIENT_DISTRIBUTION_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_CLIENT_DISTRIBUTION_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_CLIENT_DISTRIBUTION_SETTINGS };
+      }
+
+      return normalizeClientDistributionSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_CLIENT_DISTRIBUTION_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching client distribution settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveClientDistributionSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: CLIENT_DISTRIBUTION_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocument = getFirstDocument(existingResult, collections.appSettings);
+      const payload = {
+        ...toClientDistributionSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocument) {
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeClientDistributionSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeClientDistributionSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving client distribution settings:', error);
+      throw error;
+    }
+  }
+
   static async getUsers() {
     try {
       await ensureAnonymousLogin();
@@ -2232,6 +2483,246 @@ class DatabaseService {
       }
     } catch (error) {
       console.error('Error updating user tags:', error);
+      throw error;
+    }
+  }
+
+  static async getMeditationAudioLibrary() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_AUDIO_LIBRARY_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return { ...DEFAULT_MEDITATION_AUDIO_LIBRARY, missingCollection: true };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_MEDITATION_AUDIO_LIBRARY };
+      }
+
+      return normalizeMeditationAudioLibrary(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return { ...DEFAULT_MEDITATION_AUDIO_LIBRARY, missingCollection: true };
+      }
+      console.error('Error fetching meditation audio library:', error);
+      throw error;
+    }
+  }
+
+  static async saveMeditationAudioLibrary(data) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_AUDIO_LIBRARY_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = { ...toMeditationAudioLibraryPayload(data), updated_at: new Date() };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeMeditationAudioLibrary({ ...existingDocument, ...payload });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      return normalizeMeditationAudioLibrary({ ...payload, _id: createResult.id });
+    } catch (error) {
+      console.error('Error saving meditation audio library:', error);
+      throw error;
+    }
+  }
+
+  static async getMeditationCompositionSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_COMPOSITION_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return { ...DEFAULT_MEDITATION_COMPOSITION_SETTINGS, missingCollection: true };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_MEDITATION_COMPOSITION_SETTINGS };
+      }
+
+      return normalizeMeditationCompositionSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return { ...DEFAULT_MEDITATION_COMPOSITION_SETTINGS, missingCollection: true };
+      }
+      console.error('Error fetching meditation composition settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveMeditationCompositionSettings(data) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_COMPOSITION_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = { ...toMeditationCompositionSettingsPayload(data), updated_at: new Date() };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeMeditationCompositionSettings({ ...existingDocument, ...payload });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      return normalizeMeditationCompositionSettings({ ...payload, _id: createResult.id });
+    } catch (error) {
+      console.error('Error saving meditation composition settings:', error);
+      throw error;
+    }
+  }
+
+  static async getMeditationCalendar() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_CALENDAR_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return { ...DEFAULT_MEDITATION_CALENDAR, missingCollection: true };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_MEDITATION_CALENDAR };
+      }
+
+      return normalizeMeditationCalendar(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return { ...DEFAULT_MEDITATION_CALENDAR, missingCollection: true };
+      }
+      console.error('Error fetching meditation calendar:', error);
+      throw error;
+    }
+  }
+
+  static async saveMeditationCalendar(data) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_CALENDAR_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = { ...toMeditationCalendarPayload(data), updated_at: new Date() };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeMeditationCalendar({ ...existingDocument, ...payload });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      return normalizeMeditationCalendar({ ...payload, _id: createResult.id });
+    } catch (error) {
+      console.error('Error saving meditation calendar:', error);
+      throw error;
+    }
+  }
+
+  static async getMeditationLibrary() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_LIBRARY_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return { ...DEFAULT_MEDITATION_LIBRARY, missingCollection: true };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_MEDITATION_LIBRARY };
+      }
+
+      return normalizeMeditationLibrary(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return { ...DEFAULT_MEDITATION_LIBRARY, missingCollection: true };
+      }
+      console.error('Error fetching meditation library:', error);
+      throw error;
+    }
+  }
+
+  static async saveMeditationLibrary(data) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: MEDITATION_LIBRARY_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = { ...toMeditationLibraryPayload(data), updated_at: new Date() };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeMeditationLibrary({ ...existingDocument, ...payload });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      return normalizeMeditationLibrary({ ...payload, _id: createResult.id });
+    } catch (error) {
+      console.error('Error saving meditation library:', error);
       throw error;
     }
   }

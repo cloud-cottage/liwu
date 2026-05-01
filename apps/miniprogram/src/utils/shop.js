@@ -59,6 +59,7 @@ const normalizeProduct = (product = {}) => ({
   name: product.name || '',
   subtitle: product.subtitle || '',
   categoryId: product.category_id || product.categoryId || '',
+  relatedProductId: product.related_product_id || product.relatedProductId || '',
   productType: product.product_type || product.productType || 'physical',
   coverImage: product.cover_image || product.coverImage || '',
   description: product.description || '',
@@ -148,6 +149,9 @@ const getOrCreateCurrentUser = async () => {
       uid: getUserUid(existingUser) || resolvedUid,
       inviteCode: formatNaturalNumber(getUserUid(existingUser) || resolvedUid),
       name: existingUser.name || buildDefaultUserName(resolvedUid),
+      phone: existingUser.phone || profile.phone || '',
+      isStudent: Boolean(existingUser.is_student ?? existingUser.isStudent),
+      studentExpireAt: existingUser.student_expire_at || existingUser.studentExpireAt || '',
       balance: Number(existingUser.balance || 0),
       wealthHistory: existingUser.wealth_history || []
     }
@@ -180,6 +184,9 @@ const getOrCreateCurrentUser = async () => {
     id: createResult._id || createResult.id || '',
     uid: nextUid,
     inviteCode: formatNaturalNumber(nextUid),
+    phone: payload.phone,
+    isStudent: false,
+    studentExpireAt: '',
     balance: 0,
     wealthHistory: [],
     name: payload.name
@@ -201,7 +208,13 @@ const getCurrentShopProfile = async () => {
   return {
     id: currentUser.id,
     name: currentUser.name || '',
-    balance: Number(currentUser.balance || 0)
+    uid: Number(currentUser.uid || 0),
+    inviteCode: currentUser.inviteCode || '',
+    phone: currentUser.phone || '',
+    isStudent: Boolean(currentUser.isStudent),
+    studentExpireAt: currentUser.studentExpireAt || '',
+    balance: Number(currentUser.balance || 0),
+    wealthHistory: currentUser.wealthHistory || []
   }
 }
 
@@ -248,10 +261,25 @@ const getShopProductDetail = async (productId) => {
   }
 
   const product = normalizeProduct(productDoc)
+  let relatedProduct = null
+
+  if (product.relatedProductId) {
+    try {
+      const relatedProductResult = await db.collection(SHOP_PRODUCTS).doc(product.relatedProductId).get()
+      const relatedProductDocument = relatedProductResult.data || {}
+      if (relatedProductDocument._id || relatedProductDocument.id) {
+        relatedProduct = normalizeProduct(relatedProductDocument)
+      }
+    } catch (error) {
+      relatedProduct = null
+    }
+  }
+
   return {
     ...product,
     category: categories.find((item) => item.id === product.categoryId) || null,
-    skus: (skuResult.data || []).map(normalizeSku)
+    skus: (skuResult.data || []).map(normalizeSku),
+    relatedProduct
   }
 }
 

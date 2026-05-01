@@ -3,6 +3,14 @@ const { getDb } = require('./cloudbase')
 const THEME_SETTINGS_KEY = 'client_theme_settings'
 
 const MINIPROGRAM_THEME_PRESETS = {
+  IvoryAndSage: {
+    name: 'IvoryAndSage',
+    navigationBarBackgroundColor: '#F3F0EA',
+    navigationBarTextStyle: 'black',
+    backgroundColor: '#F3F0EA',
+    pageBackground: '#F3F0EA',
+    textPrimary: '#1F2937'
+  },
   OrangeGold: {
     name: 'OrangeGold',
     navigationBarBackgroundColor: '#F5F5F0',
@@ -21,8 +29,8 @@ const MINIPROGRAM_THEME_PRESETS = {
   }
 }
 
-const getThemePreset = (themeName = 'OrangeGold') => (
-  MINIPROGRAM_THEME_PRESETS[themeName] || MINIPROGRAM_THEME_PRESETS.OrangeGold
+const getThemePreset = (themeName = 'IvoryAndSage') => (
+  MINIPROGRAM_THEME_PRESETS[themeName] || MINIPROGRAM_THEME_PRESETS.IvoryAndSage
 )
 
 const getThemeSettings = async () => {
@@ -31,11 +39,11 @@ const getThemeSettings = async () => {
     const result = await db.collection('app_settings').where({ key: THEME_SETTINGS_KEY }).limit(1).get()
     const document = Array.isArray(result?.data) ? result.data[0] : null
     return {
-      theme: getThemePreset(document?.theme || 'OrangeGold').name
+      theme: getThemePreset(document?.theme || 'IvoryAndSage').name
     }
   } catch (error) {
     return {
-      theme: 'OrangeGold',
+      theme: 'IvoryAndSage',
       error
     }
   }

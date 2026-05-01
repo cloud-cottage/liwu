@@ -27,16 +27,36 @@ const MeditationHome = () => {
     return (
         <div className="page-container" style={{ padding: '20px' }}>
             <header style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-                <h1
-                    style={{
-                        fontSize: '28px',
-                        fontFamily: 'var(--font-serif)',
-                        color: 'var(--color-text-primary)',
-                        margin: 0
-                    }}
-                >
-                    静寂
-                </h1>
+                <div>
+                    <div
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '6px 10px',
+                            borderRadius: '999px',
+                            background: 'rgba(143, 165, 138, 0.12)',
+                            color: 'var(--color-accent-clay)',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            letterSpacing: '0.12em',
+                            textTransform: 'uppercase',
+                            marginBottom: '10px'
+                        }}
+                    >
+                        Meditation
+                    </div>
+                    <h1
+                        style={{
+                            fontSize: '28px',
+                            fontFamily: 'var(--font-serif)',
+                            color: 'var(--color-text-primary)',
+                            margin: 0
+                        }}
+                    >
+                        静寂
+                    </h1>
+                </div>
                 {canPlayMeditation && (
                     <button
                         type="button"
@@ -87,7 +107,7 @@ const MeditationHome = () => {
                 </div>
                 <h2 style={{ fontSize: '20px', marginBottom: '10px' }}>当下即是献礼</h2>
                 <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', lineHeight: '1.6', marginBottom: '24px' }}>
-                    给自己 30 分钟的留白。<br />
+                    给自己 15 分钟的留白。<br />
                     在呼吸间寻回内在的秩序
                 </p>
                 <button
@@ -104,7 +124,7 @@ const MeditationHome = () => {
                         boxShadow: 'var(--shadow-md)'
                     }}
                 >
-                    {canPlayMeditation ? '开启冥想' : '登录后开始今日冥想'}
+                    {canPlayMeditation ? '冥想此刻' : '登录后开始今日冥想'}
                 </button>
             </section>
 

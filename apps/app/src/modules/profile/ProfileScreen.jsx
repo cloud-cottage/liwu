@@ -1,33 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Award, BookOpen, MessageSquareText, Smartphone, UserRound, X } from 'lucide-react';
-import { DEFAULT_CLIENT_THEME_SETTINGS } from '@liwu/shared-utils/theme-system.js';
 import FortuneBeanIcon from '../../components/Icons/FortuneBeanIcon.jsx';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useBadgeState } from '../../hooks/useBadgeState.js';
-import { authService, studentMembershipService, themeSettingsService } from '../../services/cloudbase';
+import { authService, studentMembershipService } from '../../services/cloudbase';
 import MembershipOrderModal from './MembershipOrderModal.jsx';
 
 const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/g, '').trim();
 
 const isValidPhoneNumber = (value = '') => /^(?:\+?86)?1\d{10}$/.test(normalizePhoneInput(value));
-
-const getLoginMethodLabel = (loginMethod = '') => {
-  if (loginMethod === 'phone') {
-    return '手机号验证码登录';
-  }
-
-  if (loginMethod === 'wechat') {
-    return '微信登录';
-  }
-
-  if (loginMethod === 'anonymous') {
-    return '游客模式';
-  }
-
-  return '已登录';
-};
 
 const getDisplayName = (authStatus, currentUser) => {
   if (authStatus?.isAnonymous) {
@@ -35,6 +18,43 @@ const getDisplayName = (authStatus, currentUser) => {
   }
 
   return currentUser?.name || authStatus?.displayName || '未登录用户';
+};
+
+const formatRecentFortuneTime = (value) => {
+  const timestamp = new Date(value || 0).getTime();
+
+  if (!timestamp || Number.isNaN(timestamp)) {
+    return '';
+  }
+
+  const diffMs = Math.max(0, Date.now() - timestamp);
+  const diffMinutes = Math.floor(diffMs / 60000);
+
+  if (diffMinutes < 1) {
+    return '刚刚';
+  }
+
+  if (diffMinutes < 60) {
+    return `${diffMinutes} 分钟前`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  const remainingMinutes = diffMinutes % 60;
+
+  if (diffHours < 24) {
+    return remainingMinutes > 0 ? `${diffHours} 小时 ${remainingMinutes} 分钟前` : `${diffHours} 小时前`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) {
+    return `${diffDays} 天前`;
+  }
+
+  return new Date(timestamp).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
 };
 
 const inlinePrimaryButtonStyle = {
@@ -399,30 +419,8 @@ const Profile = () => {
   const [isMembershipModalOpen, setIsMembershipModalOpen] = useState(false);
   const [selectedMembershipPlanKey, setSelectedMembershipPlanKey] = useState('');
   const [submittingMembershipOrder, setSubmittingMembershipOrder] = useState(false);
-  const [showDebugCard, setShowDebugCard] = useState(DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard);
 
   const recentEntries = useMemo(() => history.slice(0, 5), [history]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const nextSettings = await themeSettingsService.getSettings();
-        if (!cancelled) {
-          setShowDebugCard(Boolean(nextSettings.showDebugCard ?? DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard));
-        }
-      } catch {
-        if (!cancelled) {
-          setShowDebugCard(DEFAULT_CLIENT_THEME_SETTINGS.showDebugCard);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!isMembershipModalOpen) {
@@ -628,8 +626,6 @@ const Profile = () => {
 
   const boundPhoneNumber = currentUser?.phone || authStatus.phoneNumber || '';
   const hasBoundPhone = Boolean(String(boundPhoneNumber || '').trim());
-  const inviteCode = currentUser?.inviteCode || '';
-  const debugEmail = currentUser?.email || authStatus.email || '';
 
   return (
     <div style={{ padding: '20px', paddingBottom: '80px' }}>
@@ -925,7 +921,12 @@ const Profile = () => {
                   alignItems: 'center'
                 }}
               >
-                <div style={{ fontSize: '14px' }}>{item.description}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: '14px', color: 'var(--color-text-primary)' }}>{item.description}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                    {formatRecentFortuneTime(item.date || item.createdAt)}
+                  </div>
+                </div>
                 <div
                   style={{
                     fontSize: '14px',
@@ -941,27 +942,6 @@ const Profile = () => {
         )}
       </section>
 
-      {showDebugCard && (
-        <section
-          style={{
-            backgroundColor: '#fff',
-            borderRadius: '14px',
-            padding: '16px',
-            boxShadow: 'var(--shadow-sm)',
-            marginTop: '24px'
-          }}
-        >
-          <div style={{ fontSize: '13px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
-            调试
-          </div>
-          <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
-            登录方式：{getLoginMethodLabel(authStatus.loginMethod)}<br />
-            手机号：{boundPhoneNumber || '未绑定'}<br />
-            邀请码：{inviteCode || '生成中'}<br />
-            {debugEmail ? `邮箱：${debugEmail}` : '邮箱：未绑定'}
-          </div>
-        </section>
-      )}
     </div>
   );
 };

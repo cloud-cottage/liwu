@@ -4,7 +4,12 @@ import DatabaseService, {
   DEFAULT_AWARENESS_DISPLAY,
   DEFAULT_BADGE_SETTINGS,
   DEFAULT_BRAND_CAROUSEL,
+  DEFAULT_CLIENT_DISTRIBUTION_SETTINGS,
   DEFAULT_MEDITATION_SETTINGS,
+  DEFAULT_MEDITATION_AUDIO_LIBRARY,
+  DEFAULT_MEDITATION_COMPOSITION_SETTINGS,
+  DEFAULT_MEDITATION_CALENDAR,
+  DEFAULT_MEDITATION_LIBRARY,
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   DEFAULT_THEME_SETTINGS,
   DEFAULT_USER_AVATAR_OPTIONS
@@ -41,8 +46,17 @@ export const useDatabase = () => {
   const [themeSettings, setThemeSettings] = useState(DEFAULT_THEME_SETTINGS);
   const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
   const [userAvatarOptionsSettings, setUserAvatarOptionsSettings] = useState(DEFAULT_USER_AVATAR_OPTIONS);
+  const [clientDistributionSettings, setClientDistributionSettings] = useState(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
   const [studentMembershipSettings, setStudentMembershipSettings] = useState(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
+  const [meditationAudioLibrary, setMeditationAudioLibrary] = useState(DEFAULT_MEDITATION_AUDIO_LIBRARY);
+  const [meditationCompositionSettings, setMeditationCompositionSettings] = useState(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
+  const [meditationCalendar, setMeditationCalendar] = useState(DEFAULT_MEDITATION_CALENDAR);
+  const [meditationLibrary, setMeditationLibrary] = useState(DEFAULT_MEDITATION_LIBRARY);
+  const [savingMeditationAudioLibrary, setSavingMeditationAudioLibrary] = useState(false);
+  const [savingMeditationCompositionSettings, setSavingMeditationCompositionSettings] = useState(false);
+  const [savingMeditationCalendar, setSavingMeditationCalendar] = useState(false);
+  const [savingMeditationLibrary, setSavingMeditationLibrary] = useState(false);
   const [shopCategories, setShopCategories] = useState([]);
   const [shopProducts, setShopProducts] = useState([]);
   const [shopSkus, setShopSkus] = useState([]);
@@ -56,6 +70,7 @@ export const useDatabase = () => {
   const [savingThemeSettings, setSavingThemeSettings] = useState(false);
   const [savingBrandCarouselSettings, setSavingBrandCarouselSettings] = useState(false);
   const [savingUserAvatarOptionsSettings, setSavingUserAvatarOptionsSettings] = useState(false);
+  const [savingClientDistributionSettings, setSavingClientDistributionSettings] = useState(false);
   const [savingStudentMembershipSettings, setSavingStudentMembershipSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -66,7 +81,7 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessDisplaySettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessDisplaySettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextClientDistributionSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData, nextMeditationAudioLibrary, nextMeditationCompositionSettings, nextMeditationCalendar, nextMeditationLibrary] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
@@ -75,9 +90,14 @@ export const useDatabase = () => {
         DatabaseService.getThemeSettings(),
         DatabaseService.getBrandCarouselSettings(),
         DatabaseService.getUserAvatarOptionsSettings(),
+        DatabaseService.getClientDistributionSettings(),
         DatabaseService.getStudentMembershipSettings(),
         DatabaseService.getAwarenessTagOverview(),
-        DatabaseService.getShopManagementData()
+        DatabaseService.getShopManagementData(),
+        DatabaseService.getMeditationAudioLibrary(),
+        DatabaseService.getMeditationCompositionSettings(),
+        DatabaseService.getMeditationCalendar(),
+        DatabaseService.getMeditationLibrary()
       ]);
 
       setUsers(dashboardData.users);
@@ -95,6 +115,7 @@ export const useDatabase = () => {
       setThemeSettings(nextThemeSettings);
       setBrandCarouselSettings(nextBrandCarouselSettings);
       setUserAvatarOptionsSettings(nextUserAvatarOptionsSettings);
+      setClientDistributionSettings(nextClientDistributionSettings);
       setStudentMembershipSettings(nextStudentMembershipSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
@@ -102,8 +123,12 @@ export const useDatabase = () => {
       setShopSkus(nextShopManagementData.skus);
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
+      setMeditationAudioLibrary(nextMeditationAudioLibrary);
+      setMeditationCompositionSettings(nextMeditationCompositionSettings);
+      setMeditationCalendar(nextMeditationCalendar);
+      setMeditationLibrary(nextMeditationLibrary);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextStudentMembershipSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextClientDistributionSettings.missingCollection || nextStudentMembershipSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -125,6 +150,7 @@ export const useDatabase = () => {
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
+      setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -132,6 +158,10 @@ export const useDatabase = () => {
       setShopSkus([]);
       setShopOrders([]);
       setShopOrderItems([]);
+      setMeditationAudioLibrary(DEFAULT_MEDITATION_AUDIO_LIBRARY);
+      setMeditationCompositionSettings(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
+      setMeditationCalendar(DEFAULT_MEDITATION_CALENDAR);
+      setMeditationLibrary(DEFAULT_MEDITATION_LIBRARY);
     } finally {
       setLoading(false);
     }
@@ -167,6 +197,7 @@ export const useDatabase = () => {
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
+      setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -174,6 +205,10 @@ export const useDatabase = () => {
       setShopSkus([]);
       setShopOrders([]);
       setShopOrderItems([]);
+      setMeditationAudioLibrary(DEFAULT_MEDITATION_AUDIO_LIBRARY);
+      setMeditationCompositionSettings(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
+      setMeditationCalendar(DEFAULT_MEDITATION_CALENDAR);
+      setMeditationLibrary(DEFAULT_MEDITATION_LIBRARY);
     } finally {
       setLoading(false);
     }
@@ -389,6 +424,23 @@ export const useDatabase = () => {
     }
   };
 
+  const updateClientDistributionSettings = async (settingsData) => {
+    try {
+      setSavingClientDistributionSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveClientDistributionSettings(settingsData);
+      setClientDistributionSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating client distribution settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingClientDistributionSettings(false);
+    }
+  };
+
   const updateStudentMembershipSettings = async (settingsData) => {
     try {
       setSavingStudentMembershipSettings(true);
@@ -428,6 +480,70 @@ export const useDatabase = () => {
     }
   };
 
+  const updateMeditationAudioLibrary = async (data) => {
+    try {
+      setSavingMeditationAudioLibrary(true);
+      setSettingsError(null);
+      const saved = await DatabaseService.saveMeditationAudioLibrary(data);
+      setMeditationAudioLibrary(saved);
+      return saved;
+    } catch (err) {
+      console.error('Error updating meditation audio library:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingMeditationAudioLibrary(false);
+    }
+  };
+
+  const updateMeditationCompositionSettings = async (data) => {
+    try {
+      setSavingMeditationCompositionSettings(true);
+      setSettingsError(null);
+      const saved = await DatabaseService.saveMeditationCompositionSettings(data);
+      setMeditationCompositionSettings(saved);
+      return saved;
+    } catch (err) {
+      console.error('Error updating meditation composition settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingMeditationCompositionSettings(false);
+    }
+  };
+
+  const updateMeditationCalendar = async (data) => {
+    try {
+      setSavingMeditationCalendar(true);
+      setSettingsError(null);
+      const saved = await DatabaseService.saveMeditationCalendar(data);
+      setMeditationCalendar(saved);
+      return saved;
+    } catch (err) {
+      console.error('Error updating meditation calendar:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingMeditationCalendar(false);
+    }
+  };
+
+  const updateMeditationLibrary = async (data) => {
+    try {
+      setSavingMeditationLibrary(true);
+      setSettingsError(null);
+      const saved = await DatabaseService.saveMeditationLibrary(data);
+      setMeditationLibrary(saved);
+      return saved;
+    } catch (err) {
+      console.error('Error updating meditation library:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingMeditationLibrary(false);
+    }
+  };
+
   // Initialize on mount
   useEffect(() => {
     void initializeDatabase();
@@ -446,6 +562,7 @@ export const useDatabase = () => {
     themeSettings,
     brandCarouselSettings,
     userAvatarOptionsSettings,
+    clientDistributionSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -453,6 +570,10 @@ export const useDatabase = () => {
     shopSkus,
     shopOrders,
     shopOrderItems,
+    meditationAudioLibrary,
+    meditationCompositionSettings,
+    meditationCalendar,
+    meditationLibrary,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
@@ -461,10 +582,15 @@ export const useDatabase = () => {
     savingThemeSettings,
     savingBrandCarouselSettings,
     savingUserAvatarOptionsSettings,
+    savingClientDistributionSettings,
     savingStudentMembershipSettings,
+    savingMeditationAudioLibrary,
+    savingMeditationCompositionSettings,
+    savingMeditationCalendar,
+    savingMeditationLibrary,
     loading,
     error,
-    
+
     // Operations
     loadData,
     updateUser,
@@ -481,11 +607,16 @@ export const useDatabase = () => {
     updateThemeSettings,
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
+    updateClientDistributionSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,
+    updateMeditationAudioLibrary,
+    updateMeditationCompositionSettings,
+    updateMeditationCalendar,
+    updateMeditationLibrary,
     initializeDatabase,
-    
+
     // Utility
     refresh: loadData
   };

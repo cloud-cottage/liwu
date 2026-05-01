@@ -1,10 +1,15 @@
 <view class="page-shell shop-page-shell">
+  <view class="page-header">
+    <view class="page-title">工坊</view>
+    <view class="page-caption">用福豆兑换适合静心、阅读与日常安住的小器物。</view>
+  </view>
+
   <view class="section-card shop-hero-card">
     <view class="shop-hero-head">
       <view>
-        <view class="shop-hero-label">LIWU SHOP</view>
-        <view class="section-title">工坊</view>
-        <view class="section-subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</view>
+        <view class="section-kicker">工坊陈列</view>
+        <view class="section-title">今日陈列</view>
+        <view class="section-subtitle">从日常仪式、空间器物到心意礼物，挑一件适合此刻练习的物品。</view>
       </view>
       <view class="shop-balance-card">
         <view class="shop-balance-label">当前福豆</view>
@@ -64,7 +69,6 @@
 
   <view class="shop-section-head shop-section-head-list">
     <view>
-      <view class="shop-section-kicker">礼物陈列</view>
       <view class="section-title shop-section-title">可兑换清单</view>
     </view>
     <view class="shop-section-hint">点击查看详情</view>
@@ -153,6 +157,18 @@
         </view>
       </view>
 
+      <view class="modal-section" wx:if="{{activeProduct.relatedProduct}}">
+        <view class="related-product-card" data-product-id="{{activeProduct.relatedProduct.id}}" bindtap="handleRelatedProductTap">
+          <image wx:if="{{activeProduct.relatedProduct.coverImage}}" class="related-product-image" mode="aspectFill" src="{{activeProduct.relatedProduct.coverImage}}" />
+          <view wx:else class="related-product-fallback">商品</view>
+          <view class="related-product-body">
+            <view class="related-product-label">相关商品</view>
+            <view class="related-product-title">{{activeProduct.relatedProduct.name}}</view>
+            <view class="related-product-subtitle">{{activeProduct.relatedProduct.subtitle}}</view>
+          </view>
+        </view>
+      </view>
+
       <view class="modal-section" wx:if="{{activeProduct.skus.length}}">
         <view class="modal-section-title">规格选择</view>
         <view class="sku-list">
@@ -182,6 +198,7 @@
       </view>
 
       <button class="primary-button modal-button" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handleCreateOrder">立即兑换</button>
+      <button class="ghost-button modal-button" open-type="share" data-share-type="product">分享商品</button>
     </view>
   </view>
 </view>

@@ -1,28 +1,65 @@
-<view class="page-shell">
-  <view class="section-card hero-card">
-    <view class="hero-label">LIWU MINI</view>
-    <view class="section-title">你好，{{profile.name || '小悟朋友'}}</view>
-    <view class="section-subtitle">把首页、小程序觉察和个人资料先接到同一套 CloudBase 数据源上。</view>
-    <button class="primary-button hero-button" bindtap="handleAwareTap">立即觉察</button>
+<view class="page-shell home-page-shell">
+  <view class="page-header">
+    <view class="page-title">理悟</view>
+    <view class="page-caption">礼敬物品，安住当下</view>
+  </view>
+
+  <view class="hero-swiper-shell">
+    <swiper class="hero-swiper" autoplay circular interval="4200" duration="480" indicator-dots indicator-color="rgba(255,255,255,0.42)" indicator-active-color="#ffffff">
+      <swiper-item wx:for="{{slides}}" wx:key="id">
+        <view class="hero-slide {{item.hasImage ? 'hero-slide-image' : 'hero-slide-gradient'}}" style="{{item.heroStyle}}">
+          <view class="hero-bubble">{{item.caption}}</view>
+        </view>
+      </swiper-item>
+    </swiper>
+  </view>
+
+  <view class="section-card practice-card" bindtap="handleAwareTap">
+    <view class="practice-kicker">今日静寂</view>
+    <view class="practice-orb">静</view>
+    <view class="practice-title">开始今日静寂</view>
+    <view class="practice-subtitle">给自己 15 分钟的留白，在呼吸间寻回内在的秩序。</view>
   </view>
 
   <view class="section-card quick-card">
-    <view class="section-title">快捷入口</view>
-    <view class="section-subtitle">先把首页、觉察、我的跑通，再逐步接入工坊和更多内容。</view>
+    <view class="section-kicker">今日路径</view>
+    <view class="section-title">此刻入口</view>
     <view class="quick-list">
       <view class="quick-item" wx:for="{{cards}}" wx:key="title" data-path="{{item.path}}" bindtap="handleCardTap">
-        <view class="quick-title">{{item.title}}</view>
+        <view class="quick-head">
+          <view class="quick-title">{{item.title}}</view>
+          <view class="quick-arrow">进入</view>
+        </view>
         <view class="quick-subtitle">{{item.subtitle}}</view>
       </view>
     </view>
   </view>
 
-  <view class="section-card tag-card">
-    <view class="section-title">同心同照亮</view>
-    <view class="section-subtitle">社区觉察标签热度前列会在这里显示。</view>
-    <view class="tag-list" wx:if="{{tags.length}}">
-      <view class="tag-pill" wx:for="{{tags}}" wx:key="key">{{item.content}}</view>
+  <view class="section-card cloud-card">
+    <view class="section-kicker">社区觉察</view>
+    <view class="section-title">同心照亮</view>
+    <view class="cloud-wrap" wx:if="{{tags.length}}">
+      <view class="cloud-tag" wx:for="{{tags}}" wx:key="key">{{item.content}}</view>
     </view>
     <view class="empty-text" wx:else>还没有可展示的社区标签。</view>
+  </view>
+
+  <view class="section-card showcase-card" bindtap="handleShopTap">
+    <view class="showcase-head">
+      <view>
+        <view class="section-title">橱窗</view>
+      </view>
+      <view class="status-chip">进入工坊</view>
+    </view>
+
+    <view class="showcase-grid" wx:if="{{showcaseItems.length}}">
+      <view class="showcase-tile {{item.layoutClass}}" wx:for="{{showcaseItems}}" wx:key="id">
+        <image wx:if="{{item.imageUrl}}" class="showcase-image" mode="aspectFill" src="{{item.imageUrl}}" />
+        <view wx:else class="showcase-fallback">{{item.monogram}}</view>
+        <view class="showcase-overlay"></view>
+        <view class="showcase-name">{{item.name}}</view>
+      </view>
+    </view>
+    <view class="showcase-empty" wx:else>橱窗图片设置后会在这里展示。</view>
   </view>
 </view>

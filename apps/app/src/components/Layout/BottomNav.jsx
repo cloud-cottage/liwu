@@ -1,44 +1,35 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
-import { Home, Wind, Sparkles, User } from 'lucide-react';
-import styles from './BottomNav.module.css';
+import React from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { appPrimaryTabs } from '../../navigation/tabs.js'
+import styles from './BottomNav.module.css'
+
+const isTabActive = (currentPathname = '', targetPathname = '') => {
+  if (targetPathname === '/') {
+    return currentPathname === '/'
+  }
+
+  return currentPathname === targetPathname || currentPathname.startsWith(`${targetPathname}/`)
+}
 
 const BottomNav = () => {
-    return (
-        <nav className={styles.nav}>
-            <NavLink
-                to="/"
-                className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-            >
-                <Home size={24} strokeWidth={1.5} />
-                <span className={styles.label}>首页</span>
-            </NavLink>
+  const location = useLocation()
 
-            <NavLink
-                to="/m"
-                className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-            >
-                <Wind size={24} strokeWidth={1.5} />
-                <span className={styles.label}>冥想</span>
-            </NavLink>
+  return (
+    <nav className={styles.nav}>
+      {appPrimaryTabs.map(({ key, label, to, icon: Icon }) => (
+        <NavLink
+          key={key}
+          to={to}
+          className={({ isActive }) => `${styles.link} ${(isActive || isTabActive(location.pathname, to)) ? styles.active : ''}`}
+        >
+          <span className={styles.iconWrap}>
+            <Icon size={22} strokeWidth={1.7} />
+          </span>
+          <span className={styles.label}>{label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  )
+}
 
-            <NavLink
-                to="/a"
-                className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-            >
-                <Sparkles size={24} strokeWidth={1.5} />
-                <span className={styles.label}>觉察</span>
-            </NavLink>
-
-            <NavLink
-                to="/profile"
-                className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
-            >
-                <User size={24} strokeWidth={1.5} />
-                <span className={styles.label}>我的</span>
-            </NavLink>
-        </nav>
-    );
-};
-
-export default BottomNav;
+export default BottomNav

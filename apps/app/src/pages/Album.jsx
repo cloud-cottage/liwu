@@ -1,10 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Award, BookOpen, Sparkles, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import dawnGuardianImage from '../assets/badges/dawn-guardian.svg';
-import builderPlaceholderImage from '../assets/badges/builder-placeholder.svg';
-import growthPlaceholderImage from '../assets/badges/growth-placeholder.svg';
-import { useBadgeState } from '../hooks/useBadgeState.js';
+import React, { useMemo, useState } from 'react'
+import { Award, BookOpen, Sparkles, X } from 'lucide-react'
+import dawnGuardianImage from '../assets/badges/dawn-guardian.svg'
+import builderPlaceholderImage from '../assets/badges/builder-placeholder.svg'
+import growthPlaceholderImage from '../assets/badges/growth-placeholder.svg'
+import StackPage from '../components/Layout/StackPage.jsx'
+import { useBadgeState } from '../hooks/useBadgeState.js'
 
 const TAB_META = {
   growth: {
@@ -19,7 +19,7 @@ const TAB_META = {
     description: '你对社区的支持与共建。',
     icon: Award
   }
-};
+}
 
 const FRAME_STYLES = {
   gentle: {
@@ -91,84 +91,84 @@ const FRAME_STYLES = {
       background: 'linear-gradient(180deg, #fffdf7 0%, #fff5df 100%)'
     }
   }
-};
+}
 
-const DIFFICULTY_ORDER = ['gentle', 'steady', 'resolute', 'radiant'];
+const DIFFICULTY_ORDER = ['gentle', 'steady', 'resolute', 'radiant']
 const DIFFICULTY_LABELS = {
   gentle: '微光',
   steady: '进阶',
   resolute: '砥砺',
   radiant: '稀有'
-};
+}
 const DIFFICULTY_INDEX = DIFFICULTY_ORDER.reduce((accumulator, key, index) => ({
   ...accumulator,
   [key]: index
-}), {});
+}), {})
 
 const sortBadgesByDifficulty = (badges = []) => (
   [...badges].sort((left, right) => (
     (DIFFICULTY_INDEX[left.difficulty] ?? 0) - (DIFFICULTY_INDEX[right.difficulty] ?? 0)
   ))
-);
+)
 
 const buildBadgeSeriesGroups = (badges = []) => (
   Object.values(
     badges.reduce((accumulator, badge) => {
       if (!accumulator[badge.seriesId]) {
-        accumulator[badge.seriesId] = [];
+        accumulator[badge.seriesId] = []
       }
 
-      accumulator[badge.seriesId].push(badge);
-      return accumulator;
+      accumulator[badge.seriesId].push(badge)
+      return accumulator
     }, {})
   ).map(sortBadgesByDifficulty)
-);
+)
 
 const getVisibleSeriesBadges = (seriesBadges = []) => {
   const highestEarnedIndex = seriesBadges.reduce((currentHighestIndex, badge, index) => (
     badge.earned ? index : currentHighestIndex
-  ), -1);
+  ), -1)
   const maxVisibleIndex = Math.min(
     seriesBadges.length - 1,
     highestEarnedIndex >= 0 ? highestEarnedIndex + 1 : 0
-  );
+  )
 
-  return seriesBadges.filter((_, index) => index <= maxVisibleIndex);
-};
+  return seriesBadges.filter((_, index) => index <= maxVisibleIndex)
+}
 
 const getSeriesProgressSummary = (badges = []) => {
-  const seriesGroups = buildBadgeSeriesGroups(badges);
+  const seriesGroups = buildBadgeSeriesGroups(badges)
   return {
     totalSeriesCount: seriesGroups.length,
     unlockedSeriesCount: seriesGroups.filter((seriesBadges) => seriesBadges.some((badge) => badge.earned)).length
-  };
-};
+  }
+}
 
 const getBadgeImage = (badge) => {
   if (badge.image) {
-    return badge.image;
+    return badge.image
   }
 
   if (badge.seriesId?.includes('meditation_dawn') || badge.name?.includes('晨曦')) {
-    return dawnGuardianImage;
+    return dawnGuardianImage
   }
 
-  return badge.visibleGroup === 'builder' ? builderPlaceholderImage : growthPlaceholderImage;
-};
+  return badge.visibleGroup === 'builder' ? builderPlaceholderImage : growthPlaceholderImage
+}
 
 const getProgressText = (badge) => {
-  const progressValue = Math.max(0, Number(badge.progressValue || 0));
-  const unit = badge.unit || '次';
+  const progressValue = Math.max(0, Number(badge.progressValue || 0))
+  const unit = badge.unit || '次'
 
   if (badge.earned) {
-    return `已达成 ${badge.threshold}${unit}`;
+    return `已达成 ${badge.threshold}${unit}`
   }
 
-  return `当前进度 ${progressValue}/${badge.threshold}${unit}`;
-};
+  return `当前进度 ${progressValue}/${badge.threshold}${unit}`
+}
 
 const BadgeArtwork = ({ badge }) => {
-  const frame = FRAME_STYLES[badge.difficulty] || FRAME_STYLES.gentle;
+  const frame = FRAME_STYLES[badge.difficulty] || FRAME_STYLES.gentle
 
   return (
     <div
@@ -223,8 +223,8 @@ const BadgeArtwork = ({ badge }) => {
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
 const BadgeDetailModal = ({
   badge,
@@ -233,7 +233,7 @@ const BadgeDetailModal = ({
   onEquip
 }) => {
   if (!badge) {
-    return null;
+    return null
   }
 
   return (
@@ -259,53 +259,55 @@ const BadgeDetailModal = ({
           boxShadow: '0 24px 80px rgba(15, 23, 42, 0.24)'
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px' }}>
-          <div>
-            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94a3b8' }}>
-              badge_detail
-            </div>
-            <h2 style={{ margin: '6px 0 0', fontSize: '24px', color: '#111827' }}>{badge.displayName || badge.seriesName || badge.name}</h2>
-          </div>
+        <div style={{ position: 'absolute', top: '18px', right: '18px', display: 'flex', gap: '8px' }}>
           <button
             type="button"
             onClick={onClose}
-            style={{ border: 'none', background: 'none', color: '#64748b', cursor: 'pointer' }}
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '999px',
+              border: 'none',
+              background: '#f8fafc',
+              color: '#475569',
+              cursor: 'pointer'
+            }}
           >
             <X size={18} />
           </button>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <BadgeArtwork badge={{ ...badge, earned: true }} />
-        </div>
-
-        <div
-          style={{
-            borderRadius: '18px',
-            backgroundColor: '#f8fafc',
-            padding: '16px',
-            marginBottom: '14px'
-          }}
-        >
-          <div style={{ fontSize: '14px', color: '#0f172a', lineHeight: 1.75 }}>
-            {badge.description || badge.summary || '这是一枚记录你阶段性成长与投入的徽章。'}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8', textTransform: 'uppercase' }}>
+              badge_detail
+            </div>
+            <h2 style={{ margin: '6px 0 0', fontSize: '24px', color: '#111827' }}>{badge.displayName || badge.seriesName || badge.name}</h2>
+            <div style={{ marginTop: '6px', fontSize: '13px', color: '#64748b', lineHeight: 1.6 }}>
+              {badge.seriesName}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gap: '10px', marginBottom: '18px' }}>
-          <div style={modalMetricStyle}>
-            <span>当前等级</span>
+        <p style={{ margin: '18px 0 0', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+          {badge.description || badge.summary || '这是一枚记录你阶段性成长与投入的徽章。'}
+        </p>
+
+        <div style={{ marginTop: '18px', display: 'grid', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px', color: '#475569' }}>
+            <span>难度</span>
             <strong>{DIFFICULTY_LABELS[badge.difficulty] || badge.difficulty}</strong>
           </div>
-          <div style={modalMetricStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px', color: '#475569' }}>
             <span>解锁条件</span>
             <strong>{badge.threshold}{badge.unit || '次'}</strong>
           </div>
-          <div style={modalMetricStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px', color: '#475569' }}>
             <span>当前进度</span>
             <strong>{getProgressText(badge)}</strong>
           </div>
-          <div style={modalMetricStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px', color: '#475569' }}>
             <span>佩戴效果</span>
             <strong>{badge.bonusSummary}</strong>
           </div>
@@ -325,7 +327,8 @@ const BadgeDetailModal = ({
             fontSize: '14px',
             fontWeight: 700,
             cursor: saving || !badge.earned ? 'not-allowed' : 'pointer',
-            opacity: saving ? 0.7 : 1
+            opacity: saving ? 0.7 : 1,
+            marginTop: '18px'
           }}
         >
           {!badge.earned
@@ -338,29 +341,28 @@ const BadgeDetailModal = ({
         </button>
       </div>
     </div>
-  );
-};
+  )
+}
 
 const Album = () => {
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('growth');
-  const [activeBadge, setActiveBadge] = useState(null);
+  const [activeTab, setActiveTab] = useState('growth')
+  const [activeBadge, setActiveBadge] = useState(null)
   const {
     loading,
     saving,
     error,
     groupedBadges,
     equipBadge
-  } = useBadgeState();
+  } = useBadgeState()
 
-  const badges = groupedBadges[activeTab] || [];
+  const badges = groupedBadges[activeTab] || []
   const visibleBadges = useMemo(() => (
     buildBadgeSeriesGroups(badges).flatMap(getVisibleSeriesBadges)
-  ), [badges]);
-  const activeTabSeriesProgress = useMemo(() => getSeriesProgressSummary(badges), [badges]);
+  ), [badges])
+  const activeTabSeriesProgress = useMemo(() => getSeriesProgressSummary(badges), [badges])
 
   const handleEquipBadge = async (badge) => {
-    await equipBadge(badge.badgeId);
+    await equipBadge(badge.badgeId)
     setActiveBadge((currentBadge) => (
       currentBadge && currentBadge.badgeId === badge.badgeId
         ? {
@@ -368,30 +370,15 @@ const Album = () => {
             equipped: !currentBadge.equipped
           }
         : currentBadge
-    ));
-  };
+    ))
+  }
 
   return (
-    <div className="page-container" style={{ padding: '20px', paddingBottom: '96px' }}>
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        style={{
-          border: 'none',
-          background: 'none',
-          color: 'var(--color-text-secondary)',
-          padding: 0,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          cursor: 'pointer',
-          marginBottom: '20px'
-        }}
-      >
-        <ArrowLeft size={18} />
-        返回
-      </button>
-
+    <StackPage
+      title="花开纪念册"
+      subtitle="把成长与共建，收成一册可见的光。"
+      contentStyle={{ paddingBottom: '24px' }}
+    >
       {(error && !activeBadge) && (
         <div
           style={{
@@ -427,17 +414,12 @@ const Album = () => {
           </span>
         </div>
 
-        <h1 style={{ fontSize: '28px', margin: '8px 0 0' }}>花开纪念册</h1>
-        <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-          把成长与共建，收成一册可见的光。
-        </p>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
           {Object.entries(TAB_META).map(([key, meta]) => {
-            const Icon = meta.icon;
-            const tabBadges = groupedBadges[key] || [];
-            const { unlockedSeriesCount, totalSeriesCount } = getSeriesProgressSummary(tabBadges);
-            const isActive = key === activeTab;
+            const Icon = meta.icon
+            const tabBadges = groupedBadges[key] || []
+            const { unlockedSeriesCount, totalSeriesCount } = getSeriesProgressSummary(tabBadges)
+            const isActive = key === activeTab
 
             return (
               <button
@@ -484,7 +466,7 @@ const Album = () => {
                 </div>
                 <div style={{ marginTop: '10px', fontSize: '14px', fontWeight: 700, color: '#111827' }}>{meta.label}</div>
               </button>
-            );
+            )
           })}
         </div>
       </section>
@@ -601,13 +583,13 @@ const Album = () => {
           }}
         >
           {DIFFICULTY_ORDER.map((key) => {
-            const frame = FRAME_STYLES[key];
+            const frame = FRAME_STYLES[key]
             const labelMap = {
               gentle: '微光',
               steady: '进阶',
               resolute: '砥砺',
               radiant: '稀有'
-            };
+            }
 
             return (
               <div
@@ -636,7 +618,7 @@ const Album = () => {
                 </span>
                 {labelMap[key]}
               </div>
-            );
+            )
           })}
         </div>
 
@@ -653,17 +635,8 @@ const Album = () => {
         onClose={() => setActiveBadge(null)}
         onEquip={handleEquipBadge}
       />
-    </div>
-  );
-};
+    </StackPage>
+  )
+}
 
-const modalMetricStyle = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: '12px',
-  alignItems: 'center',
-  fontSize: '13px',
-  color: '#475569'
-};
-
-export default Album;
+export default Album

@@ -1,7 +1,10 @@
 {
   "miniprogramRoot": "src/",
+  "cloudfunctionRoot": "cloudfunctions/",
+  "cloudfunctionTemplateRoot": "cloudfunctionTemplate/",
+  "cloudbaseRoot": "cloudfunctions/",
   "projectname": "liwu-miniprogram",
-  "appid": "wxa474eceb2ecd8762",
+  "appid": "wxd7cdfc220e8b170f",
   "compileType": "miniprogram",
   "setting": {
     "es6": false,
@@ -32,5 +35,6 @@
     "ignore": [],
     "include": []
   },
-  "editorSetting": {}
+  "editorSetting": {},
+  "libVersion": "3.15.2"
 }

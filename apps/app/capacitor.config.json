@@ -1,0 +1,6 @@
+{
+  "appId": "com.yunduojihua.liwu",
+  "appName": "理悟",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

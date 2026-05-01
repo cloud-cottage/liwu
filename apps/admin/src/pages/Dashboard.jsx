@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import UserList from '../components/Dashboard/UserList';
 import UserEditModal from '../components/Dashboard/UserEditModal';
 import TagManager from '../components/Dashboard/TagManager';
@@ -11,6 +11,7 @@ import BadgeSettings from '../components/Dashboard/BadgeSettings.jsx';
 import ShopManagement from '../components/Dashboard/ShopManagement.jsx';
 import ThemeSettings from '../components/Dashboard/ThemeSettings.jsx';
 import StudentMembershipSettings from '../components/Dashboard/StudentMembershipSettings.jsx';
+import MeditationPage from '../components/Dashboard/MeditationPage.jsx';
 import { useDatabase } from '../hooks/useDatabase.js';
 
 // Add CSS reset to remove default margins
@@ -35,11 +36,21 @@ if (typeof window !== 'undefined') {
 }
 
 const Dashboard = () => {
+  const readInitialSidebarState = () => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+
+    const storedValue = window.localStorage.getItem('liwu_admin_sidebar_open');
+    return storedValue === null ? true : storedValue === '1';
+  };
+
   const [selectedUser, setSelectedUser] = useState(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [activeUserSection, setActiveUserSection] = useState('users');
+  const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarState);
   
   const {
     users,
@@ -53,6 +64,7 @@ const Dashboard = () => {
     themeSettings,
     brandCarouselSettings,
     userAvatarOptionsSettings,
+    clientDistributionSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -68,6 +80,7 @@ const Dashboard = () => {
     savingThemeSettings,
     savingBrandCarouselSettings,
     savingUserAvatarOptionsSettings,
+    savingClientDistributionSettings,
     savingStudentMembershipSettings,
     loading,
     error,
@@ -84,15 +97,36 @@ const Dashboard = () => {
     updateThemeSettings,
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
+    updateClientDistributionSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,
+    meditationAudioLibrary,
+    meditationCompositionSettings,
+    meditationCalendar,
+    meditationLibrary,
+    savingMeditationAudioLibrary,
+    savingMeditationCompositionSettings,
+    savingMeditationCalendar,
+    savingMeditationLibrary,
+    updateMeditationAudioLibrary,
+    updateMeditationCompositionSettings,
+    updateMeditationCalendar,
+    updateMeditationLibrary,
     refresh
   } = useDatabase();
 
   const handleRefreshCloudbase = () => {
     window.location.reload();
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem('liwu_admin_sidebar_open', sidebarOpen ? '1' : '0');
+  }, [sidebarOpen]);
 
   const handleEditUser = (user) => {
     setSelectedUser(user);
@@ -189,6 +223,14 @@ const Dashboard = () => {
       await updateBrandCarouselSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update brand carousel settings:', err);
+    }
+  };
+
+  const handleSaveClientDistributionSettings = async (nextSettings) => {
+    try {
+      await updateClientDistributionSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update client distribution settings:', err);
     }
   };
 
@@ -331,199 +373,80 @@ const Dashboard = () => {
     }));
   }, [recentDateKeys, shopOrders]);
 
+  const NAV_ITEMS = [
+    { key: 'overview', label: '总览' },
+    { key: 'users',    label: '用户' },
+    { key: 'shop',     label: '工坊' },
+    { key: 'meditation', label: '冥想' },
+    { key: 'awareness', label: '觉察' },
+    { key: 'badges',   label: '徽章' },
+    { key: 'fortune',  label: '福豆' },
+    { key: 'settings', label: '设置' },
+  ];
+
+  const handleNavClick = (key) => {
+    setActiveTab(key);
+  };
+
   return (
-    <div style={{ 
-      display: 'flex', 
-      minHeight: '100vh', 
-      backgroundColor: '#f5f5f5', 
-      width: '100vw',
+    <div style={{
+      display: 'flex',
+      minHeight: '100vh',
+      backgroundColor: '#f5f5f5',
+      width: '100%',
       margin: 0,
       padding: 0,
-      boxSizing: 'border-box'
+      boxSizing: 'border-box',
+      overflow: 'hidden',
     }}>
       {/* Sidebar */}
       <div style={{
-        width: '260px',
-        backgroundColor: '#fff',
-        boxShadow: '2px 0 4px rgba(0,0,0,0.1)',
-        display: 'flex',
-        flexDirection: 'column',
+        width: sidebarOpen ? '240px' : '0px',
+        minWidth: sidebarOpen ? '240px' : '0px',
+        height: '100vh',
         position: 'sticky',
         top: 0,
-        height: '100vh'
+        backgroundColor: '#fff',
+        borderRight: sidebarOpen ? '1px solid #eee' : 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        transition: 'width 0.25s ease, min-width 0.25s ease',
+        flexShrink: 0,
       }}>
         {/* Sidebar Header */}
         <div style={{ padding: '20px', borderBottom: '1px solid #eee' }}>
-          <h1 style={{ fontSize: '20px', margin: 0, color: '#333' }}>管理后台</h1>
-          <p style={{ fontSize: '12px', color: '#666', margin: '4px 0 8px 0' }}>
+          <h1 style={{ fontSize: '20px', margin: 0, color: '#333', whiteSpace: 'nowrap' }}>管理后台</h1>
+          <p style={{ fontSize: '12px', color: '#666', margin: '4px 0 8px 0', whiteSpace: 'nowrap' }}>
             社区运营与内容管理面板
           </p>
           <DatabaseStatus />
         </div>
 
         {/* Navigation Menu */}
-        <nav style={{ flex: 1, padding: '16px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <button
-              onClick={() => setActiveTab('overview')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'overview' ? '#2196F3' : 'transparent',
-                color: activeTab === 'overview' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>总览</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('users')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'users' ? '#2196F3' : 'transparent',
-                color: activeTab === 'users' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>用户</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('shop')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'shop' ? '#2196F3' : 'transparent',
-                color: activeTab === 'shop' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>工坊</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('meditation')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'meditation' ? '#2196F3' : 'transparent',
-                color: activeTab === 'meditation' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>冥想</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('awareness')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'awareness' ? '#2196F3' : 'transparent',
-                color: activeTab === 'awareness' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>觉察</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('badges')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'badges' ? '#2196F3' : 'transparent',
-                color: activeTab === 'badges' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>徽章</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('fortune')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'fortune' ? '#2196F3' : 'transparent',
-                color: activeTab === 'fortune' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>福豆</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('settings')}
-              style={{
-                padding: '12px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: activeTab === 'settings' ? '#2196F3' : 'transparent',
-                color: activeTab === 'settings' ? '#fff' : '#666',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 500,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <span>设置</span>
-            </button>
+        <nav style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            {NAV_ITEMS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => handleNavClick(key)}
+                style={{
+                  padding: '11px 16px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: activeTab === key ? '#2196F3' : 'transparent',
+                  color: activeTab === key ? '#fff' : '#555',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  textAlign: 'left',
+                  transition: 'background-color 0.15s',
+                  width: '100%',
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </nav>
 
@@ -540,7 +463,7 @@ const Dashboard = () => {
               color: '#2196F3',
               cursor: 'pointer',
               fontSize: '12px',
-              transition: 'all 0.2s ease'
+              transition: 'all 0.2s ease',
             }}
           >
             刷新云端状态
@@ -549,7 +472,34 @@ const Dashboard = () => {
       </div>
 
       {/* Main Content */}
-      <div style={{ flex: 1, padding: '32px', overflowY: 'auto', maxWidth: 'calc(100vw - 260px)' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, width: '100%' }}>
+        {/* Top bar */}
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 30,
+          display: 'flex', alignItems: 'center', gap: '12px',
+          padding: '12px 20px',
+          backgroundColor: '#fff',
+          borderBottom: '1px solid #eee',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+        }}>
+          <button
+            onClick={() => setSidebarOpen(o => !o)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '6px 8px', borderRadius: '6px',
+              display: 'flex', flexDirection: 'column', gap: '4px',
+            }}
+          >
+            <span style={{ display: 'block', width: '18px', height: '2px', backgroundColor: '#555', borderRadius: '2px' }} />
+            <span style={{ display: 'block', width: '18px', height: '2px', backgroundColor: '#555', borderRadius: '2px' }} />
+            <span style={{ display: 'block', width: '18px', height: '2px', backgroundColor: '#555', borderRadius: '2px' }} />
+          </button>
+          <span style={{ fontSize: '15px', fontWeight: 600, color: '#333' }}>
+            {NAV_ITEMS.find(n => n.key === activeTab)?.label ?? '管理后台'}
+          </span>
+        </div>
+
+        <div style={{ flex: 1, padding: '28px 24px', overflowY: 'auto' }}>
         {/* Loading State */}
         {loading && (
           <div style={{ 
@@ -751,16 +701,21 @@ const Dashboard = () => {
         )}
 
         {!loading && !error && activeTab === 'meditation' && (
-          <div style={{
-            backgroundColor: '#fff',
-            borderRadius: '16px',
-            padding: '28px',
-            boxShadow: 'var(--shadow-sm)',
-            color: '#64748b',
-            fontSize: '14px'
-          }}>
-            冥想后台页面暂未接入，后续在这里补充专属管理内容。
-          </div>
+          <MeditationPage
+            meditationAudioLibrary={meditationAudioLibrary}
+            meditationCompositionSettings={meditationCompositionSettings}
+            meditationCalendar={meditationCalendar}
+            meditationLibrary={meditationLibrary}
+            savingMeditationAudioLibrary={savingMeditationAudioLibrary}
+            savingMeditationCompositionSettings={savingMeditationCompositionSettings}
+            savingMeditationCalendar={savingMeditationCalendar}
+            savingMeditationLibrary={savingMeditationLibrary}
+            updateMeditationAudioLibrary={updateMeditationAudioLibrary}
+            updateMeditationCompositionSettings={updateMeditationCompositionSettings}
+            updateMeditationCalendar={updateMeditationCalendar}
+            updateMeditationLibrary={updateMeditationLibrary}
+            settingsError={settingsError}
+          />
         )}
 
         {!loading && !error && activeTab === 'fortune' && (
@@ -780,15 +735,18 @@ const Dashboard = () => {
             awarenessDisplaySettings={awarenessDisplaySettings}
             brandCarouselSettings={brandCarouselSettings}
             userAvatarOptionsSettings={userAvatarOptionsSettings}
+            clientDistributionSettings={clientDistributionSettings}
             error={settingsError}
             saving={savingThemeSettings}
             savingAwarenessDisplay={savingAwarenessDisplaySettings}
             savingCarousel={savingBrandCarouselSettings}
             savingAvatarOptions={savingUserAvatarOptionsSettings}
+            savingClientDistribution={savingClientDistributionSettings}
             onSave={handleSaveThemeSettings}
             onSaveAwarenessDisplay={handleSaveAwarenessDisplaySettings}
             onSaveBrandCarousel={handleSaveBrandCarouselSettings}
             onSaveUserAvatarOptions={handleSaveUserAvatarOptionsSettings}
+            onSaveClientDistribution={handleSaveClientDistributionSettings}
           />
         )}
 
@@ -815,6 +773,7 @@ const Dashboard = () => {
           />
         )}
 
+        </div>
       </div>
 
       {/* Modals */}

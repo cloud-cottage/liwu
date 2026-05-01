@@ -1,4 +1,5 @@
 import cloudbase from '@cloudbase/js-sdk';
+import { Capacitor } from '@capacitor/core';
 import { DATABASE_CONFIG } from '../config/database.js';
 import {
   BADGE_ACTIVITY_TYPES,
@@ -59,6 +60,7 @@ const NAME_UPDATE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
 const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
+const CLOUDBASE_PROXY_REMOTE_ORIGIN = 'https://liwu.yunduojihua.com';
 const SHANGHAI_TIMEZONE = 'Asia/Shanghai';
 const AWARENESS_TAG_MODAL_CACHE_KEY = 'liwu_awareness_tag_modal_cache_v1';
 const AWARENESS_TAG_MODAL_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -77,6 +79,22 @@ const shouldUseCloudBaseProxy = () => {
   return window.location.hostname === 'liwu.yunduojihua.com' || isLocalDevHost(window.location.hostname);
 };
 
+const getCloudBaseProxyBase = () => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  if (Capacitor?.isNativePlatform?.()) {
+    return CLOUDBASE_PROXY_REMOTE_ORIGIN;
+  }
+
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
+  return window.location.hostname === 'liwu.yunduojihua.com' ? '' : CLOUDBASE_PROXY_REMOTE_ORIGIN;
+};
+
 const isCloudBaseApiUrl = (value = '') => {
   try {
     const nextUrl = new URL(String(value));
@@ -90,7 +108,7 @@ const isCloudBaseApiUrl = (value = '') => {
   }
 };
 
-const toProxyUrl = (targetUrl) => `${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}`;
+const toProxyUrl = (targetUrl) => `${getCloudBaseProxyBase()}${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}`;
 
 const installCloudBaseRequestProxy = () => {
   if (typeof window === 'undefined' || !shouldUseCloudBaseProxy() || window.__liwuCloudBaseProxyInstalled) {

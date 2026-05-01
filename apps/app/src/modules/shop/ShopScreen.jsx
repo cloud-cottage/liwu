@@ -568,7 +568,7 @@ const ShopScreen = () => {
       <section className="shop-hero-card">
         <div className="shop-hero-card__top">
           <div>
-            <div className="shop-hero-card__label">LIWU SHOP</div>
+            <div className="shop-hero-card__label">WORKSHOP</div>
             <h1 className="shop-hero-card__title">工坊</h1>
             <p className="shop-hero-card__subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</p>
           </div>
@@ -620,6 +620,54 @@ const ShopScreen = () => {
             <strong>{selectedCategory?.name || '全部'}</strong>
           </div>
         </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '10px',
+            marginTop: '14px'
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const section = document.getElementById('shop-category-section');
+              section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+            style={{
+              border: '1px solid rgba(143, 165, 138, 0.14)',
+              borderRadius: '16px',
+              background: 'rgba(255,255,255,0.88)',
+              color: '#4d5a4b',
+              padding: '12px 14px',
+              fontSize: '13px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            浏览分类
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const section = document.getElementById('shop-list-section');
+              section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+            style={{
+              border: '1px solid rgba(143, 165, 138, 0.14)',
+              borderRadius: '16px',
+              background: 'rgba(255,255,255,0.88)',
+              color: '#4d5a4b',
+              padding: '12px 14px',
+              fontSize: '13px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            查看清单
+          </button>
+        </div>
       </section>
 
       {notice?.text && (
@@ -628,10 +676,10 @@ const ShopScreen = () => {
         </div>
       )}
 
-      <section className="shop-category-card">
+      <section id="shop-category-section" className="shop-category-card">
         <div className="shop-section-head">
           <div>
-            <div className="shop-section-head__kicker">{selectedCategory?.name || '全部陈列'}</div>
+            <div className="shop-section-head__kicker">精选陈列</div>
             <h2 className="shop-section-head__title">按分类浏览</h2>
           </div>
           <div className="shop-section-head__count">{filteredProducts.length} 件</div>
@@ -658,10 +706,10 @@ const ShopScreen = () => {
         </div>
       </section>
 
-      <section className="shop-gallery-section">
+      <section id="shop-list-section" className="shop-gallery-section">
         <div className="shop-section-head">
           <div>
-            <div className="shop-section-head__kicker">礼物陈列</div>
+            <div className="shop-section-head__kicker">Window</div>
             <h2 className="shop-section-head__title">可兑换清单</h2>
           </div>
           <div className="shop-gallery-section__hint">

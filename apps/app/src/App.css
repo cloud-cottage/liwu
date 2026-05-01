@@ -1,7 +1,6 @@
 /* App specific styles */
 .app-content {
-  padding-bottom: 70px;
-  /* Space for BottomNav */
+  padding-bottom: calc(env(safe-area-inset-bottom) + 86px);
   min-height: 100vh;
   box-sizing: border-box;
 }

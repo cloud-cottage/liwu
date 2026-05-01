@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import { brandCarouselSettingsService, shopService } from '../../services/cloudbase';
 import carouselImageOne from '../../assets/home/carousel-1.svg';
 import carouselImageTwo from '../../assets/home/carousel-2.svg';
@@ -30,6 +31,12 @@ const CAROUSEL_ITEMS = [
 ];
 
 const SHOWCASE_REFRESH_INTERVAL_MS = 6500;
+const APP_TAGLINES = [
+  'be clear with Liwu',
+  'be smart with Liwu',
+  'be rich with Liwu',
+  'be healthy with Liwu'
+];
 
 const SHOWCASE_GRID_SPANS = {
   '1:1': { colSpan: 1, rowSpan: 1 },
@@ -201,11 +208,20 @@ const buildShowcaseItems = async (products = []) => {
 
 const Home = () => {
   const navigate = useNavigate();
+  const [taglineIndex, setTaglineIndex] = useState(0);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [carouselItems, setCarouselItems] = useState(CAROUSEL_ITEMS);
   const [showcaseItems, setShowcaseItems] = useState([]);
   const [showcaseSeed, setShowcaseSeed] = useState(0);
   const [showcaseFading, setShowcaseFading] = useState(false);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setTaglineIndex((currentIndex) => (currentIndex + 1) % APP_TAGLINES.length);
+    }, 2200);
+
+    return () => window.clearInterval(timerId);
+  }, []);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -261,29 +277,61 @@ const Home = () => {
   }, [showcaseItems, showcaseSeed]);
 
   return (
-    <div className="page-container" style={{ padding: '20px' }}>
-      <header style={{ marginBottom: '24px', marginTop: '20px' }}>
-        <h1
-          style={{
-            fontSize: '28px',
-            fontFamily: 'var(--font-serif)',
-            color: 'var(--color-text-primary)',
-            margin: 0
-          }}
-        >
-          理悟
-        </h1>
-        <p style={{ color: 'var(--color-text-secondary)', marginTop: '8px' }}>礼敬物品，安住当下</p>
+    <div className="page-container" style={{ padding: '18px' }}>
+      <header
+        style={{
+          marginTop: '8px',
+          marginBottom: '16px',
+          padding: '18px',
+          borderRadius: '24px',
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,245,239,0.94))',
+          boxShadow: 'var(--shadow-sm)',
+          border: '1px solid rgba(143, 165, 138, 0.12)'
+        }}
+      >
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '6px 10px',
+          borderRadius: '999px',
+          background: 'rgba(143, 165, 138, 0.12)',
+          color: 'var(--color-accent-clay)',
+          fontSize: '11px',
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          marginBottom: '10px'
+        }}>
+          {APP_TAGLINES[taglineIndex]}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+          <div style={{ minWidth: 0 }}>
+            <h1
+              style={{
+                fontSize: '34px',
+                fontFamily: 'var(--font-serif)',
+                color: 'var(--color-text-primary)',
+                margin: 0
+              }}
+            >
+              理悟
+            </h1>
+            <p style={{ color: 'var(--color-text-secondary)', marginTop: '10px', lineHeight: 1.7 }}>
+              礼敬物品，安住当下。先从今天最该被看见的一件事开始。
+            </p>
+          </div>
+        </div>
       </header>
 
       <section
         style={{
           position: 'relative',
-          aspectRatio: '16 / 9',
-          borderRadius: '24px',
+          aspectRatio: '16 / 9.5',
+          borderRadius: '28px',
           overflow: 'hidden',
           boxShadow: 'var(--shadow-lg)',
-          marginBottom: '24px'
+          marginBottom: '18px'
         }}
       >
         <img
@@ -308,14 +356,14 @@ const Home = () => {
         <div
           style={{
             position: 'absolute',
-            left: '18px',
-            bottom: '18px',
-            maxWidth: '72%',
-            padding: '10px 14px',
-            borderRadius: '18px',
-            backgroundColor: 'rgba(71, 85, 105, 0.54)',
+            left: '14px',
+            bottom: '14px',
+            maxWidth: '74%',
+            padding: '10px 12px',
+            borderRadius: '20px',
+            backgroundColor: 'rgba(71, 85, 105, 0.56)',
             color: '#fff',
-            fontSize: '14px',
+            fontSize: '12px',
             lineHeight: 1.6,
             backdropFilter: 'blur(8px)'
           }}
@@ -356,20 +404,22 @@ const Home = () => {
       <section
         onClick={() => navigate('/meditation')}
         style={{
-          height: '200px',
-          backgroundColor: 'var(--color-bg-secondary)',
-          borderRadius: '16px',
+          minHeight: '170px',
+          padding: '18px',
+          background:
+            'radial-gradient(circle at top right, rgba(143, 165, 138, 0.16), transparent 30%), linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,245,239,0.94))',
+          borderRadius: '20px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexDirection: 'column',
           cursor: 'pointer',
-          marginBottom: '24px'
+          marginBottom: '18px'
         }}
       >
         <div style={{
-          width: '60px',
-          height: '60px',
+          width: '54px',
+          height: '54px',
           borderRadius: '50%',
           backgroundColor: 'var(--color-accent-clay)',
           display: 'flex',
@@ -380,7 +430,10 @@ const Home = () => {
         }}>
           ▶
         </div>
-        <span style={{ fontWeight: '500' }}>开始今日冥想</span>
+        <span style={{ fontWeight: 700, marginTop: '10px' }}>开始今日冥想</span>
+        <span style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '8px', lineHeight: 1.6 }}>
+          15 分钟，为今天留一段真正安静的时间。
+        </span>
       </section>
 
       <section
@@ -394,8 +447,14 @@ const Home = () => {
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-          <h2 style={{ margin: 0, fontSize: '18px', fontFamily: 'var(--font-serif)' }}>橱窗</h2>
-          <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>进入工坊</span>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: '#8fa58a', textTransform: 'uppercase' }}>Window</div>
+            <h2 style={{ margin: '6px 0 0', fontSize: '18px', fontFamily: 'var(--font-serif)' }}>橱窗</h2>
+          </div>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+            <span>进入工坊</span>
+            <ArrowRight size={14} />
+          </span>
         </div>
 
         <div
@@ -408,8 +467,8 @@ const Home = () => {
             display: 'grid',
             gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
             gridTemplateRows: 'repeat(4, minmax(0, 1fr))',
-            gap: '8px',
-            padding: '8px',
+            gap: '7px',
+            padding: '7px',
             opacity: showcaseFading ? 0.42 : 1,
             transition: 'opacity 0.38s ease'
           }}

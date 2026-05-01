@@ -1,47 +1,92 @@
-<view class="page-shell">
-  <view class="section-card profile-card">
-    <view class="section-title">{{profile.name || '我的'}}</view>
-    <view class="section-subtitle">本地资料会用于小程序内的觉察署名，并与 CloudBase 觉察记录联动。</view>
-    <view class="stats-row">
-      <view class="stat-box">
-        <view class="stat-label">author_key</view>
-        <view class="stat-value">{{profile.authorKey}}</view>
+<view class="page-shell profile-page-shell">
+  <view class="profile-status-grid">
+    <view class="section-card status-card" bindtap="handleShowAlbumSoon">
+      <view class="status-card-head">
+        <view class="status-card-title">花开纪念册</view>
       </view>
-      <view class="stat-box">
-        <view class="stat-label">我的觉察总数</view>
-        <view class="stat-value">{{awareCount}}</view>
+      <view class="status-card-value">{{profile.equippedBadgeName || '待佩戴'}}</view>
+      <view class="status-card-meta">已获得 {{profile.unlockedBadgeCount || 0}} 枚</view>
+    </view>
+
+    <view class="section-card status-card">
+      <view class="status-card-head">
+        <view class="status-card-title">福豆</view>
+      </view>
+      <view class="status-card-value">{{profile.balance || 0}}</view>
+      <view class="status-card-meta">当前可用</view>
+    </view>
+  </view>
+
+  <view class="section-card profile-card">
+    <view class="section-kicker">个人资料</view>
+    <view class="profile-head">
+      <view class="profile-avatar">{{profileInitial || '悟'}}</view>
+      <view class="profile-meta">
+        <view class="profile-name-row">
+          <view class="profile-name">{{profile.name || '我的'}}</view>
+          <view class="status-chip" wx:if="{{profile.isStudent}}">学员</view>
+        </view>
+        <view class="profile-bio">{{profile.bio || '在小程序里记录你的觉察与练习。'}}</view>
+        <view class="profile-expire" wx:if="{{profile.isStudent && profile.studentExpireAt}}">有效期至 {{profile.studentExpireAt}}</view>
+      </view>
+    </view>
+
+    <view class="profile-stats">
+      <view class="profile-stat">
+        <view class="profile-stat-label">邀请码</view>
+        <view class="profile-stat-value">{{profile.inviteCode || profile.authorKey}}</view>
+      </view>
+      <view class="profile-stat">
+        <view class="profile-stat-label">觉察次数</view>
+        <view class="profile-stat-value">{{awareCount}}</view>
       </view>
     </view>
   </view>
 
+  <view class="profile-actions">
+    <view class="section-card action-card" bindtap="handleGoShop">
+      <view class="action-title">工坊</view>
+      <view class="action-subtitle">查看订单与商品</view>
+    </view>
+    <view class="section-card action-card" bindtap="handleGoAddresses">
+      <view class="action-title">收货地址</view>
+      <view class="action-subtitle">管理默认地址</view>
+    </view>
+  </view>
+
   <view class="section-card editor-card">
-    <view class="section-title">编辑资料</view>
-    <view class="field-label">昵称</view>
+    <view class="section-kicker">信息维护</view>
+    <view class="section-title">个人信息</view>
+    <view class="field-label">用户名</view>
     <input class="field-input" value="{{form.name}}" data-field="name" bindinput="handleInput" />
     <view class="field-label">手机号</view>
     <input class="field-input" value="{{form.phone}}" data-field="phone" bindinput="handleInput" />
     <view class="field-label">简介</view>
     <textarea class="field-textarea" value="{{form.bio}}" data-field="bio" bindinput="handleInput" />
-    <button class="primary-button save-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存资料</button>
+    <button class="primary-button save-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存</button>
   </view>
 
   <view class="section-card">
+    <view class="section-kicker">福豆流动</view>
+    <view class="section-title">最近福豆记录</view>
+    <view class="wealth-list" wx:if="{{recentWealthEntries.length}}">
+      <view class="wealth-item" wx:for="{{recentWealthEntries}}" wx:key="id">
+        <view class="wealth-item-body">
+          <view class="wealth-item-title">{{item.description}}</view>
+          <view class="wealth-item-time">{{item.timeLabel}}</view>
+        </view>
+        <view class="wealth-item-amount {{item.amount >= 0 ? 'wealth-item-amount-earn' : 'wealth-item-amount-spend'}}">{{item.amount >= 0 ? '+' : ''}}{{item.amount}}</view>
+      </view>
+    </view>
+    <view class="empty-text" wx:else>还没有福豆记录。</view>
+  </view>
+
+  <view class="section-card">
+    <view class="section-kicker">最近觉照</view>
     <view class="section-title">最近觉察</view>
     <view class="tag-pills" wx:if="{{recentTags.length}}">
       <view class="tag-pill" wx:for="{{recentTags}}" wx:key="key">{{item.content}}</view>
     </view>
     <view class="empty-text" wx:else>还没有你的觉察记录。</view>
-  </view>
-
-  <view class="section-card shop-entry">
-    <view class="section-title">工坊入口</view>
-    <view class="section-subtitle">工坊暂未接入商品与订单，先保留入口页。</view>
-    <button class="ghost-button shop-button" bindtap="handleGoShop">进入工坊</button>
-  </view>
-
-  <view class="section-card shop-entry">
-    <view class="section-title">地址管理</view>
-    <view class="section-subtitle">这里维护工坊兑换使用的默认收货地址。</view>
-    <button class="ghost-button shop-button" bindtap="handleGoAddresses">管理地址</button>
   </view>
 </view>

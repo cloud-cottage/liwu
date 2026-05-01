@@ -4,7 +4,9 @@ const { getLocalProfile } = require('./storage')
 const AWARENESS_RECORDS = 'awareness_records'
 const APP_SETTINGS = 'app_settings'
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings'
+const AWARENESS_DISPLAY_SETTINGS_KEY = 'awareness_display_settings'
 const AWARENESS_TAG_REUSE_MAX_LENGTH = 18
+const DEFAULT_POPULAR_TAG_COUNT = 33
 
 const getAwarenessTagLength = (value = '') => (
   Array.from(String(value || '')).reduce((total, character) => (
@@ -14,6 +16,8 @@ const getAwarenessTagLength = (value = '') => (
 
 const getTimestamp = (record = {}) =>
   record.created_at_client || record.timestamp || record.created_at || record.createdAt || ''
+
+const getWeeklyStartTime = () => Date.now() - 7 * 24 * 60 * 60 * 1000
 
 const normalizeRecord = (record = {}) => {
   const content = (record.content || '').trim()
@@ -30,6 +34,39 @@ const normalizeRecord = (record = {}) => {
   }
 }
 
+const buildTagProductCard = (product = {}) => {
+  if (!(product.id || product._id)) {
+    return null
+  }
+
+  return {
+    id: product.id || product._id || '',
+    name: product.name || '',
+    subtitle: product.subtitle || product.description || '去工坊看看这件与你此刻觉察相关的物品。',
+    coverImage: product.cover_image || product.coverImage || ''
+  }
+}
+
+const resolveRelatedProductMap = async (relatedProductIds = []) => {
+  const uniqueIds = [...new Set((relatedProductIds || []).filter(Boolean))]
+  if (uniqueIds.length === 0) {
+    return new Map()
+  }
+
+  try {
+    const db = getDb()
+    const productsResult = await Promise.all(uniqueIds.map((productId) => db.collection('shop_products').doc(productId).get()))
+    return new Map(
+      productsResult
+        .map((result) => result.data || {})
+        .filter((product) => product._id || product.id)
+        .map((product) => [product._id || product.id, buildTagProductCard(product)])
+    )
+  } catch {
+    return new Map()
+  }
+}
+
 const getTagSettings = async () => {
   const db = getDb()
   const result = await db.collection(APP_SETTINGS).where({ key: AWARENESS_TAG_SETTINGS_KEY }).limit(1).get()
@@ -37,6 +74,40 @@ const getTagSettings = async () => {
 
   return {
     tagsByKey: document?.tags_by_key || document?.tagsByKey || {}
+  }
+}
+
+const getAwarenessDisplaySettings = async () => {
+  try {
+    const db = getDb()
+    const result = await db.collection(APP_SETTINGS).where({ key: AWARENESS_DISPLAY_SETTINGS_KEY }).limit(1).get()
+    const document = (result.data || [])[0] || {}
+    return {
+      popularTagCount: Math.max(1, Number(document.popular_tag_count ?? document.popularTagCount ?? DEFAULT_POPULAR_TAG_COUNT))
+    }
+  } catch {
+    return {
+      popularTagCount: DEFAULT_POPULAR_TAG_COUNT
+    }
+  }
+}
+
+const buildWeeklySummary = (records = []) => {
+  const weeklyStartTime = getWeeklyStartTime()
+  const weeklyRecords = records.filter((record) => new Date(record.timestamp || 0).getTime() >= weeklyStartTime)
+  const championMap = {}
+
+  weeklyRecords.forEach((record) => {
+    const userName = record.userName || '匿名用户'
+    championMap[userName] = (championMap[userName] || 0) + 1
+  })
+
+  const championEntries = Object.entries(championMap).sort((left, right) => right[1] - left[1])
+
+  return {
+    weeklyCount: weeklyRecords.length,
+    weeklyChampionName: championEntries[0]?.[0] || '',
+    weeklyChampionCount: championEntries[0]?.[1] || 0
   }
 }
 
@@ -55,7 +126,12 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
       totalCount: 0,
       lastUsedAt: record.timestamp,
       lastUserName: record.userName || '匿名用户',
-      description: tagSettingsByKey[record.tagKey]?.description || ''
+      description: tagSettingsByKey[record.tagKey]?.description || '',
+      relatedProductId: tagSettingsByKey[record.tagKey]?.related_product_id || tagSettingsByKey[record.tagKey]?.relatedProductId || '',
+      relatedProduct: null,
+      weeklyCount: 0,
+      weeklyChampionName: '',
+      weeklyChampionCount: 0
     }
 
     currentTag.totalCount += 1
@@ -66,6 +142,7 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
     }
 
     currentTag.description = tagSettingsByKey[record.tagKey]?.description || ''
+    currentTag.relatedProductId = tagSettingsByKey[record.tagKey]?.related_product_id || tagSettingsByKey[record.tagKey]?.relatedProductId || ''
     tagMap[record.tagKey] = currentTag
   })
 
@@ -85,12 +162,60 @@ const listRecentRecords = async (limit = 200) => {
 }
 
 const listPopularTags = async (limit = 20) => {
-  const [records, settings] = await Promise.all([
+  const [records, settings, displaySettings] = await Promise.all([
     listRecentRecords(2000),
+    getTagSettings(),
+    getAwarenessDisplaySettings()
+  ])
+
+  const resolvedLimit = limit || displaySettings.popularTagCount || DEFAULT_POPULAR_TAG_COUNT
+  const aggregatedTags = aggregateTags(records, settings.tagsByKey).slice(0, resolvedLimit)
+  const relatedProductIds = [...new Set(aggregatedTags.map((tag) => tag.relatedProductId).filter(Boolean))]
+
+  try {
+    const productMap = await resolveRelatedProductMap(relatedProductIds)
+
+    return aggregatedTags.map((tag) => ({
+      ...tag,
+      ...buildWeeklySummary(records.filter((record) => record.tagKey === tag.key)),
+      relatedProduct: productMap.get(tag.relatedProductId) || null
+    }))
+  } catch {
+    return aggregatedTags.map((tag) => ({
+      ...tag,
+      ...buildWeeklySummary(records.filter((record) => record.tagKey === tag.key))
+    }))
+  }
+}
+
+const getTagDetailByKey = async (tagKey = '') => {
+  const normalizedTagKey = String(tagKey || '').trim()
+  if (!normalizedTagKey) {
+    return null
+  }
+
+  const db = getDb()
+  const [recordsResult, settings] = await Promise.all([
+    db.collection(AWARENESS_RECORDS).where({ tag_key: normalizedTagKey }).limit(500).get(),
     getTagSettings()
   ])
 
-  return aggregateTags(records, settings.tagsByKey).slice(0, limit)
+  const records = (recordsResult.data || []).map(normalizeRecord)
+  if (records.length === 0) {
+    return null
+  }
+
+  const tag = aggregateTags(records, settings.tagsByKey)[0] || null
+  if (!tag) {
+    return null
+  }
+
+  const productMap = await resolveRelatedProductMap([tag.relatedProductId])
+  return {
+    ...tag,
+    ...buildWeeklySummary(records),
+    relatedProduct: productMap.get(tag.relatedProductId) || null
+  }
 }
 
 const listUserTags = async (limit = 20) => {
@@ -143,5 +268,6 @@ module.exports = {
   listRecentRecords,
   listPopularTags,
   listUserTags,
-  publishAwareTag
+  publishAwareTag,
+  getTagDetailByKey
 }

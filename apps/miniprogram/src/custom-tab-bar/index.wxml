@@ -1,0 +1,19 @@
+<view class="tabbar-shell">
+  <view class="tabbar-panel">
+    <view
+      class="tabbar-item {{selectedPath === item.pagePath ? 'tabbar-item-active' : ''}}"
+      wx:for="{{tabs}}"
+      wx:key="key"
+      data-path="{{item.pagePath}}"
+      bindtap="handleTabTap"
+    >
+      <view class="tabbar-indicator"></view>
+      <image
+        class="tabbar-icon-image"
+        mode="aspectFit"
+        src="{{item.icon}}"
+      />
+      <view class="tabbar-label">{{item.text}}</view>
+    </view>
+  </view>
+</view>

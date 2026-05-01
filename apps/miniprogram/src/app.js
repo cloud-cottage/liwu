@@ -6,7 +6,7 @@ App({
   globalData: {
     envId: 'liwu-0gtd91eebd863ccf',
     profile: null,
-    theme: 'OrangeGold',
+    theme: 'IvoryAndSage',
     themePreset: null
   },
 

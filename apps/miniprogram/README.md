@@ -3,7 +3,7 @@
 ## Open In WeChat DevTools
 
 1. Open `apps/miniprogram` as the project root in WeChat DevTools.
-2. Replace `touristappid` in `project.config.json` with your real Mini Program AppID when needed.
+2. The project now declares `cloudfunctionRoot` / `cloudbaseRoot` in `project.config.json`, so DevTools should recognize CloudBase automatically.
 3. Copy `project.private.config.example.json` to `project.private.config.json` for local-only IDE settings.
 
 ## CloudBase

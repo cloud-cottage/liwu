@@ -14,6 +14,22 @@ const openMiniRoute = (url) => {
   wx.navigateTo({ url })
 }
 
+const syncMiniTabBar = (pageInstance, path = '') => {
+  if (!pageInstance || typeof pageInstance.getTabBar !== 'function') {
+    return
+  }
+
+  const tabBar = pageInstance.getTabBar()
+  if (!tabBar || typeof tabBar.setData !== 'function') {
+    return
+  }
+
+  tabBar.setData({
+    selectedPath: path
+  })
+}
+
 module.exports = {
-  openMiniRoute
+  openMiniRoute,
+  syncMiniTabBar
 }

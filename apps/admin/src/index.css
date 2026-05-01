@@ -17,22 +17,15 @@
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
 }
 
 #root {
   width: 100%;
-  max-width: 600px;
-  /* Mobile-first container */
-  margin: 0 auto;
   min-height: 100vh;
   background-color: var(--color-bg-primary);
   position: relative;
-  box-shadow: var(--shadow-xl);
-  /* Add shadow to simulate mobile frame on desktop */
 }
 
 /* Wabi-Sabi Utility Classes */

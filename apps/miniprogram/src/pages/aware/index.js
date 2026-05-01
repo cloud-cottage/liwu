@@ -1,19 +1,22 @@
-const { listPopularTags, listUserTags, publishAwareTag } = require('../../utils/aware')
+const { listPopularTags, listUserTags, publishAwareTag, getTagDetailByKey } = require('../../utils/aware')
+const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
+
+const PENDING_PRODUCT_STORAGE_KEY = 'liwu_mp_pending_shop_product_id'
 
 const getFontSize = (count, maxCount) => {
   if (!maxCount || count >= maxCount) {
-    return 42
+    return 40
   }
 
   if (count >= Math.max(2, Math.ceil(maxCount * 0.66))) {
-    return 36
+    return 34
   }
 
   if (count >= Math.max(2, Math.ceil(maxCount * 0.4))) {
-    return 32
+    return 30
   }
 
-  return 28
+  return 26
 }
 
 Page({
@@ -27,8 +30,13 @@ Page({
     showTagModal: false
   },
 
-  onLoad() {
+  onLoad(options = {}) {
+    this.pendingTagKey = options.tagKey ? decodeURIComponent(options.tagKey) : ''
     void this.loadPageData()
+  },
+
+  onShow() {
+    syncMiniTabBar(this, '/pages/aware/index')
   },
 
   async onPullDownRefresh() {
@@ -42,7 +50,7 @@ Page({
     try {
       const [myTags, popularTags] = await Promise.all([
         listUserTags(8),
-        listPopularTags(18)
+        listPopularTags()
       ])
 
       const maxCount = popularTags.reduce((currentMax, tag) => Math.max(currentMax, tag.totalCount || 0), 0)
@@ -55,6 +63,7 @@ Page({
           fontSize: getFontSize(tag.totalCount || 0, maxCount)
         }))
       })
+      await this.openPendingTag()
     } catch (error) {
       this.setData({ loading: false })
       wx.showToast({
@@ -124,7 +133,49 @@ Page({
     await this.handlePublish()
   },
 
-  onShareAppMessage() {
+  handleOpenRelatedProduct() {
+    const productId = this.data.activeTag?.relatedProduct?.id
+    if (!productId) {
+      return
+    }
+
+    wx.setStorageSync(PENDING_PRODUCT_STORAGE_KEY, productId)
+    this.handleCloseTagModal()
+    openMiniRoute('/pages/shop/index')
+  },
+
+  async openPendingTag() {
+    if (!this.pendingTagKey) {
+      return
+    }
+
+    const tagKey = this.pendingTagKey
+    this.pendingTagKey = ''
+
+    try {
+      const tagDetail = await getTagDetailByKey(tagKey)
+      if (!tagDetail) {
+        return
+      }
+
+      this.setData({
+        activeTag: tagDetail,
+        showTagModal: true
+      })
+    } catch {
+      // ignore shared tag resolution failures
+    }
+  },
+
+  onShareAppMessage(event) {
+    if (event?.from === 'button' && event.target?.dataset?.shareType === 'tag' && this.data.activeTag) {
+      const activeTag = this.data.activeTag
+      return {
+        title: `刚刚在「理悟」记录下此刻的觉察：${activeTag.content}`,
+        path: `/pages/aware/index?tagKey=${encodeURIComponent(activeTag.key || '')}`
+      }
+    }
+
     return {
       title: '来理悟小程序，一起觉察当下',
       path: '/pages/aware/index'

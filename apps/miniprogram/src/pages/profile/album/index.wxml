@@ -1,0 +1,83 @@
+<view class="page-shell album-page-shell">
+  <view class="page-header">
+    <view class="page-title">花开纪念册</view>
+    <view class="page-caption">把成长与共建，收成一册可见的光。</view>
+  </view>
+
+  <view class="album-tabs">
+    <view
+      class="section-card album-tab {{activeTab === 'growth' ? 'album-tab-active' : ''}}"
+      data-tab-key="growth"
+      bindtap="handleTabChange"
+    >
+      <view class="album-tab-kicker">成长</view>
+      <view class="album-tab-title">成长徽章</view>
+      <view class="album-tab-count">{{summary.growth.unlockedSeriesCount}}/{{summary.growth.totalSeriesCount}}</view>
+    </view>
+    <view
+      class="section-card album-tab {{activeTab === 'builder' ? 'album-tab-active' : ''}}"
+      data-tab-key="builder"
+      bindtap="handleTabChange"
+    >
+      <view class="album-tab-kicker">共建</view>
+      <view class="album-tab-title">建设徽章</view>
+      <view class="album-tab-count">{{summary.builder.unlockedSeriesCount}}/{{summary.builder.totalSeriesCount}}</view>
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="section-card album-empty-card">
+    <view class="empty-text">正在同步你的徽章状态...</view>
+  </view>
+
+  <view wx:elif="{{groupedBadges[activeTab].length}}" class="badge-grid">
+    <view
+      class="section-card badge-card {{item.earned ? 'badge-card-earned' : 'badge-card-locked'}} {{item.equipped ? 'badge-card-equipped' : ''}}"
+      wx:for="{{groupedBadges[activeTab]}}"
+      wx:key="badgeId"
+      data-badge="{{item}}"
+      bindtap="handleBadgeTap"
+    >
+      <view class="badge-art {{item.earned ? '' : 'badge-art-locked'}}">
+        <view class="badge-core">{{item.displayName.slice(0, 2)}}</view>
+        <view class="badge-difficulty">{{item.difficultyLabel}}</view>
+      </view>
+      <view class="badge-copy">
+        <view class="badge-name">{{item.displayName}}</view>
+        <view class="badge-summary">{{item.summary}}</view>
+      </view>
+      <view class="badge-equipped" wx:if="{{item.equipped}}">佩戴中</view>
+    </view>
+  </view>
+
+  <view wx:else class="section-card album-empty-card">
+    <view class="empty-text">当前还没有可展示的徽章。</view>
+  </view>
+
+  <view class="modal-mask" wx:if="{{showBadgeModal}}" bindtap="handleCloseModal">
+    <view class="modal-card badge-modal-card" catchtap="noop">
+      <view class="modal-title">{{activeBadge.displayName}}</view>
+      <view class="modal-intro">{{activeBadge.description || activeBadge.summary || '这是一枚记录你阶段性成长与投入的徽章。'}}</view>
+
+      <view class="badge-modal-metrics">
+        <view class="badge-modal-metric">
+          <view class="badge-modal-metric-label">难度</view>
+          <view class="badge-modal-metric-value">{{activeBadge.difficultyLabel}}</view>
+        </view>
+        <view class="badge-modal-metric">
+          <view class="badge-modal-metric-label">解锁条件</view>
+          <view class="badge-modal-metric-value">{{activeBadge.threshold}}{{activeBadge.unit}}</view>
+        </view>
+        <view class="badge-modal-metric">
+          <view class="badge-modal-metric-label">佩戴效果</view>
+          <view class="badge-modal-metric-value">{{activeBadge.bonusSummary}}</view>
+        </view>
+      </view>
+
+      <button class="primary-button modal-button" wx:if="{{activeBadge.earned}}" loading="{{saving}}" disabled="{{saving}}" bindtap="handleEquipBadge">
+        {{activeBadge.equipped ? '取消佩戴' : '佩戴这枚徽章'}}
+      </button>
+      <view class="badge-modal-hint" wx:else>尚未获得，暂不可佩戴</view>
+      <button class="ghost-button modal-button" bindtap="handleCloseModal">关闭</button>
+    </view>
+  </view>
+</view>

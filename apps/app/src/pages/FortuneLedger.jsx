@@ -1,34 +1,18 @@
-import React from 'react';
-import { ArrowLeft, Coins, TrendingDown, TrendingUp } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import FortuneBeanIcon from '../components/Icons/FortuneBeanIcon.jsx';
-import { useWealth } from '../context/WealthContext';
+import React from 'react'
+import { Coins, TrendingDown, TrendingUp } from 'lucide-react'
+import FortuneBeanIcon from '../components/Icons/FortuneBeanIcon.jsx'
+import StackPage from '../components/Layout/StackPage.jsx'
+import { useWealth } from '../context/WealthContext'
 
 const FortuneLedger = () => {
-  const navigate = useNavigate();
-  const { balance, history } = useWealth();
+  const { balance, history } = useWealth()
 
   return (
-    <div className="page-container" style={{ padding: '20px', paddingBottom: '96px' }}>
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        style={{
-          border: 'none',
-          background: 'none',
-          color: 'var(--color-text-secondary)',
-          padding: 0,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          cursor: 'pointer',
-          marginBottom: '20px'
-        }}
-      >
-        <ArrowLeft size={18} />
-        返回
-      </button>
-
+    <StackPage
+      title="福豆记录"
+      subtitle="查看每一笔福豆的获得与支出，保持自己的练习轨迹清晰可见。"
+      contentStyle={{ paddingBottom: '24px' }}
+    >
       <section
         style={{
           backgroundColor: '#fff',
@@ -44,14 +28,10 @@ const FortuneLedger = () => {
             fortune_ledger
           </span>
         </div>
-        <h1 style={{ fontSize: '28px', margin: '12px 0 0' }}>福豆记录</h1>
-        <p style={{ margin: '10px 0 0', color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
-          查看每一笔福豆的获得与支出，保持自己的练习轨迹清晰可见。
-        </p>
 
         <div
           style={{
-            marginTop: '18px',
+            marginTop: '16px',
             padding: '18px',
             borderRadius: '18px',
             background: 'linear-gradient(135deg, rgba(214, 140, 101, 0.12) 0%, rgba(214, 140, 101, 0.2) 100%)'
@@ -87,7 +67,8 @@ const FortuneLedger = () => {
         ) : (
           <div style={{ display: 'grid', gap: '12px' }}>
             {history.map((item) => {
-              const isEarn = item.type === 'EARN';
+              const isEarn = item.type === 'EARN'
+
               return (
                 <div
                   key={item.id}
@@ -140,13 +121,13 @@ const FortuneLedger = () => {
                     <FortuneBeanIcon size={16} style={{ color: 'currentColor' }} aria-label="福豆" />
                   </div>
                 </div>
-              );
+              )
             })}
           </div>
         )}
       </section>
-    </div>
-  );
-};
+    </StackPage>
+  )
+}
 
-export default FortuneLedger;
+export default FortuneLedger

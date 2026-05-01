@@ -7,15 +7,18 @@ const ThemeSettings = ({
   awarenessDisplaySettings,
   brandCarouselSettings,
   userAvatarOptionsSettings,
+  clientDistributionSettings,
   error,
   saving,
   savingAwarenessDisplay,
   savingCarousel,
   savingAvatarOptions,
+  savingClientDistribution,
   onSave,
   onSaveAwarenessDisplay,
   onSaveBrandCarousel,
-  onSaveUserAvatarOptions
+  onSaveUserAvatarOptions,
+  onSaveClientDistribution
 }) => {
   const [activeTab, setActiveTab] = useState('theme');
   const [draftTheme, setDraftTheme] = useState(settings.theme);
@@ -23,12 +26,78 @@ const ThemeSettings = ({
   const [draftPopularTagCount, setDraftPopularTagCount] = useState(Number(awarenessDisplaySettings.popularTagCount || 33));
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
   const [draftAvatarOptions, setDraftAvatarOptions] = useState(() => userAvatarOptionsSettings.avatars || []);
+  const [draftPreviewUrl, setDraftPreviewUrl] = useState(clientDistributionSettings.previewUrl || '');
+  const [draftAndroidApkUrl, setDraftAndroidApkUrl] = useState(clientDistributionSettings.androidApkUrl || '');
+  const [draftIosDistributionUrl, setDraftIosDistributionUrl] = useState(clientDistributionSettings.iosDistributionUrl || '');
+  const [localBuildStatus, setLocalBuildStatus] = useState({
+    building: false,
+    lastBuiltAt: '',
+    lastError: '',
+    lastLog: '',
+    apkUrl: '/client-builds/liwu-app-debug.apk',
+    apkExists: false
+  });
+  const [localBuildMessage, setLocalBuildMessage] = useState('');
   const [uploadingSlideIndex, setUploadingSlideIndex] = useState(-1);
   const [uploadingAvatarIndex, setUploadingAvatarIndex] = useState(-1);
   const [carouselFeedback, setCarouselFeedback] = useState('');
   const [avatarFeedback, setAvatarFeedback] = useState('');
   const themeOptions = useMemo(() => Object.values(THEME_PRESETS), []);
   const activeTheme = getThemePreset(draftTheme);
+  const derivedPreviewUrl = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    const currentUrl = new URL(window.location.href);
+
+    if (currentUrl.pathname.startsWith('/admin') && currentUrl.port === '5173') {
+      currentUrl.port = '5174';
+      currentUrl.pathname = '/';
+      currentUrl.search = '';
+      currentUrl.hash = '';
+      return currentUrl.toString();
+    }
+
+    if (currentUrl.pathname.startsWith('/admin') && currentUrl.port === '5174') {
+      currentUrl.port = '5173';
+      currentUrl.pathname = '/';
+      currentUrl.search = '';
+      currentUrl.hash = '';
+      return currentUrl.toString();
+    }
+
+    currentUrl.pathname = currentUrl.pathname.replace(/\/admin\/?$/, '/') || '/';
+    currentUrl.search = '';
+    currentUrl.hash = '';
+    return currentUrl.toString();
+  }, []);
+  const resolvedPreviewUrl = String(draftPreviewUrl || '').trim() || derivedPreviewUrl;
+  const derivedAndroidApkUrl = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    const currentUrl = new URL(window.location.href);
+    currentUrl.search = '';
+    currentUrl.hash = '';
+
+    if (currentUrl.port === '5174') {
+      currentUrl.pathname = '/client-builds/liwu-app-debug.apk';
+      return currentUrl.toString();
+    }
+
+    currentUrl.pathname = currentUrl.pathname.replace(/\/admin\/?$/, '/admin/client-builds/liwu-app-debug.apk');
+    return currentUrl.toString();
+  }, []);
+  const resolvedAndroidApkUrl = String(draftAndroidApkUrl || '').trim() || derivedAndroidApkUrl;
+  const isLocalAdmin = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    return ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+  }, []);
 
   useEffect(() => {
     setDraftTheme(settings.theme);
@@ -49,6 +118,72 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftAvatarOptions(userAvatarOptionsSettings.avatars || []);
   }, [userAvatarOptionsSettings.avatars]);
+
+  useEffect(() => {
+    setDraftPreviewUrl(clientDistributionSettings.previewUrl || '');
+    setDraftAndroidApkUrl(clientDistributionSettings.androidApkUrl || '');
+    setDraftIosDistributionUrl(clientDistributionSettings.iosDistributionUrl || '');
+  }, [
+    clientDistributionSettings.androidApkUrl,
+    clientDistributionSettings.iosDistributionUrl,
+    clientDistributionSettings.previewUrl
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'distribution' || !isLocalAdmin) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const loadStatus = async () => {
+      try {
+        const response = await fetch('/api/local-client-build/status');
+        const payload = await response.json();
+        if (!cancelled && payload?.success) {
+          setLocalBuildStatus(payload.data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLocalBuildMessage(error.message || '本地构建状态读取失败');
+        }
+      }
+    };
+
+    void loadStatus();
+    const timerId = window.setInterval(() => {
+      void loadStatus();
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timerId);
+    };
+  }, [activeTab, isLocalAdmin]);
+
+  const handleTriggerLocalAndroidBuild = async () => {
+    setLocalBuildMessage('');
+
+    try {
+      const response = await fetch('/api/local-client-build/android', {
+        method: 'POST'
+      });
+      const payload = await response.json();
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || 'Android APK 重打失败');
+      }
+
+      setLocalBuildMessage(payload.message || '已开始重打 Android APK。');
+      setLocalBuildStatus((currentStatus) => ({
+        ...currentStatus,
+        building: true,
+        lastError: ''
+      }));
+    } catch (error) {
+      setLocalBuildMessage(error.message || 'Android APK 重打失败');
+    }
+  };
 
   const handleSlideCaptionChange = (index, value) => {
     setDraftSlides((currentSlides) => currentSlides.map((slide, slideIndex) => (
@@ -145,7 +280,8 @@ const ThemeSettings = ({
         {[
           { key: 'theme', label: '主题样式' },
           { key: 'awareness', label: '觉察' },
-          { key: 'avatar', label: '用户头像' }
+          { key: 'avatar', label: '用户头像' },
+          { key: 'distribution', label: '客户端分发' }
         ].map((item) => (
           <button
             key={item.key}
@@ -476,6 +612,129 @@ const ThemeSettings = ({
         </div>
       )}
 
+      {activeTab === 'distribution' && (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              client_distribution
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              客户端分发
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              App 预览入口已经可用，Android 本地 `debug APK` 也已生成。这里同时保留后续正式 APK 与 iOS 分发地址的配置位。
+            </div>
+
+            {isLocalAdmin && (
+              <div style={{ marginTop: '16px', ...previewCardStyle, backgroundColor: '#ffffff' }}>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>本地 Android 构建</div>
+                <div style={{ marginTop: '8px', fontSize: '13px', color: '#475569', lineHeight: 1.7 }}>
+                  这个按钮只在本地 `admin` 开发环境可用。点击后会在当前机器上重新执行 Android `debug APK` 构建。
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' }}>
+                  <button
+                    type="button"
+                    onClick={handleTriggerLocalAndroidBuild}
+                    disabled={localBuildStatus.building}
+                    style={localBuildStatus.building ? disabledButtonStyle : primaryButtonStyle}
+                  >
+                    {localBuildStatus.building ? '重打中...' : '重打 Android APK'}
+                  </button>
+                </div>
+
+                <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', lineHeight: 1.7 }}>
+                  {localBuildStatus.lastBuiltAt
+                    ? `最近一次成功构建：${new Date(localBuildStatus.lastBuiltAt).toLocaleString('zh-CN', { hour12: false })}`
+                    : '还没有成功构建记录。'}
+                </div>
+                {localBuildStatus.lastError && (
+                  <div style={{ marginTop: '10px', ...errorBannerStyle }}>
+                    {localBuildStatus.lastError}
+                  </div>
+                )}
+                {localBuildMessage && (
+                  <div style={{ marginTop: '10px', ...(localBuildMessage.includes('失败') ? errorBannerStyle : successBannerStyle) }}>
+                    {localBuildMessage}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gap: '14px', marginTop: '18px' }}>
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>App 预览地址</span>
+                <input
+                  type="url"
+                  value={draftPreviewUrl}
+                  onChange={(event) => setDraftPreviewUrl(event.target.value)}
+                  placeholder={derivedPreviewUrl}
+                  style={fieldInputStyle}
+                />
+                <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                  留空时默认使用当前环境自动推导：{derivedPreviewUrl || '未识别'}
+                </div>
+              </label>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => resolvedPreviewUrl && window.open(resolvedPreviewUrl, '_blank', 'noopener,noreferrer')}
+                  disabled={!resolvedPreviewUrl}
+                  style={primaryButtonStyle}
+                >
+                  打开 App 预览
+                </button>
+              </div>
+
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>Android APK 下载地址</span>
+                <input
+                  type="url"
+                  value={draftAndroidApkUrl}
+                  onChange={(event) => setDraftAndroidApkUrl(event.target.value)}
+                  placeholder={derivedAndroidApkUrl}
+                  style={fieldInputStyle}
+                />
+                <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                  留空时默认使用当前环境自动推导：{derivedAndroidApkUrl || '未识别'}
+                </div>
+              </label>
+
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>iOS 分发地址</span>
+                <input
+                  type="url"
+                  value={draftIosDistributionUrl}
+                  onChange={(event) => setDraftIosDistributionUrl(event.target.value)}
+                  placeholder="TestFlight 或安装页地址"
+                  style={fieldInputStyle}
+                />
+              </label>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => resolvedAndroidApkUrl && window.open(resolvedAndroidApkUrl, '_blank', 'noopener,noreferrer')}
+                  disabled={!resolvedAndroidApkUrl}
+                  style={resolvedAndroidApkUrl ? primaryButtonStyle : disabledButtonStyle}
+                >
+                  下载 Android APK
+                </button>
+                <button
+                  type="button"
+                  onClick={() => draftIosDistributionUrl && window.open(draftIosDistributionUrl, '_blank', 'noopener,noreferrer')}
+                  disabled={!draftIosDistributionUrl}
+                  style={draftIosDistributionUrl ? secondaryActionButtonStyle : disabledButtonStyle}
+                >
+                  打开 iOS 分发
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'theme' && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
           <button
@@ -511,6 +770,24 @@ const ThemeSettings = ({
             style={primaryButtonStyle}
           >
             {savingAwarenessDisplay ? '保存中...' : '保存觉察设置'}
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'distribution' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button
+            type="button"
+            onClick={() => onSaveClientDistribution({
+              ...clientDistributionSettings,
+              previewUrl: draftPreviewUrl,
+              androidApkUrl: draftAndroidApkUrl,
+              iosDistributionUrl: draftIosDistributionUrl
+            })}
+            disabled={savingClientDistribution}
+            style={primaryButtonStyle}
+          >
+            {savingClientDistribution ? '保存中...' : '保存分发设置'}
           </button>
         </div>
       )}
@@ -560,6 +837,28 @@ const primaryButtonStyle = {
   fontSize: '14px',
   fontWeight: 700,
   cursor: 'pointer'
+};
+
+const secondaryActionButtonStyle = {
+  border: '1px solid #dbe4ee',
+  borderRadius: '12px',
+  backgroundColor: '#fff',
+  color: '#334155',
+  padding: '10px 16px',
+  fontSize: '14px',
+  fontWeight: 700,
+  cursor: 'pointer'
+};
+
+const disabledButtonStyle = {
+  border: '1px solid #e5e7eb',
+  borderRadius: '12px',
+  backgroundColor: '#f3f4f6',
+  color: '#9ca3af',
+  padding: '10px 16px',
+  fontSize: '14px',
+  fontWeight: 700,
+  cursor: 'default'
 };
 
 const carouselSlideCardStyle = {

@@ -6,5 +6,6 @@ export const appRoutes = {
   profileInfo: '/profile/info',
   shop: '/s',
   fortuneLedger: '/fortune-ledger',
-  album: '/album'
+  album: '/album',
+  meditationPlayer: '/meditation'
 }

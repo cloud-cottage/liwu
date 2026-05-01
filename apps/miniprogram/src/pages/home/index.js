@@ -1,20 +1,26 @@
 const { getHomePageData } = require('../../utils/home')
-const { openMiniRoute } = require('../../utils/navigation')
+const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
 
 Page({
   data: {
     loading: true,
     profile: null,
     tags: [],
+    slides: [],
+    showcaseItems: [],
     cards: [
-      { title: '觉察', subtitle: '进入 aware 页面记录当下状态', path: '/pages/aware/index' },
-      { title: '工坊', subtitle: '查看工坊占位页', path: '/pages/shop/index' },
-      { title: '我的', subtitle: '维护本地小程序资料', path: '/pages/profile/index' }
+      { title: '静寂', subtitle: '开始今日 15 分钟冥想', path: '/pages/meditation/index' },
+      { title: '工坊', subtitle: '看看今日可兑换的物品', path: '/pages/shop/index' },
+      { title: '我的', subtitle: '管理资料与收货地址', path: '/pages/profile/index' }
     ]
   },
 
   onLoad() {
     void this.loadPageData()
+  },
+
+  onShow() {
+    syncMiniTabBar(this, '/pages/home/index')
   },
 
   async loadPageData() {
@@ -25,7 +31,15 @@ Page({
       this.setData({
         loading: false,
         profile: pageData.profile,
-        tags: pageData.tags
+        tags: pageData.tags,
+        slides: (pageData.slides || []).map((slide) => ({
+          ...slide,
+          hasImage: !!slide.imageUrl,
+          heroStyle: slide.imageUrl
+            ? `background-image: linear-gradient(180deg, rgba(15, 23, 42, 0.08) 0%, rgba(15, 23, 42, 0.28) 100%), url(${slide.imageUrl});`
+            : ''
+        })),
+        showcaseItems: pageData.showcaseItems
       })
     } catch (error) {
       this.setData({ loading: false })
@@ -42,7 +56,11 @@ Page({
   },
 
   handleAwareTap() {
-    openMiniRoute('/pages/aware/index')
+    openMiniRoute('/pages/meditation/index')
+  },
+
+  handleShopTap() {
+    openMiniRoute('/pages/shop/index')
   },
 
   onShareAppMessage() {

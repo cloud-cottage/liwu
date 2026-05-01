@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Pencil, UserRound, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { useCloudAwareness } from '../context/CloudAwarenessContext.jsx';
-import { useWealth } from '../context/WealthContext.jsx';
-import { authService, avatarSettingsService, studentMembershipService, userProfileService } from '../services/cloudbase.js';
-import MembershipOrderModal from '../modules/profile/MembershipOrderModal.jsx';
+import React, { useEffect, useState } from 'react'
+import { Camera, LogOut, Pencil, UserRound, X } from 'lucide-react'
+import { useCloudAwareness } from '../context/CloudAwarenessContext.jsx'
+import { useWealth } from '../context/WealthContext.jsx'
+import { authService, avatarSettingsService, studentMembershipService, userProfileService } from '../services/cloudbase.js'
+import MembershipOrderModal from '../modules/profile/MembershipOrderModal.jsx'
+import StackPage from '../components/Layout/StackPage.jsx'
 
-const MAX_PROFILE_NAME_LENGTH = 16;
+const MAX_PROFILE_NAME_LENGTH = 16
 
 const primaryButtonStyle = {
   border: 'none',
@@ -18,7 +18,7 @@ const primaryButtonStyle = {
   fontWeight: 600,
   cursor: 'pointer',
   boxShadow: 'var(--shadow-sm)'
-};
+}
 
 const secondaryButtonStyle = {
   border: '1px solid rgba(15, 23, 42, 0.12)',
@@ -29,7 +29,7 @@ const secondaryButtonStyle = {
   fontSize: '14px',
   fontWeight: 600,
   cursor: 'pointer'
-};
+}
 
 const inlineNameIconButtonStyle = {
   width: '30px',
@@ -44,7 +44,7 @@ const inlineNameIconButtonStyle = {
   cursor: 'pointer',
   boxShadow: 'var(--shadow-sm)',
   flexShrink: 0
-};
+}
 
 const InfoMessage = ({ tone = 'info', children }) => (
   <div
@@ -59,7 +59,7 @@ const InfoMessage = ({ tone = 'info', children }) => (
   >
     {children}
   </div>
-);
+)
 
 const ProfileAvatar = ({ avatar, disabled = false, onClick, uploading = false }) => (
   <button
@@ -144,7 +144,7 @@ const ProfileAvatar = ({ avatar, disabled = false, onClick, uploading = false })
       </div>
     )}
   </button>
-);
+)
 
 const AvatarPickerModal = ({
   open,
@@ -156,7 +156,7 @@ const AvatarPickerModal = ({
   onSelect
 }) => {
   if (!open) {
-    return null;
+    return null
   }
 
   return (
@@ -219,8 +219,8 @@ const AvatarPickerModal = ({
             }}
           >
             {avatars.map((avatar) => {
-              const isAvailable = Boolean(avatar.imageUrl);
-              const isActive = avatar.index === selectedAvatarIndex;
+              const isAvailable = Boolean(avatar.imageUrl)
+              const isActive = avatar.index === selectedAvatarIndex
 
               return (
                 <button
@@ -270,283 +270,268 @@ const AvatarPickerModal = ({
                     #{avatar.index}
                   </div>
                 </button>
-              );
+              )
             })}
           </div>
         )}
       </div>
     </div>
-  );
-};
+  )
+}
 
 const formatStudentExpireText = (value = '') => {
   if (!value) {
-    return '待开通';
+    return '待开通'
   }
 
-  const expireDate = new Date(value);
+  const expireDate = new Date(value)
   if (Number.isNaN(expireDate.getTime())) {
-    return '待开通';
+    return '待开通'
   }
 
   if (expireDate.getFullYear() >= 2999) {
-    return '长期有效';
+    return '长期有效'
   }
 
   return expireDate.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: 'numeric',
     day: 'numeric'
-  });
-};
+  })
+}
 
 const ProfileInfo = () => {
-  const navigate = useNavigate();
-  const { syncWalletFromCloud } = useWealth();
+  const { syncWalletFromCloud } = useWealth()
   const {
     authStatus,
     currentUser,
     refreshData,
     syncAuthState
-  } = useCloudAwareness();
+  } = useCloudAwareness()
 
-  const [nameDraft, setNameDraft] = useState('');
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [savingName, setSavingName] = useState(false);
-  const [avatarOptions, setAvatarOptions] = useState([]);
-  const [loadingAvatarOptions, setLoadingAvatarOptions] = useState(false);
-  const [savingAvatar, setSavingAvatar] = useState(false);
-  const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState(false);
-  const [feedbackMessage, setFeedbackMessage] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [membershipSettings, setMembershipSettings] = useState(null);
-  const [loadingMembershipSettings, setLoadingMembershipSettings] = useState(false);
-  const [isMembershipModalOpen, setIsMembershipModalOpen] = useState(false);
-  const [selectedMembershipPlanKey, setSelectedMembershipPlanKey] = useState('');
-  const [submittingMembershipOrder, setSubmittingMembershipOrder] = useState(false);
+  const [nameDraft, setNameDraft] = useState('')
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [savingName, setSavingName] = useState(false)
+  const [avatarOptions, setAvatarOptions] = useState([])
+  const [loadingAvatarOptions, setLoadingAvatarOptions] = useState(false)
+  const [savingAvatar, setSavingAvatar] = useState(false)
+  const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState(false)
+  const [feedbackMessage, setFeedbackMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [membershipSettings, setMembershipSettings] = useState(null)
+  const [loadingMembershipSettings, setLoadingMembershipSettings] = useState(false)
+  const [isMembershipModalOpen, setIsMembershipModalOpen] = useState(false)
+  const [selectedMembershipPlanKey, setSelectedMembershipPlanKey] = useState('')
+  const [submittingMembershipOrder, setSubmittingMembershipOrder] = useState(false)
 
   useEffect(() => {
-    setNameDraft(currentUser?.name || '');
-  }, [currentUser?.name]);
+    setNameDraft(currentUser?.name || '')
+  }, [currentUser?.name])
 
   useEffect(() => {
     if (!isAvatarPickerOpen) {
-      return;
+      return
     }
 
-    let cancelled = false;
+    let cancelled = false
 
     void (async () => {
-      setLoadingAvatarOptions(true);
+      setLoadingAvatarOptions(true)
       try {
-        const nextSettings = await avatarSettingsService.getSettings();
+        const nextSettings = await avatarSettingsService.getSettings()
         if (!cancelled) {
-          setAvatarOptions(nextSettings.avatars || []);
+          setAvatarOptions(nextSettings.avatars || [])
         }
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(error.message || '头像库加载失败');
+          setErrorMessage(error.message || '头像库加载失败')
         }
       } finally {
         if (!cancelled) {
-          setLoadingAvatarOptions(false);
+          setLoadingAvatarOptions(false)
         }
       }
-    })();
+    })()
 
     return () => {
-      cancelled = true;
-    };
-  }, [isAvatarPickerOpen]);
+      cancelled = true
+    }
+  }, [isAvatarPickerOpen])
 
   useEffect(() => {
     if (!isMembershipModalOpen) {
-      return;
+      return
     }
 
-    let cancelled = false;
+    let cancelled = false
 
     void (async () => {
-      setLoadingMembershipSettings(true);
+      setLoadingMembershipSettings(true)
       try {
-        const nextSettings = await studentMembershipService.getSettings();
+        const nextSettings = await studentMembershipService.getSettings()
         if (cancelled) {
-          return;
+          return
         }
 
-        setMembershipSettings(nextSettings);
+        setMembershipSettings(nextSettings)
         setSelectedMembershipPlanKey((currentPlanKey) => (
           currentPlanKey || nextSettings.plans?.[0]?.key || ''
-        ));
+        ))
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(error.message || '学员方案加载失败');
+          setErrorMessage(error.message || '学员方案加载失败')
         }
       } finally {
         if (!cancelled) {
-          setLoadingMembershipSettings(false);
+          setLoadingMembershipSettings(false)
         }
       }
-    })();
+    })()
 
     return () => {
-      cancelled = true;
-    };
-  }, [isMembershipModalOpen]);
+      cancelled = true
+    }
+  }, [isMembershipModalOpen])
 
   const handleBack = () => {
-    navigate('/profile');
-  };
+    window.history.back()
+  }
 
   const handleSaveName = async () => {
-    const normalizedName = String(nameDraft || '').trim();
+    const normalizedName = String(nameDraft || '').trim()
 
     if (!normalizedName) {
-      setErrorMessage('请输入用户名');
-      return;
+      setErrorMessage('请输入用户名')
+      return
     }
 
-    setSavingName(true);
-    setFeedbackMessage('');
-    setErrorMessage('');
+    setSavingName(true)
+    setFeedbackMessage('')
+    setErrorMessage('')
 
     try {
-      await userProfileService.updateCurrentProfile({ name: normalizedName });
+      await userProfileService.updateCurrentProfile({ name: normalizedName })
       await Promise.all([
         syncAuthState({ allowAnonymous: false }),
         refreshData({ force: true, allowAnonymous: true })
-      ]);
-      setFeedbackMessage('用户名已更新');
-      setIsEditingName(false);
+      ])
+      setFeedbackMessage('用户名已更新')
+      setIsEditingName(false)
     } catch (error) {
-      setErrorMessage(error.message || '用户名更新失败');
+      setErrorMessage(error.message || '用户名更新失败')
     } finally {
-      setSavingName(false);
+      setSavingName(false)
     }
-  };
+  }
 
   const handleOpenMembershipEntry = () => {
     if (!authStatus.isAuthenticated) {
-      setErrorMessage('请先登录后再开通学员身份');
-      return;
+      setErrorMessage('请先登录后再开通学员身份')
+      return
     }
 
-    setErrorMessage('');
-    setFeedbackMessage('');
-    setIsMembershipModalOpen(true);
-  };
+    setErrorMessage('')
+    setFeedbackMessage('')
+    setIsMembershipModalOpen(true)
+  }
 
   const handleCreateMembershipOrder = async () => {
     if (!selectedMembershipPlanKey) {
-      setErrorMessage('请先选择一个学员方案');
-      return;
+      setErrorMessage('请先选择一个学员方案')
+      return
     }
 
-    setSubmittingMembershipOrder(true);
-    setErrorMessage('');
-    setFeedbackMessage('');
+    setSubmittingMembershipOrder(true)
+    setErrorMessage('')
+    setFeedbackMessage('')
 
     try {
-      const result = await studentMembershipService.createOrder(selectedMembershipPlanKey);
-      setIsMembershipModalOpen(false);
-      setFeedbackMessage(`已创建${result.plan.label}订单，订单号 ${result.order.orderNo}。后台确认支付后会自动开通或续期学员身份。`);
+      const result = await studentMembershipService.createOrder(selectedMembershipPlanKey)
+      setIsMembershipModalOpen(false)
+      setFeedbackMessage(`已创建${result.plan.label}订单，订单号 ${result.order.orderNo}。后台确认支付后会自动开通或续期学员身份。`)
     } catch (error) {
-      setErrorMessage(error.message || '学员订单创建失败');
+      setErrorMessage(error.message || '学员订单创建失败')
     } finally {
-      setSubmittingMembershipOrder(false);
+      setSubmittingMembershipOrder(false)
     }
-  };
+  }
 
   const handleSelectAvatar = () => {
     if (!authStatus.isAuthenticated) {
-      setErrorMessage('请先登录后再修改头像');
-      return;
+      setErrorMessage('请先登录后再修改头像')
+      return
     }
 
-    setErrorMessage('');
-    setFeedbackMessage('');
-    setIsAvatarPickerOpen(true);
-  };
+    setErrorMessage('')
+    setFeedbackMessage('')
+    setIsAvatarPickerOpen(true)
+  }
 
   const handleAvatarSelect = async (avatarIndex) => {
     if (!avatarIndex) {
-      return;
+      return
     }
 
-    setSavingAvatar(true);
-    setFeedbackMessage('');
-    setErrorMessage('');
+    setSavingAvatar(true)
+    setFeedbackMessage('')
+    setErrorMessage('')
 
     try {
-      await userProfileService.updateCurrentProfile({ avatarIndex });
+      await userProfileService.updateCurrentProfile({ avatarIndex })
       await Promise.all([
         syncAuthState({ allowAnonymous: false }),
         refreshData({ force: true, allowAnonymous: true })
-      ]);
-      setFeedbackMessage('头像已更新');
-      setIsAvatarPickerOpen(false);
+      ])
+      setFeedbackMessage('头像已更新')
+      setIsAvatarPickerOpen(false)
     } catch (error) {
-      setErrorMessage(error.message || '头像更新失败');
+      setErrorMessage(error.message || '头像更新失败')
     } finally {
-      setSavingAvatar(false);
+      setSavingAvatar(false)
     }
-  };
+  }
 
   const handleLogout = async () => {
-    setLoggingOut(true);
-    setFeedbackMessage('');
-    setErrorMessage('');
+    setLoggingOut(true)
+    setFeedbackMessage('')
+    setErrorMessage('')
 
     try {
-      const result = await authService.signOut();
+      const result = await authService.signOut()
       if (!result.success) {
-        throw result.error || new Error('退出登录失败');
+        throw result.error || new Error('退出登录失败')
       }
 
       await Promise.all([
         syncAuthState({ allowAnonymous: false }),
         syncWalletFromCloud({ allowAnonymous: false })
-      ]);
+      ])
 
-      navigate('/profile', { replace: true });
+      window.history.replaceState(null, '', '/profile')
+      window.location.reload()
     } catch (error) {
-      setErrorMessage(error.message || '退出登录失败');
+      setErrorMessage(error.message || '退出登录失败')
     } finally {
-      setLoggingOut(false);
+      setLoggingOut(false)
     }
-  };
+  }
 
-  const profileName = currentUser?.name || authStatus.displayName || '未登录用户';
+  const profileName = currentUser?.name || authStatus.displayName || '未登录用户'
   const identityTitle = authStatus.isAuthenticated
     ? (currentUser?.isStudent ? '学员用户' : '普通用户')
-    : '游客模式';
+    : '游客模式'
   const identityDescription = authStatus.isAuthenticated
     ? (currentUser?.isStudent ? '你正在以学员身份同行。' : '当前以普通用户身份使用理悟。')
-    : '登录后可保存资料并开通学员身份。';
-  const expireText = currentUser?.isStudent ? formatStudentExpireText(currentUser?.studentExpireAt) : '开通后显示';
+    : '登录后可保存资料并开通学员身份。'
+  const expireText = currentUser?.isStudent ? formatStudentExpireText(currentUser?.studentExpireAt) : '开通后显示'
 
   return (
-    <div className="page-container" style={{ padding: '20px', paddingBottom: '96px' }}>
-      <button
-        type="button"
-        onClick={handleBack}
-        style={{
-          border: 'none',
-          background: 'none',
-          color: 'var(--color-text-secondary)',
-          padding: 0,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          cursor: 'pointer',
-          marginBottom: '20px'
-        }}
-      >
-        <ArrowLeft size={18} />
-        返回我的
-      </button>
-
+    <StackPage
+      title="个人信息"
+      subtitle="在这里管理头像、用户名与账号状态。"
+      contentStyle={{ paddingBottom: '24px' }}
+    >
       <section
         style={{
           backgroundColor: '#fff',
@@ -556,11 +541,6 @@ const ProfileInfo = () => {
           marginBottom: '18px'
         }}
       >
-        <h1 style={{ fontSize: '28px', margin: 0 }}>个人信息</h1>
-        <p style={{ margin: '10px 0 0', color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
-          在这里管理头像、用户名与账号状态。
-        </p>
-
         <div
           style={{
             marginTop: '22px',
@@ -642,10 +622,10 @@ const ProfileInfo = () => {
             <button
               type="button"
               onClick={() => {
-                setErrorMessage('');
-                setFeedbackMessage('');
-                setNameDraft(profileName);
-                setIsEditingName(true);
+                setErrorMessage('')
+                setFeedbackMessage('')
+                setNameDraft(profileName)
+                setIsEditingName(true)
               }}
               aria-label="修改用户名"
               title="修改用户名"
@@ -694,8 +674,8 @@ const ProfileInfo = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setIsEditingName(false);
-                  setNameDraft(profileName);
+                  setIsEditingName(false)
+                  setNameDraft(profileName)
                 }}
                 disabled={savingName}
                 style={secondaryButtonStyle}
@@ -756,8 +736,8 @@ const ProfileInfo = () => {
         onClose={() => setIsAvatarPickerOpen(false)}
         onSelect={handleAvatarSelect}
       />
-    </div>
-  );
-};
+    </StackPage>
+  )
+}
 
-export default ProfileInfo;
+export default ProfileInfo

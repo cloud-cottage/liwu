@@ -7,7 +7,9 @@ const {
   createPointsOrder,
   getCurrentShopProfile
 } = require('../../utils/shop')
-const { openMiniRoute } = require('../../utils/navigation')
+const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
+
+const PENDING_PRODUCT_STORAGE_KEY = 'liwu_mp_pending_shop_product_id'
 
 const EMPTY_ADDRESS = {
   receiverName: '',
@@ -36,24 +38,24 @@ const PRODUCT_STATUS_LABELS = {
 
 const SHOP_TONES = [
   {
-    gradient: 'linear-gradient(135deg, #f8d8b8 0%, #f0a271 100%)',
-    accent: '#8f4d28',
-    shadow: 'rgba(201, 111, 39, 0.22)'
+    gradient: 'linear-gradient(135deg, #dfe8d8 0%, #a7b69a 100%)',
+    accent: '#4d5a4b',
+    shadow: 'rgba(143, 165, 138, 0.22)'
   },
   {
-    gradient: 'linear-gradient(135deg, #d9e7f2 0%, #8eb6cd 100%)',
-    accent: '#365e73',
-    shadow: 'rgba(54, 94, 115, 0.2)'
+    gradient: 'linear-gradient(135deg, #e7ebe3 0%, #c7d1be 100%)',
+    accent: '#5f6b5d',
+    shadow: 'rgba(167, 182, 154, 0.2)'
   },
   {
-    gradient: 'linear-gradient(135deg, #e7decc 0%, #bca781 100%)',
-    accent: '#695237',
-    shadow: 'rgba(105, 82, 55, 0.2)'
+    gradient: 'linear-gradient(135deg, #ece7dc 0%, #d6cebe 100%)',
+    accent: '#6a665c',
+    shadow: 'rgba(214, 206, 190, 0.22)'
   },
   {
-    gradient: 'linear-gradient(135deg, #e1ecd6 0%, #92ab7e 100%)',
-    accent: '#4f6742',
-    shadow: 'rgba(79, 103, 66, 0.2)'
+    gradient: 'linear-gradient(135deg, #edf0e8 0%, #bfd0b4 100%)',
+    accent: '#546452',
+    shadow: 'rgba(143, 165, 138, 0.18)'
   }
 ]
 
@@ -75,8 +77,14 @@ Page({
     addressDraft: { ...EMPTY_ADDRESS }
   },
 
-  onLoad() {
+  onLoad(options = {}) {
+    this.pendingProductId = options.productId ? decodeURIComponent(options.productId) : ''
     void this.loadPageData()
+  },
+
+  onShow() {
+    syncMiniTabBar(this, '/pages/shop/index')
+    void this.openPendingProduct()
   },
 
   async onPullDownRefresh() {
@@ -106,6 +114,7 @@ Page({
         selectedCategory,
         ...getCategoryPresentation(selectedCategory)
       })
+      await this.openPendingProduct(categories)
     } catch (error) {
       this.setData({ loading: false })
       wx.showToast({
@@ -142,7 +151,10 @@ Page({
 
   async handleProductTap(event) {
     const { productId } = event.currentTarget.dataset
+    await this.openProductDetail(productId)
+  },
 
+  async openProductDetail(productId) {
     try {
       const detail = await getShopProductDetail(productId)
       if (!detail) {
@@ -165,6 +177,21 @@ Page({
         icon: 'none'
       })
     }
+  },
+
+  async openPendingProduct(optionalCategories) {
+    const pendingProductId = wx.getStorageSync(PENDING_PRODUCT_STORAGE_KEY) || this.pendingProductId || ''
+    if (!pendingProductId) {
+      return
+    }
+
+    wx.removeStorageSync(PENDING_PRODUCT_STORAGE_KEY)
+    this.pendingProductId = ''
+    if (!this.data.categories.length && !optionalCategories?.length) {
+      return
+    }
+
+    await this.openProductDetail(pendingProductId)
   },
 
   handleCloseProductModal() {
@@ -253,7 +280,31 @@ Page({
     openMiniRoute('/pages/profile/addresses/index')
   },
 
-  noop() {}
+  async handleRelatedProductTap(event) {
+    const { productId } = event.currentTarget.dataset
+    if (!productId) {
+      return
+    }
+
+    await this.openProductDetail(productId)
+  },
+
+  noop() {},
+
+  onShareAppMessage(event) {
+    if (event?.from === 'button' && event.target?.dataset?.shareType === 'product' && this.data.activeProduct) {
+      const activeProduct = this.data.activeProduct
+      return {
+        title: `和我一起看看「理悟」工坊里的：${activeProduct.name}`,
+        path: `/pages/shop/index?productId=${encodeURIComponent(activeProduct.id)}`
+      }
+    }
+
+    return {
+      title: '来理悟小程序逛逛工坊',
+      path: '/pages/shop/index'
+    }
+  }
 })
 
 const addressesToDraft = (addresses = []) => {
@@ -312,6 +363,14 @@ const decorateProduct = (product = {}, categories = []) => {
     coverStyle: getCoverStyle(product, tone),
     accentColor: tone.accent,
     shadowColor: tone.shadow,
+    relatedProduct: product.relatedProduct
+      ? {
+          id: product.relatedProduct.id,
+          name: product.relatedProduct.name,
+          subtitle: product.relatedProduct.subtitle || product.relatedProduct.description || '去工坊看看这件与你此刻相关的物品。',
+          coverImage: product.relatedProduct.coverImage || ''
+        }
+      : null,
     skus: (product.skus || []).map((sku) => ({
       ...sku,
       priceLabel: formatPriceLabel(sku.pricePoints, sku.priceCash)
