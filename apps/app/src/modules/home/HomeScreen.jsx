@@ -318,7 +318,7 @@ const Home = () => {
               理悟
             </h1>
             <p style={{ color: 'var(--color-text-secondary)', marginTop: '10px', lineHeight: 1.7 }}>
-              礼敬物品，安住当下。先从今天最该被看见的一件事开始。
+              礼敬物品，礼赞生命。
             </p>
           </div>
         </div>

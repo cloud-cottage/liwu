@@ -1,4 +1,4 @@
-import React, { Suspense } from 'react'
+import React, { Suspense, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useCloudAwareness } from '@app/context/CloudAwarenessContext.jsx'
 import '../admin/index.css'
@@ -12,6 +12,20 @@ const WebAdminPage = () => {
   const { authStatus, currentUser, loading } = useCloudAwareness()
   const currentPhone = normalizePhone(currentUser?.phone || authStatus?.phoneNumber || '')
   const authorized = currentPhone === ADMIN_PHONE
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return undefined
+    }
+
+    document.body.classList.add('liwu-web-admin-route')
+    document.documentElement.classList.add('liwu-web-admin-route')
+
+    return () => {
+      document.body.classList.remove('liwu-web-admin-route')
+      document.documentElement.classList.remove('liwu-web-admin-route')
+    }
+  }, [])
 
   if (loading) {
     return (

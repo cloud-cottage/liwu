@@ -21,11 +21,38 @@ body {
   min-height: 100vh;
 }
 
+html.liwu-web-admin-route,
+body.liwu-web-admin-route {
+  width: 100%;
+  min-width: 1280px;
+}
+
+body.liwu-web-admin-route {
+  display: block !important;
+  place-items: initial !important;
+  background: #f3f4f6 !important;
+  overflow-x: auto;
+}
+
+body.liwu-web-admin-route::before,
+body.liwu-web-admin-route::after {
+  display: none !important;
+}
+
 #root {
   width: 100%;
   min-height: 100vh;
   background-color: var(--color-bg-primary);
   position: relative;
+}
+
+body.liwu-web-admin-route #root {
+  width: 100%;
+  max-width: none !important;
+  min-width: 1280px;
+  margin: 0;
+  background: #f3f4f6;
+  box-shadow: none !important;
 }
 
 /* Wabi-Sabi Utility Classes */

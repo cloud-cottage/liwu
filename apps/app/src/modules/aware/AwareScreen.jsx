@@ -561,7 +561,7 @@ const AwareTagModal = ({
           >
             <span>本周觉察 {weeklyCount} 次</span>
             <span>-</span>
-            <span>本周觉察笃定者</span>
+            <span>本周最多</span>
             <TinyUserChip user={tag.weeklyChampion} />
           </div>
           <div
@@ -577,7 +577,7 @@ const AwareTagModal = ({
           >
             <span>社区总觉察 {historicalCount} 次</span>
             <span>-</span>
-            <span>最新觉察者</span>
+            <span>最新觉察</span>
             <TinyUserChip user={tag.latestUser} />
           </div>
         </div>
