@@ -2011,6 +2011,7 @@ export const awarenessService = {
           description: configuredSettings.description || '',
           rewardPoints: configuredSettings.rewardPoints || 0,
           relatedProductId: configuredSettings.relatedProductId || '',
+          participantCount: 0,
           totalCount: 0,
           weeklyCount: 0,
           weeklyChampion: null,
@@ -2031,6 +2032,11 @@ export const awarenessService = {
 
       const latestRecord = records[0];
       const weekWindowStartMs = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      const participantCount = new Set(
+        records
+          .map((record) => record.userId || record.authUid || record.authorKey || '')
+          .filter(Boolean)
+      ).size;
       const weeklyRecords = records.filter((record) => {
         const timestamp = new Date(record.timestamp || 0).getTime();
         return Number.isFinite(timestamp) && timestamp >= weekWindowStartMs;
@@ -2114,6 +2120,7 @@ export const awarenessService = {
         description: configuredSettings.description || '',
         rewardPoints: configuredSettings.rewardPoints || 0,
         relatedProductId: configuredSettings.relatedProductId || '',
+        participantCount,
         totalCount: records.length,
         weeklyCount: weeklyRecords.length,
         weeklyChampion,

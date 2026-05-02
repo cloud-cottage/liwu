@@ -56,8 +56,8 @@
       <view class="modal-intro" wx:if="{{activeTag.description}}">{{activeTag.description}}</view>
 
       <view class="modal-meta-group">
-        <view class="modal-meta">本周觉察 {{activeTag.weeklyCount || 0}} 次 - 本周觉察笃定者 {{activeTag.weeklyChampionName || '匿名用户'}}</view>
-        <view class="modal-meta">社区总觉察 {{activeTag.totalCount || 0}} 次 - 最新觉察者 {{activeTag.lastUserName || '匿名用户'}}</view>
+        <view class="modal-meta">已与 {{activeTag.participantCount || 0}} 人一起共同创造，社区总累计 {{activeTag.totalCount || 0}} 次</view>
+        <view class="modal-meta">本周最多 {{activeTag.weeklyChampionName || '匿名用户'}} - 最新觉察 {{activeTag.lastUserName || '匿名用户'}}</view>
       </view>
 
       <view class="related-product-card" wx:if="{{activeTag.relatedProduct}}" data-product-id="{{activeTag.relatedProduct.id}}" bindtap="handleOpenRelatedProduct">

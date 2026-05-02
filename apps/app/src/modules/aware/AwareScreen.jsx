@@ -550,19 +550,12 @@ const AwareTagModal = ({
           )}
           <div
             style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: '8px',
               fontSize: '13px',
               color: '#475569',
               lineHeight: 1.8
             }}
           >
-            <span>本周觉察 {weeklyCount} 次</span>
-            <span>-</span>
-            <span>本周最多</span>
-            <TinyUserChip user={tag.weeklyChampion} />
+            已与 {Math.max(0, Number(tag.participantCount || 0))} 人一起共同创造，社区总累计 {historicalCount} 次
           </div>
           <div
             style={{
@@ -575,7 +568,8 @@ const AwareTagModal = ({
               lineHeight: 1.8
             }}
           >
-            <span>社区总觉察 {historicalCount} 次</span>
+            <span>本周最多</span>
+            <TinyUserChip user={tag.weeklyChampion} />
             <span>-</span>
             <span>最新觉察</span>
             <TinyUserChip user={tag.latestUser} />

@@ -131,10 +131,15 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
       relatedProduct: null,
       weeklyCount: 0,
       weeklyChampionName: '',
-      weeklyChampionCount: 0
+      weeklyChampionCount: 0,
+      participantKeys: []
     }
 
     currentTag.totalCount += 1
+    currentTag.participantKeys = [...new Set([
+      ...currentTag.participantKeys,
+      record.authorKey || record.userName || ''
+    ].filter(Boolean))]
 
     if (new Date(record.timestamp || 0).getTime() >= new Date(currentTag.lastUsedAt || 0).getTime()) {
       currentTag.lastUsedAt = record.timestamp
@@ -146,13 +151,21 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
     tagMap[record.tagKey] = currentTag
   })
 
-  return Object.values(tagMap).sort((left, right) => {
-    if (right.totalCount !== left.totalCount) {
-      return right.totalCount - left.totalCount
-    }
+  return Object.values(tagMap)
+    .map((tag) => {
+      const { participantKeys = [], ...rest } = tag
+      return {
+        ...rest,
+        participantCount: participantKeys.length
+      }
+    })
+    .sort((left, right) => {
+      if (right.totalCount !== left.totalCount) {
+        return right.totalCount - left.totalCount
+      }
 
-    return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime()
-  })
+      return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime()
+    })
 }
 
 const listRecentRecords = async (limit = 200) => {
