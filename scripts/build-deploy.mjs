@@ -5,7 +5,6 @@ import { execSync } from 'node:child_process'
 const rootDir = process.cwd()
 const rootDistDir = join(rootDir, 'dist')
 const webDistDir = join(rootDir, 'apps', 'web', 'dist')
-const adminDistDir = join(rootDir, 'apps', 'admin', 'dist')
 
 const copyDirectoryContents = (fromDir, toDir) => {
   if (!existsSync(fromDir)) {
@@ -25,7 +24,5 @@ const copyDirectoryContents = (fromDir, toDir) => {
 rmSync(rootDistDir, { recursive: true, force: true })
 
 execSync('npm run build:web', { stdio: 'inherit' })
-execSync('npm run build:admin', { stdio: 'inherit' })
 
 copyDirectoryContents(webDistDir, rootDistDir)
-copyDirectoryContents(adminDistDir, join(rootDistDir, 'admin'))

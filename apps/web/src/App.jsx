@@ -14,6 +14,9 @@ import MeditationPlayer from '@app/modules/meditate/player'
 import { CloudAwarenessProvider } from '@app/context/CloudAwarenessContext.jsx'
 import { ThemeProvider } from '@app/context/ThemeContext.jsx'
 import { WealthProvider } from '@app/context/WealthContext.jsx'
+import WebExperienceBanner from './components/WebExperienceBanner.jsx'
+import DownloadPage from './pages/DownloadPage.jsx'
+import WebAdminPage from './pages/WebAdminPage.jsx'
 import '@app/App.css'
 
 const Layout = () => (
@@ -25,26 +28,38 @@ const Layout = () => (
   </>
 )
 
+const WebPrimaryPage = ({ children }) => (
+  <div>
+    <div style={{ padding: '18px 18px 0' }}>
+      <WebExperienceBanner />
+    </div>
+    {children}
+  </div>
+)
+
 const App = () => (
   <ThemeProvider>
     <WealthProvider>
       <CloudAwarenessProvider>
         <Router>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Home />} />
+          <Routes>
+            <Route path="/admin" element={<WebAdminPage />} />
+            <Route path="/admin/*" element={<WebAdminPage />} />
+            <Route path="/" element={<Layout />}>
+            <Route index element={<WebPrimaryPage><Home /></WebPrimaryPage>} />
             <Route path="m" element={<MeditationHome />} />
             <Route path="meditation-tab" element={<Navigate to="/m" replace />} />
-            <Route path="a" element={<Aware />} />
+            <Route path="a" element={<WebPrimaryPage><Aware /></WebPrimaryPage>} />
             <Route path="aware" element={<Navigate to="/a" replace />} />
             <Route path="record" element={<Navigate to="/a" replace />} />
             <Route path="community" element={<Community />} />
-            <Route path="profile" element={<Profile />} />
+            <Route path="profile" element={<WebPrimaryPage><Profile /></WebPrimaryPage>} />
             <Route path="profile/info" element={<ProfileInfo />} />
-            <Route path="s" element={<Shop />} />
+            <Route path="s" element={<WebPrimaryPage><Shop /></WebPrimaryPage>} />
             <Route path="shop" element={<Navigate to="/s" replace />} />
+            <Route path="download" element={<DownloadPage />} />
             <Route path="fortune-ledger" element={<FortuneLedger />} />
-              <Route path="album" element={<Album />} />
+            <Route path="album" element={<Album />} />
             </Route>
             <Route path="/meditation" element={<MeditationPlayer />} />
           </Routes>

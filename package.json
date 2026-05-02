@@ -11,16 +11,16 @@
     "dev": "npm run dev:web",
     "dev:app": "npm --workspace @liwu/app run dev",
     "dev:web": "npm --workspace @liwu/web run dev",
-    "dev:admin": "npm --workspace @liwu/admin run dev",
+    "dev:admin": "npm run dev:web",
     "build": "node scripts/build-deploy.mjs",
     "build:app": "npm --workspace @liwu/app run build",
     "build:web": "npm --workspace @liwu/web run build",
-    "build:admin": "npm --workspace @liwu/admin run build",
+    "build:admin": "npm run build:web",
     "build:miniprogram": "npm --workspace @liwu/miniprogram run build",
     "build:server": "npm --workspace @liwu/server run build",
     "lint": "eslint .",
     "preview": "npm --workspace @liwu/web run preview",
-    "preview:admin": "npm --workspace @liwu/admin run preview"
+    "preview:admin": "npm run preview"
   },
   "dependencies": {
     "@cloudbase/js-sdk": "^2.25.3",

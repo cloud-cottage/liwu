@@ -54,6 +54,7 @@ const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
 const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
+const CLIENT_DISTRIBUTION_SETTINGS_KEY = 'client_distribution_settings';
 const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const NAME_UPDATE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
@@ -64,6 +65,13 @@ const CLOUDBASE_PROXY_REMOTE_ORIGIN = 'https://liwu.yunduojihua.com';
 const SHANGHAI_TIMEZONE = 'Asia/Shanghai';
 const AWARENESS_TAG_MODAL_CACHE_KEY = 'liwu_awareness_tag_modal_cache_v1';
 const AWARENESS_TAG_MODAL_CACHE_TTL_MS = 30 * 60 * 1000;
+export const DEFAULT_CLIENT_DISTRIBUTION_SETTINGS = {
+  documentId: null,
+  previewUrl: '',
+  androidApkUrl: '',
+  iosDistributionUrl: '',
+  missingCollection: false
+};
 
 const isLocalDevHost = (hostname = '') => (
   hostname === 'localhost' ||
@@ -2810,6 +2818,41 @@ export const brandCarouselSettingsService = {
 export const awarenessDisplaySettingsService = {
   async getSettings() {
     return getAwarenessDisplaySettings();
+  }
+};
+
+const normalizeClientDistributionSettings = (document = {}) => ({
+  documentId: getDocumentId(document),
+  previewUrl: document.preview_url || document.previewUrl || '',
+  androidApkUrl: document.android_apk_url || document.androidApkUrl || '',
+  iosDistributionUrl: document.ios_distribution_url || document.iosDistributionUrl || '',
+  missingCollection: false
+});
+
+export const clientDistributionSettingsService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: CLIENT_DISTRIBUTION_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionResponse(result)) {
+        return { ...DEFAULT_CLIENT_DISTRIBUTION_SETTINGS, missingCollection: true };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_CLIENT_DISTRIBUTION_SETTINGS };
+      }
+
+      return normalizeClientDistributionSettings(document);
+    } catch (error) {
+      console.error('获取客户端分发设置失败:', error);
+      return { ...DEFAULT_CLIENT_DISTRIBUTION_SETTINGS };
+    }
   }
 };
 
