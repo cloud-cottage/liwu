@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 
 const formatCash = (value) => (value ? `¥${Number(value).toFixed(2)}` : '纯福豆');
@@ -109,6 +109,20 @@ const createEmptyGalleryItem = () => ({
   showcaseAspectRatio: ''
 });
 
+const createEmptyLivingCard = (index) => ({
+  id: `shop_living_${index + 1}`,
+  fileId: '',
+  imageUrl: '',
+  productId: ''
+});
+
+const normalizeLivingCards = (settings = {}) => (
+  Array.from({ length: 6 }, (_, index) => ({
+    ...createEmptyLivingCard(index),
+    ...(settings.cards?.[index] || {})
+  }))
+);
+
 const normalizeGalleryItems = (product = null) => {
   const showcaseByUrl = new Map(
     (product?.showcaseMedia || [])
@@ -157,7 +171,10 @@ const ShopManagement = ({
   skus,
   orders,
   orderItems,
+  shopHomeLivingSettings,
+  savingShopHomeLivingSettings,
   onSaveProduct,
+  onSaveShopHomeLivingSettings,
   onUpdateOrderStatus
 }) => {
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
@@ -168,6 +185,12 @@ const ShopManagement = ({
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadingGalleryIndex, setUploadingGalleryIndex] = useState(-1);
   const [uploadingGalleryBatch, setUploadingGalleryBatch] = useState(false);
+  const [livingCardsDraft, setLivingCardsDraft] = useState(() => normalizeLivingCards(shopHomeLivingSettings));
+  const [uploadingLivingCardIndex, setUploadingLivingCardIndex] = useState(-1);
+
+  useEffect(() => {
+    setLivingCardsDraft(normalizeLivingCards(shopHomeLivingSettings));
+  }, [shopHomeLivingSettings]);
 
   const filteredProducts = useMemo(() => (
     selectedCategoryId
@@ -404,6 +427,51 @@ const ShopManagement = ({
     }
   };
 
+  const handleLivingCardChange = (index, patch) => {
+    setLivingCardsDraft((currentCards) => currentCards.map((card, cardIndex) => (
+      cardIndex === index
+        ? {
+            ...card,
+            ...patch
+          }
+        : card
+    )));
+  };
+
+  const handleUploadLivingCardImage = async (index, file) => {
+    if (!file) {
+      return;
+    }
+
+    setUploadingLivingCardIndex(index);
+    try {
+      const uploadResult = await uploadImageAsWebp({
+        file,
+        cloudPath: `liwu/shop-home-living/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.webp`
+      });
+
+      handleLivingCardChange(index, {
+        fileId: uploadResult.fileId,
+        imageUrl: uploadResult.imageUrl
+      });
+    } finally {
+      setUploadingLivingCardIndex(-1);
+    }
+  };
+
+  const handleSaveLivingSettings = async () => {
+    try {
+      await onSaveShopHomeLivingSettings({
+        ...shopHomeLivingSettings,
+        imageWidth: 700,
+        imageHeight: 700,
+        cards: livingCardsDraft
+      });
+    } catch (error) {
+      console.error('保存我的居心地设置失败:', error);
+    }
+  };
+
   const handleOrderStatusUpdate = async (orderId, nextStatus) => {
     setUpdatingOrderId(orderId);
     try {
@@ -433,6 +501,95 @@ const ShopManagement = ({
           <StatCard label="商品数" value={products.length} />
           <StatCard label="规格数" value={skus.length} />
           <StatCard label="订单数" value={orders.length} />
+        </div>
+      </div>
+
+      <div
+        style={{
+          backgroundColor: '#fff',
+          borderRadius: '16px',
+          padding: '28px',
+          boxShadow: '0 4px 18px rgba(0, 0, 0, 0.06)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '20px', color: '#111827' }}>我的居心地</h3>
+            <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
+              小程序【工坊】首页轮播图，固定上传尺寸建议为 700 × 700 px。每张图中心会绘制一个可点击圆形，点击后进入这里绑定的商品。
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => { void handleSaveLivingSettings(); }}
+            disabled={savingShopHomeLivingSettings}
+            style={{
+              border: 'none',
+              borderRadius: '10px',
+              backgroundColor: '#111827',
+              color: '#fff',
+              padding: '12px 18px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: savingShopHomeLivingSettings ? 'default' : 'pointer',
+              opacity: savingShopHomeLivingSettings ? 0.7 : 1
+            }}
+          >
+            {savingShopHomeLivingSettings ? '保存中...' : '保存居心地设置'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginTop: '18px' }}>
+          {livingCardsDraft.map((card, index) => (
+            <div
+              key={card.id}
+              style={{
+                borderRadius: '16px',
+                border: '1px solid #e5e7eb',
+                backgroundColor: '#f8fafc',
+                padding: '16px'
+              }}
+            >
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827', marginBottom: '10px' }}>
+                轮播图 {index + 1}
+              </div>
+              <div style={{ ...imagePreviewFrameStyle, width: '100%', aspectRatio: '1 / 1', marginBottom: '12px' }}>
+                {card.imageUrl ? (
+                  <img src={card.imageUrl} alt={`居心地轮播 ${index + 1}`} style={imagePreviewStyle} />
+                ) : (
+                  <div style={imagePlaceholderStyle}>700 × 700</div>
+                )}
+              </div>
+              <div style={{ display: 'grid', gap: '10px' }}>
+                <label style={uploadActionStyle}>
+                  {uploadingLivingCardIndex === index ? '上传中...' : '上传图片'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={uploadingLivingCardIndex === index}
+                    style={{ display: 'none' }}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      void handleUploadLivingCardImage(index, file);
+                      event.target.value = '';
+                    }}
+                  />
+                </label>
+                <Field label="绑定商品">
+                  <select
+                    value={card.productId || ''}
+                    onChange={(event) => handleLivingCardChange(index, { productId: event.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">暂不绑定</option>
+                    {products.map((product) => (
+                      <option key={product.id} value={product.id}>{product.name}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

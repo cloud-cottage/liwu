@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
-import { brandCarouselSettingsService, shopService } from '../../services/cloudbase';
+import PageMasthead from '../../components/Layout/PageMasthead.jsx';
+import { brandCarouselSettingsService, pageMastheadSettingsService, shopService } from '../../services/cloudbase';
 import carouselImageOne from '../../assets/home/carousel-1.svg';
 import carouselImageTwo from '../../assets/home/carousel-2.svg';
 import carouselImageThree from '../../assets/home/carousel-3.svg';
@@ -214,6 +215,7 @@ const Home = () => {
   const [showcaseItems, setShowcaseItems] = useState([]);
   const [showcaseSeed, setShowcaseSeed] = useState(0);
   const [showcaseFading, setShowcaseFading] = useState(false);
+  const [homeSlogan, setHomeSlogan] = useState('礼敬物品，礼赞生命。');
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -235,15 +237,17 @@ const Home = () => {
     let disposed = false;
 
     void (async () => {
-      const [products, brandCarouselSettings] = await Promise.all([
+      const [products, brandCarouselSettings, mastheadSettings] = await Promise.all([
         shopService.getProducts(),
-        brandCarouselSettingsService.getSettings()
+        brandCarouselSettingsService.getSettings(),
+        pageMastheadSettingsService.getSettings()
       ]);
       if (disposed) {
         return;
       }
 
       setShowcaseItems(await buildShowcaseItems(products));
+      setHomeSlogan(mastheadSettings.homeSlogan || '礼敬物品，礼赞生命。');
       setCarouselItems(CAROUSEL_ITEMS.map((fallbackItem, index) => ({
         ...fallbackItem,
         image: brandCarouselSettings.slides?.[index]?.imageUrl || fallbackItem.image,
@@ -278,51 +282,11 @@ const Home = () => {
 
   return (
     <div className="page-container" style={{ padding: '18px' }}>
-      <header
-        style={{
-          marginTop: '8px',
-          marginBottom: '16px',
-          padding: '18px',
-          borderRadius: '24px',
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,245,239,0.94))',
-          boxShadow: 'var(--shadow-sm)',
-          border: '1px solid rgba(143, 165, 138, 0.12)'
-        }}
-      >
-        <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '6px 10px',
-          borderRadius: '999px',
-          background: 'rgba(143, 165, 138, 0.12)',
-          color: 'var(--color-accent-clay)',
-          fontSize: '11px',
-          fontWeight: 700,
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-          marginBottom: '10px'
-        }}>
-          {APP_TAGLINES[taglineIndex]}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-          <div style={{ minWidth: 0 }}>
-            <h1
-              style={{
-                fontSize: '34px',
-                fontFamily: 'var(--font-serif)',
-                color: 'var(--color-text-primary)',
-                margin: 0
-              }}
-            >
-              理悟
-            </h1>
-            <p style={{ color: 'var(--color-text-secondary)', marginTop: '10px', lineHeight: 1.7 }}>
-              礼敬物品，礼赞生命。
-            </p>
-          </div>
-        </div>
-      </header>
+      <PageMasthead
+        eyebrow={APP_TAGLINES[taglineIndex]}
+        title="理悟"
+        slogan={homeSlogan}
+      />
 
       <section
         style={{

@@ -4,6 +4,7 @@ const {
   getMeditationPageData,
   recordMeditationCompletion
 } = require('../../utils/meditation')
+const { getPageMastheadSettings } = require('../../utils/pageMasthead')
 
 const formatTime = (totalSeconds = 0) => {
   const minutes = Math.floor(totalSeconds / 60)
@@ -21,6 +22,7 @@ Page({
       pastCount: 0,
       sessionSeconds: SESSION_SECONDS
     },
+    meditationSlogan: '给自己 15 分钟的留白。在呼吸间寻回内在的秩序。',
     timeLabel: formatTime(SESSION_SECONDS),
     remainingSeconds: SESSION_SECONDS,
     running: false,
@@ -44,10 +46,14 @@ Page({
     this.setData({ loading: true })
 
     try {
-      const pageData = await getMeditationPageData()
+      const [pageData, mastheadSettings] = await Promise.all([
+        getMeditationPageData(),
+        getPageMastheadSettings()
+      ])
       this.setData({
         loading: false,
         stats: pageData.stats,
+        meditationSlogan: mastheadSettings.meditationSlogan || '给自己 15 分钟的留白。在呼吸间寻回内在的秩序。',
         remainingSeconds: pageData.stats.sessionSeconds || SESSION_SECONDS,
         timeLabel: formatTime(pageData.stats.sessionSeconds || SESSION_SECONDS),
         running: false,

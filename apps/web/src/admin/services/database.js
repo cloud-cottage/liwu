@@ -27,6 +27,12 @@ import {
   toAwarenessDisplaySettingsPayload
 } from '@liwu/shared-utils/awareness-display-settings.js';
 import {
+  DEFAULT_PAGE_MASTHEAD_SETTINGS,
+  normalizePageMastheadSettings,
+  PAGE_MASTHEAD_SETTINGS_KEY,
+  toPageMastheadSettingsPayload
+} from '@liwu/shared-utils/page-masthead-settings.js';
+import {
   DEFAULT_USER_AVATAR_OPTIONS_SETTINGS,
   USER_AVATAR_OPTIONS_SETTINGS_KEY,
   normalizeUserAvatarOptionsSettings,
@@ -49,6 +55,7 @@ const MEDITATION_LIBRARY_KEY = 'meditation_library';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
 const AWARENESS_MOCK_LIBRARY_SETTINGS_KEY = 'awareness_mock_library';
 const CLIENT_DISTRIBUTION_SETTINGS_KEY = 'client_distribution_settings';
+const SHOP_HOME_LIVING_SETTINGS_KEY = 'shop_home_living_settings';
 const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
 const LIFETIME_STUDENT_EXPIRES_AT = '2999-12-31T23:59:59.000Z';
 const AWARENESS_MOCK_USER_UID_START = 33;
@@ -124,6 +131,23 @@ export const DEFAULT_CLIENT_DISTRIBUTION_SETTINGS = {
   previewUrl: '',
   androidApkUrl: '',
   iosDistributionUrl: '',
+  missingCollection: false
+};
+
+export const DEFAULT_PAGE_MASTHEAD = {
+  ...DEFAULT_PAGE_MASTHEAD_SETTINGS
+};
+
+export const DEFAULT_SHOP_HOME_LIVING_SETTINGS = {
+  documentId: null,
+  imageWidth: 700,
+  imageHeight: 700,
+  cards: Array.from({ length: 6 }, (_, index) => ({
+    id: `shop_living_${index + 1}`,
+    fileId: '',
+    imageUrl: '',
+    productId: ''
+  })),
   missingCollection: false
 };
 
@@ -308,6 +332,38 @@ const normalizeClientDistributionSettings = (document = {}) => ({
   androidApkUrl: document.android_apk_url || document.androidApkUrl || '',
   iosDistributionUrl: document.ios_distribution_url || document.iosDistributionUrl || '',
   missingCollection: false
+});
+
+const normalizeShopHomeLivingSettings = (document = {}) => {
+  const rawCards = Array.isArray(document.cards) ? document.cards : [];
+
+  return {
+    documentId: getDocumentId(document) || null,
+    imageWidth: Number(document.image_width ?? document.imageWidth ?? 700),
+    imageHeight: Number(document.image_height ?? document.imageHeight ?? 700),
+    cards: DEFAULT_SHOP_HOME_LIVING_SETTINGS.cards.map((fallbackCard, index) => {
+      const currentCard = rawCards[index] || {};
+      return {
+        id: currentCard.id || fallbackCard.id,
+        fileId: currentCard.file_id || currentCard.fileId || '',
+        imageUrl: currentCard.image_url || currentCard.imageUrl || '',
+        productId: currentCard.product_id || currentCard.productId || ''
+      };
+    }),
+    missingCollection: false
+  };
+};
+
+const toShopHomeLivingSettingsPayload = (settingsData = {}) => ({
+  key: SHOP_HOME_LIVING_SETTINGS_KEY,
+  image_width: Number(settingsData.imageWidth || 700),
+  image_height: Number(settingsData.imageHeight || 700),
+  cards: (settingsData.cards || []).map((card, index) => ({
+    id: card.id || `shop_living_${index + 1}`,
+    file_id: card.fileId || '',
+    image_url: card.imageUrl || '',
+    product_id: card.productId || ''
+  }))
 });
 
 const toShopProductPayload = (productData = {}) => ({
@@ -2208,6 +2264,85 @@ class DatabaseService {
     }
   }
 
+  static async getShopHomeLivingSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: SHOP_HOME_LIVING_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_SHOP_HOME_LIVING_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_SHOP_HOME_LIVING_SETTINGS };
+      }
+
+      const normalizedSettings = normalizeShopHomeLivingSettings(document);
+      const tempUrlMap = await buildTempUrlMap(normalizedSettings.cards.map((card) => card.fileId));
+
+      return {
+        ...normalizedSettings,
+        cards: normalizedSettings.cards.map((card) => ({
+          ...card,
+          imageUrl: tempUrlMap.get(card.fileId) || card.imageUrl || ''
+        }))
+      };
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_SHOP_HOME_LIVING_SETTINGS,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching shop home living settings:', error);
+      throw error;
+    }
+  }
+
+  static async getPageMastheadSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: PAGE_MASTHEAD_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_PAGE_MASTHEAD,
+          missingCollection: true
+        };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_PAGE_MASTHEAD };
+      }
+
+      return normalizePageMastheadSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_PAGE_MASTHEAD,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching page masthead settings:', error);
+      throw error;
+    }
+  }
+
   static async saveClientDistributionSettings(settingsData) {
     try {
       await ensureAnonymousLogin();
@@ -2248,6 +2383,94 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving client distribution settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveShopHomeLivingSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: SHOP_HOME_LIVING_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocument = getFirstDocument(existingResult, collections.appSettings);
+      const payload = {
+        ...toShopHomeLivingSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocument) {
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeShopHomeLivingSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeShopHomeLivingSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving shop home living settings:', error);
+      throw error;
+    }
+  }
+
+  static async savePageMastheadSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: PAGE_MASTHEAD_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocument = getFirstDocument(existingResult, collections.appSettings);
+      const payload = {
+        ...toPageMastheadSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocument) {
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizePageMastheadSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizePageMastheadSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving page masthead settings:', error);
       throw error;
     }
   }

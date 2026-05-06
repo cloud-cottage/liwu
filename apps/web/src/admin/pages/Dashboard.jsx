@@ -5,9 +5,7 @@ import TagManager from '../components/Dashboard/TagManager';
 import TagStatistics from '../components/Dashboard/TagStatistics';
 import TagManagement from '../components/Dashboard/TagManagement';
 import DatabaseStatus from '../components/Dashboard/DatabaseStatus';
-import MeditationSettings from '../components/Dashboard/MeditationSettings.jsx';
 import AwarenessTagSettings from '../components/Dashboard/AwarenessTagSettings.jsx';
-import BadgeSettings from '../components/Dashboard/BadgeSettings.jsx';
 import ShopManagement from '../components/Dashboard/ShopManagement.jsx';
 import ThemeSettings from '../components/Dashboard/ThemeSettings.jsx';
 import StudentMembershipSettings from '../components/Dashboard/StudentMembershipSettings.jsx';
@@ -65,6 +63,8 @@ const Dashboard = () => {
     brandCarouselSettings,
     userAvatarOptionsSettings,
     clientDistributionSettings,
+    pageMastheadSettings,
+    shopHomeLivingSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -81,6 +81,8 @@ const Dashboard = () => {
     savingBrandCarouselSettings,
     savingUserAvatarOptionsSettings,
     savingClientDistributionSettings,
+    savingPageMastheadSettings,
+    savingShopHomeLivingSettings,
     savingStudentMembershipSettings,
     loading,
     error,
@@ -98,6 +100,8 @@ const Dashboard = () => {
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
     updateClientDistributionSettings,
+    updatePageMastheadSettings,
+    updateShopHomeLivingSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,
@@ -250,11 +254,27 @@ const Dashboard = () => {
     }
   };
 
+  const handleSavePageMastheadSettings = async (nextSettings) => {
+    try {
+      await updatePageMastheadSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update page masthead settings:', err);
+    }
+  };
+
   const handleSaveShopProduct = async (productDraft) => {
     try {
       await saveShopProduct(productDraft);
     } catch (err) {
       console.error('Failed to save shop product:', err);
+    }
+  };
+
+  const handleSaveShopHomeLivingSettings = async (settingsDraft) => {
+    try {
+      await updateShopHomeLivingSettings(settingsDraft);
+    } catch (err) {
+      console.error('Failed to save shop home living settings:', err);
     }
   };
 
@@ -379,8 +399,6 @@ const Dashboard = () => {
     { key: 'shop',     label: '工坊' },
     { key: 'meditation', label: '冥想' },
     { key: 'awareness', label: '觉察' },
-    { key: 'badges',   label: '徽章' },
-    { key: 'fortune',  label: '福豆' },
     { key: 'settings', label: '设置' },
   ];
 
@@ -695,7 +713,10 @@ const Dashboard = () => {
             skus={shopSkus}
             orders={shopOrders}
             orderItems={shopOrderItems}
+            shopHomeLivingSettings={shopHomeLivingSettings}
+            savingShopHomeLivingSettings={savingShopHomeLivingSettings}
             onSaveProduct={handleSaveShopProduct}
+            onSaveShopHomeLivingSettings={handleSaveShopHomeLivingSettings}
             onUpdateOrderStatus={handleUpdateShopOrderStatus}
           />
         )}
@@ -718,16 +739,6 @@ const Dashboard = () => {
           />
         )}
 
-        {!loading && !error && activeTab === 'fortune' && (
-          <MeditationSettings
-            key={`${meditationSettings.documentId || 'default'}-${meditationSettings.rewardPoints}-${String(meditationSettings.allowRepeatRewards)}-${meditationSettings.inviterRewardRate || 0}`}
-            settings={meditationSettings}
-            error={settingsError}
-            saving={savingMeditationSettings}
-            onSave={handleSaveMeditationSettings}
-          />
-        )}
-
         {!loading && !error && activeTab === 'settings' && (
           <ThemeSettings
             key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
@@ -736,17 +747,26 @@ const Dashboard = () => {
             brandCarouselSettings={brandCarouselSettings}
             userAvatarOptionsSettings={userAvatarOptionsSettings}
             clientDistributionSettings={clientDistributionSettings}
+            pageMastheadSettings={pageMastheadSettings}
+            meditationSettings={meditationSettings}
+            badgeSettings={badgeSettings}
             error={settingsError}
             saving={savingThemeSettings}
             savingAwarenessDisplay={savingAwarenessDisplaySettings}
             savingCarousel={savingBrandCarouselSettings}
             savingAvatarOptions={savingUserAvatarOptionsSettings}
             savingClientDistribution={savingClientDistributionSettings}
+            savingPageMasthead={savingPageMastheadSettings}
+            savingMeditationSettings={savingMeditationSettings}
+            savingBadgeSettings={savingBadgeSettings}
             onSave={handleSaveThemeSettings}
             onSaveAwarenessDisplay={handleSaveAwarenessDisplaySettings}
             onSaveBrandCarousel={handleSaveBrandCarouselSettings}
             onSaveUserAvatarOptions={handleSaveUserAvatarOptionsSettings}
             onSaveClientDistribution={handleSaveClientDistributionSettings}
+            onSavePageMasthead={handleSavePageMastheadSettings}
+            onSaveMeditationSettings={handleSaveMeditationSettings}
+            onSaveBadgeSettings={handleSaveBadgeSettings}
           />
         )}
 
@@ -760,16 +780,6 @@ const Dashboard = () => {
             saving={savingAwarenessTagSettings}
             onSave={handleSaveAwarenessTagSettings}
             onRefresh={refresh}
-          />
-        )}
-
-        {!loading && !error && activeTab === 'badges' && (
-          <BadgeSettings
-            key={`${badgeSettings.documentId || 'default'}-${badgeSettings.version || 1}`}
-            settings={badgeSettings}
-            error={settingsError}
-            saving={savingBadgeSettings}
-            onSave={handleSaveBadgeSettings}
           />
         )}
 

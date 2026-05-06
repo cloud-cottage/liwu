@@ -7,6 +7,8 @@ const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings'
 const AWARENESS_DISPLAY_SETTINGS_KEY = 'awareness_display_settings'
 const AWARENESS_TAG_REUSE_MAX_LENGTH = 18
 const DEFAULT_POPULAR_TAG_COUNT = 33
+const POPULAR_TAG_RECORD_WINDOW = 5000
+const RECORD_BATCH_LIMIT = 20
 
 const getAwarenessTagLength = (value = '') => (
   Array.from(String(value || '')).reduce((total, character) => (
@@ -170,13 +172,35 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
 
 const listRecentRecords = async (limit = 200) => {
   const db = getDb()
-  const result = await db.collection(AWARENESS_RECORDS).orderBy('createdAt', 'desc').limit(limit).get()
-  return (result.data || []).map(normalizeRecord)
+  const targetLimit = Math.max(1, Number(limit || 0))
+  let offset = 0
+  const records = []
+
+  while (records.length < targetLimit) {
+    const batchLimit = Math.min(RECORD_BATCH_LIMIT, targetLimit - records.length)
+    const result = await db
+      .collection(AWARENESS_RECORDS)
+      .orderBy('createdAt', 'desc')
+      .skip(offset)
+      .limit(batchLimit)
+      .get()
+
+    const batchRecords = (result.data || []).map(normalizeRecord)
+    records.push(...batchRecords)
+
+    if (batchRecords.length < batchLimit) {
+      break
+    }
+
+    offset += batchLimit
+  }
+
+  return records
 }
 
-const listPopularTags = async (limit = 20) => {
+const listPopularTags = async (limit = 0) => {
   const [records, settings, displaySettings] = await Promise.all([
-    listRecentRecords(2000),
+    listRecentRecords(POPULAR_TAG_RECORD_WINDOW),
     getTagSettings(),
     getAwarenessDisplaySettings()
   ])

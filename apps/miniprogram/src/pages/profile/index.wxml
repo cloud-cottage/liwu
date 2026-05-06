@@ -18,16 +18,31 @@
   </view>
 
   <view class="section-card profile-card">
-    <view class="section-kicker">个人资料</view>
-    <view class="profile-head">
-      <view class="profile-avatar">{{profileInitial || '悟'}}</view>
-      <view class="profile-meta">
-        <view class="profile-name-row">
-          <view class="profile-name">{{profile.name || '我的'}}</view>
-          <view class="status-chip" wx:if="{{profile.isStudent}}">学员</view>
+    <view class="profile-card-top">
+      <view class="profile-head">
+        <view class="profile-avatar">{{profileInitial || '悟'}}</view>
+        <view class="profile-meta">
+          <view class="profile-name-row">
+            <view class="profile-name">{{profile.name || '我的'}}</view>
+            <view class="status-chip" wx:if="{{profile.isStudent}}">学员</view>
+          </view>
+          <view class="profile-chip-row">
+            <view class="profile-mini-chip {{hasBoundPhone ? 'profile-mini-chip-active' : ''}}">{{hasBoundPhone ? '已绑定手机号' : '未绑定手机号'}}</view>
+            <view class="profile-expire" wx:if="{{profile.isStudent && profile.studentExpireAt}}">有效期至 {{profile.studentExpireAt}}</view>
+          </view>
+          <view class="profile-bio">{{profile.bio || '在小程序里记录你的觉察与练习。'}}</view>
         </view>
-        <view class="profile-bio">{{profile.bio || '在小程序里记录你的觉察与练习。'}}</view>
-        <view class="profile-expire" wx:if="{{profile.isStudent && profile.studentExpireAt}}">有效期至 {{profile.studentExpireAt}}</view>
+      </view>
+
+      <view class="profile-tools">
+        <view class="profile-tool profile-tool-iconed" bindtap="handleGoShop">
+          <image class="profile-tool-icon" mode="aspectFit" src="/assets/tabbar-custom/shop.svg" />
+          <view class="profile-tool-label">工坊</view>
+        </view>
+        <view class="profile-tool profile-tool-iconed" bindtap="handleGoAddresses">
+          <image class="profile-tool-icon" mode="aspectFit" src="/assets/profile/address.svg" />
+          <view class="profile-tool-label">地址</view>
+        </view>
       </view>
     </view>
 
@@ -44,30 +59,23 @@
   </view>
 
   <view class="profile-actions">
-    <view class="section-card action-card" bindtap="handleGoShop">
-      <view class="action-title">工坊</view>
-      <view class="action-subtitle">查看订单与商品</view>
-    </view>
     <view class="section-card action-card" bindtap="handleGoAddresses">
-      <view class="action-title">收货地址</view>
+      <view class="action-head">
+        <view class="action-title">收货地址</view>
+        <view class="action-arrow">进入</view>
+      </view>
       <view class="action-subtitle">管理默认地址</view>
     </view>
-  </view>
-
-  <view class="section-card editor-card">
-    <view class="section-kicker">信息维护</view>
-    <view class="section-title">个人信息</view>
-    <view class="field-label">用户名</view>
-    <input class="field-input" value="{{form.name}}" data-field="name" bindinput="handleInput" />
-    <view class="field-label">手机号</view>
-    <input class="field-input" value="{{form.phone}}" data-field="phone" bindinput="handleInput" />
-    <view class="field-label">简介</view>
-    <textarea class="field-textarea" value="{{form.bio}}" data-field="bio" bindinput="handleInput" />
-    <button class="primary-button save-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存</button>
+    <view class="section-card action-card" bindtap="handleGoOrders">
+      <view class="action-head">
+        <view class="action-title">我的订单</view>
+        <view class="action-arrow">进入</view>
+      </view>
+      <view class="action-subtitle">查看最近下单记录</view>
+    </view>
   </view>
 
   <view class="section-card">
-    <view class="section-kicker">福豆流动</view>
     <view class="section-title">最近福豆记录</view>
     <view class="wealth-list" wx:if="{{recentWealthEntries.length}}">
       <view class="wealth-item" wx:for="{{recentWealthEntries}}" wx:key="id">
@@ -82,11 +90,27 @@
   </view>
 
   <view class="section-card">
-    <view class="section-kicker">最近觉照</view>
     <view class="section-title">最近觉察</view>
     <view class="tag-pills" wx:if="{{recentTags.length}}">
       <view class="tag-pill" wx:for="{{recentTags}}" wx:key="key">{{item.content}}</view>
     </view>
     <view class="empty-text" wx:else>还没有你的觉察记录。</view>
+  </view>
+
+  <view class="section-card editor-card">
+    <view class="editor-head">
+      <view class="section-title">个人信息</view>
+      <view class="editor-toggle" bindtap="handleToggleEditor">{{showEditor ? '收起' : '编辑'}}</view>
+    </view>
+    <view class="editor-summary" wx:if="{{!showEditor}}">用户名、手机号与简介按需修改。</view>
+    <block wx:if="{{showEditor}}">
+      <view class="field-label">用户名</view>
+      <input class="field-input" value="{{form.name}}" data-field="name" bindinput="handleInput" />
+      <view class="field-label">手机号</view>
+      <input class="field-input" value="{{form.phone}}" data-field="phone" bindinput="handleInput" />
+      <view class="field-label">简介</view>
+      <textarea class="field-textarea" value="{{form.bio}}" data-field="bio" bindinput="handleInput" />
+      <button class="primary-button save-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存</button>
+    </block>
   </view>
 </view>

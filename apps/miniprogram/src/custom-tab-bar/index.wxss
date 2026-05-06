@@ -9,14 +9,14 @@
 }
 
 .tabbar-panel {
-  min-height: 104rpx;
+  min-height: 100rpx;
   background: rgba(243, 240, 234, 0.98);
   border-top: 1rpx solid rgba(143, 165, 138, 0.16);
   box-shadow: 0 -8rpx 24rpx rgba(15, 23, 42, 0.05);
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  padding: 6rpx 8rpx 4rpx;
+  padding: 4rpx 10rpx 2rpx;
   pointer-events: auto;
 }
 
@@ -26,11 +26,13 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4rpx;
+  justify-content: flex-start;
+  gap: 0;
   color: #6b7280;
   position: relative;
-  min-height: 94rpx;
+  min-height: 90rpx;
+  padding-top: 6rpx;
+  box-sizing: border-box;
 }
 
 .tabbar-item-active {
@@ -38,27 +40,57 @@
 }
 
 .tabbar-indicator {
-  width: 18rpx;
+  width: 24rpx;
   height: 4rpx;
   border-radius: 999rpx;
   background: transparent;
-  margin-bottom: 2rpx;
+  margin-bottom: 6rpx;
 }
 
 .tabbar-item-active .tabbar-indicator {
   background: #8b5e34;
 }
 
+.tabbar-icon-slot {
+  width: 48rpx;
+  height: 48rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .tabbar-icon-image {
-  width: 46rpx;
-  height: 46rpx;
+  width: 40rpx;
+  height: 40rpx;
   display: block;
-  opacity: 0.92;
+  opacity: 0.9;
+}
+
+.tabbar-icon-home,
+.tabbar-icon-profile {
+  width: 40rpx;
+  height: 40rpx;
+}
+
+.tabbar-icon-aware {
+  width: 38rpx;
+  height: 38rpx;
+}
+
+.tabbar-icon-shop {
+  width: 44.2rpx;
+  height: 44.2rpx;
 }
 
 .tabbar-label {
   font-size: 18rpx;
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: 0;
+  line-height: 20rpx;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  min-height: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4rpx;
 }

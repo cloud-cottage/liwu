@@ -1,16 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Share2, Wind } from 'lucide-react';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import ShareDialog from '../../components/Share/ShareDialog.jsx';
-import { shareService } from '../../services/cloudbase.js';
+import PageMasthead from '../../components/Layout/PageMasthead.jsx';
+import { pageMastheadSettingsService, shareService } from '../../services/cloudbase.js';
 
 const MeditationHome = () => {
     const navigate = useNavigate();
     const { meditationStats } = useWealth();
     const { authStatus } = useCloudAwareness();
     const [sharePayload, setSharePayload] = useState(null);
+    const [meditationSlogan, setMeditationSlogan] = useState('给自己 15 分钟的留白。在呼吸间寻回内在的秩序。');
     const totalCount = Math.max(0, Number(meditationStats.sessionCount || 0));
     const todayCount = Math.max(0, Number(meditationStats.todayCount || 0));
     const pastCount = Math.max(0, totalCount - todayCount);
@@ -24,40 +26,28 @@ const MeditationHome = () => {
         }
     };
 
+    useEffect(() => {
+        let disposed = false;
+
+        void (async () => {
+            const settings = await pageMastheadSettingsService.getSettings();
+            if (!disposed) {
+                setMeditationSlogan(settings.meditationSlogan || '给自己 15 分钟的留白。在呼吸间寻回内在的秩序。');
+            }
+        })();
+
+        return () => {
+            disposed = true;
+        };
+    }, []);
+
     return (
         <div className="page-container" style={{ padding: '20px' }}>
-            <header style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-                <div>
-                    <div
-                        style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            padding: '6px 10px',
-                            borderRadius: '999px',
-                            background: 'rgba(143, 165, 138, 0.12)',
-                            color: 'var(--color-accent-clay)',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            letterSpacing: '0.12em',
-                            textTransform: 'uppercase',
-                            marginBottom: '10px'
-                        }}
-                    >
-                        Meditation
-                    </div>
-                    <h1
-                        style={{
-                            fontSize: '28px',
-                            fontFamily: 'var(--font-serif)',
-                            color: 'var(--color-text-primary)',
-                            margin: 0
-                        }}
-                    >
-                        静寂
-                    </h1>
-                </div>
-                {canPlayMeditation && (
+            <PageMasthead
+                eyebrow="Meditation"
+                title="静寂"
+                slogan={meditationSlogan}
+                rightSlot={canPlayMeditation ? (
                     <button
                         type="button"
                         onClick={handleOpenShare}
@@ -80,8 +70,8 @@ const MeditationHome = () => {
                     >
                         <Share2 size={16} />
                     </button>
-                )}
-            </header>
+                ) : null}
+            />
 
             <section style={{
                 backgroundColor: '#fff',
@@ -107,8 +97,7 @@ const MeditationHome = () => {
                 </div>
                 <h2 style={{ fontSize: '20px', marginBottom: '10px' }}>当下即是献礼</h2>
                 <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', lineHeight: '1.6', marginBottom: '24px' }}>
-                    给自己 15 分钟的留白。<br />
-                    在呼吸间寻回内在的秩序
+                    给自己 15 分钟的留白。
                 </p>
                 <button
                     onClick={() => navigate(canPlayMeditation ? '/meditation' : '/profile')}

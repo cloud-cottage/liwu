@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, Coins, Layers3, MapPin, Share2, Sparkles, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import PageMasthead from '../../components/Layout/PageMasthead.jsx';
 import ShareDialog from '../../components/Share/ShareDialog.jsx';
-import { shareService, shopService } from '../../services/cloudbase';
+import { pageMastheadSettingsService, shareService, shopService } from '../../services/cloudbase';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useWealth } from '../../context/WealthContext';
 import './ShopScreen.css';
@@ -432,6 +433,7 @@ const ShopScreen = () => {
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sharePayload, setSharePayload] = useState(null);
+  const [shopSlogan, setShopSlogan] = useState('用福豆兑换适合静心、阅读与日常安住的小器物。');
   const canShare = Boolean(authStatus?.isAuthenticated);
 
   useEffect(() => {
@@ -440,17 +442,19 @@ const ShopScreen = () => {
     const loadPageData = async () => {
       setLoading(true);
       try {
-        const [nextCategories, nextProducts, nextAddresses] = await Promise.all([
+        const [nextCategories, nextProducts, nextAddresses, mastheadSettings] = await Promise.all([
           shopService.getCategories(),
           shopService.getProducts(),
           shopService.getUserAddresses(),
-          syncWalletFromCloud({ refresh: true, allowAnonymous: true })
+          syncWalletFromCloud({ refresh: true, allowAnonymous: true }),
+          pageMastheadSettingsService.getSettings()
         ]);
 
         if (!cancelled) {
           setCategories(nextCategories);
           setProducts(nextProducts);
           setAddresses(nextAddresses);
+          setShopSlogan(mastheadSettings.shopSlogan || '用福豆兑换适合静心、阅读与日常安住的小器物。');
           setLoading(false);
         }
       } catch (error) {
@@ -565,37 +569,39 @@ const ShopScreen = () => {
 
   return (
     <div className="page-container shop-page">
+      <PageMasthead
+        eyebrow="Workshop"
+        title="工坊"
+        slogan={shopSlogan}
+        rightSlot={canShare ? (
+          <button
+            type="button"
+            onClick={handleShareShop}
+            aria-label="分享工坊"
+            title="分享工坊"
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '999px',
+              border: '1px solid rgba(15, 23, 42, 0.08)',
+              backgroundColor: '#fff',
+              color: 'var(--color-text-secondary)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: 'var(--shadow-sm)'
+            }}
+          >
+            <Share2 size={16} />
+          </button>
+        ) : null}
+      />
+
       <section className="shop-hero-card">
         <div className="shop-hero-card__top">
-          <div>
-            <div className="shop-hero-card__label">WORKSHOP</div>
-            <h1 className="shop-hero-card__title">工坊</h1>
-            <p className="shop-hero-card__subtitle">用福豆兑换适合静心、阅读与日常安住的小器物。</p>
-          </div>
+          <div />
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {canShare && (
-              <button
-                type="button"
-                onClick={handleShareShop}
-                aria-label="分享工坊"
-                title="分享工坊"
-                style={{
-                  width: '46px',
-                  height: '46px',
-                  borderRadius: '999px',
-                  border: '1px solid rgba(255, 255, 255, 0.26)',
-                  backgroundColor: 'rgba(255, 255, 255, 0.18)',
-                  color: '#fff',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  backdropFilter: 'blur(10px)'
-                }}
-              >
-                <Share2 size={18} />
-              </button>
-            )}
             <div className="shop-balance-card">
               <div className="shop-balance-card__label">
                 <Coins size={16} />

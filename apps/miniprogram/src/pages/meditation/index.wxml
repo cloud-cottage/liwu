@@ -1,12 +1,13 @@
 <view class="page-shell meditation-page-shell">
-  <view class="page-header">
-    <view class="page-title">静寂</view>
-    <view class="page-caption">给自己 15 分钟的留白。</view>
+  <view class="page-masthead">
+    <view class="page-masthead__pill">Meditation</view>
+    <view class="page-masthead__title">静寂</view>
+    <view class="page-masthead__slogan">{{meditationSlogan}}</view>
   </view>
 
   <view class="section-card meditation-hero-card">
     <view class="meditation-kicker">当下即是献礼</view>
-    <view class="meditation-subtitle">在呼吸间寻回内在的秩序。</view>
+    <view class="meditation-subtitle">给自己 15 分钟的留白。在呼吸间寻回内在的秩序。</view>
 
     <view class="meditation-console">
       <view class="meditation-disc">

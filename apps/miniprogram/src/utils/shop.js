@@ -9,7 +9,17 @@ const SHOP_ORDER_ITEMS = 'shop_order_items'
 const USER_ADDRESSES = 'user_addresses'
 const USERS = 'users'
 const POINT_LEDGER = 'point_ledger'
+const APP_SETTINGS = 'app_settings'
+const SHOP_HOME_LIVING_SETTINGS_KEY = 'shop_home_living_settings'
 const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴'
+const DEFAULT_SHOP_HOME_LIVING_CARDS = Array.from({ length: 6 }, (_, index) => ({
+  id: `shop_living_${index + 1}`,
+  fileId: '',
+  imageUrl: `/assets/shop-living/living-${index + 1}.svg`,
+  productId: '',
+  width: 700,
+  height: 700
+}))
 
 const parseNaturalNumber = (value = '') => {
   const normalizedValue = String(value || '').trim()
@@ -79,6 +89,7 @@ const normalizeSku = (sku = {}) => ({
   skuName: sku.sku_name || sku.skuName || '',
   pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
   priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
+  rewardPointsReturn: Number(sku.reward_points_return ?? sku.rewardPointsReturn ?? 0),
   stock: Number(sku.stock ?? 0),
   status: sku.status || 'active'
 })
@@ -245,6 +256,69 @@ const listShopProducts = async ({ categoryId = '', limit = 100 } = {}) => {
 
       return right.salesCount - left.salesCount
     })
+}
+
+const getShopHomeLivingSettings = async () => {
+  try {
+    const db = getDb()
+    const result = await db.collection(APP_SETTINGS).where({ key: SHOP_HOME_LIVING_SETTINGS_KEY }).limit(1).get()
+    const document = (result.data || [])[0] || {}
+    const rawCards = Array.isArray(document.cards) ? document.cards : []
+    const imageWidth = Number(document.image_width ?? document.imageWidth ?? 700)
+    const imageHeight = Number(document.image_height ?? document.imageHeight ?? 700)
+    const cards = DEFAULT_SHOP_HOME_LIVING_CARDS.map((fallbackCard, index) => {
+      const currentCard = rawCards[index] || {}
+      return {
+        ...fallbackCard,
+        id: currentCard.id || fallbackCard.id,
+        fileId: currentCard.file_id || currentCard.fileId || '',
+        imageUrl: currentCard.image_url || currentCard.imageUrl || fallbackCard.imageUrl,
+        productId: currentCard.product_id || currentCard.productId || '',
+        width: imageWidth,
+        height: imageHeight
+      }
+    })
+
+    const fileList = cards.map((card) => card.fileId).filter(Boolean)
+    if (fileList.length === 0) {
+      return {
+        imageWidth,
+        imageHeight,
+        cards
+      }
+    }
+
+    try {
+      const tempResult = await wx.cloud.getTempFileURL({ fileList })
+      const urlMap = new Map(
+        (tempResult.fileList || []).map((item) => [
+          item.fileID || item.fileId,
+          item.tempFileURL || ''
+        ])
+      )
+
+      return {
+        imageWidth,
+        imageHeight,
+        cards: cards.map((card) => ({
+          ...card,
+          imageUrl: urlMap.get(card.fileId) || card.imageUrl || ''
+        }))
+      }
+    } catch {
+      return {
+        imageWidth,
+        imageHeight,
+        cards
+      }
+    }
+  } catch {
+    return {
+      imageWidth: 700,
+      imageHeight: 700,
+      cards: DEFAULT_SHOP_HOME_LIVING_CARDS
+    }
+  }
 }
 
 const getShopProductDetail = async (productId) => {
@@ -500,6 +574,7 @@ const listUserOrders = async () => {
 module.exports = {
   listShopCategories,
   listShopProducts,
+  getShopHomeLivingSettings,
   getShopProductDetail,
   listUserAddresses,
   saveUserAddress,

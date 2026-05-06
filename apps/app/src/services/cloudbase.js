@@ -32,6 +32,11 @@ import {
   normalizeAwarenessDisplaySettings
 } from '@liwu/shared-utils/awareness-display-settings.js';
 import {
+  DEFAULT_PAGE_MASTHEAD_SETTINGS,
+  normalizePageMastheadSettings,
+  PAGE_MASTHEAD_SETTINGS_KEY
+} from '@liwu/shared-utils/page-masthead-settings.js';
+import {
   DEFAULT_USER_AVATAR_OPTIONS_SETTINGS,
   USER_AVATAR_OPTIONS_SETTINGS_KEY,
   getAvatarOptionByIndex,
@@ -71,6 +76,9 @@ export const DEFAULT_CLIENT_DISTRIBUTION_SETTINGS = {
   androidApkUrl: '',
   iosDistributionUrl: '',
   missingCollection: false
+};
+export const DEFAULT_PAGE_MASTHEAD = {
+  ...DEFAULT_PAGE_MASTHEAD_SETTINGS
 };
 
 const isLocalDevHost = (hostname = '') => (
@@ -2825,6 +2833,33 @@ export const brandCarouselSettingsService = {
 export const awarenessDisplaySettingsService = {
   async getSettings() {
     return getAwarenessDisplaySettings();
+  }
+};
+
+export const pageMastheadSettingsService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: PAGE_MASTHEAD_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionResponse(result)) {
+        return { ...DEFAULT_PAGE_MASTHEAD };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_PAGE_MASTHEAD };
+      }
+
+      return normalizePageMastheadSettings(document);
+    } catch (error) {
+      console.error('获取 PageMasthead 设置失败:', error);
+      return { ...DEFAULT_PAGE_MASTHEAD };
+    }
   }
 };
 

@@ -1,37 +1,54 @@
 const { getHomePageData } = require('../../utils/home')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
+const { getPageMastheadSettings } = require('../../utils/pageMasthead')
+
+const APP_TAGLINES = [
+  'be clear with Liwu',
+  'be smart with Liwu',
+  'be rich with Liwu',
+  'be healthy with Liwu'
+]
 
 Page({
   data: {
     loading: true,
     profile: null,
-    tags: [],
     slides: [],
     showcaseItems: [],
-    cards: [
-      { title: '静寂', subtitle: '开始今日 15 分钟冥想', path: '/pages/meditation/index' },
-      { title: '工坊', subtitle: '看看今日可兑换的物品', path: '/pages/shop/index' },
-      { title: '我的', subtitle: '管理资料与收货地址', path: '/pages/profile/index' }
-    ]
+    taglineIndex: 0,
+    taglines: APP_TAGLINES,
+    homeSlogan: '礼敬物品，礼赞生命。'
   },
 
   onLoad() {
     void this.loadPageData()
+    this.startTaglineRotation()
   },
 
   onShow() {
     syncMiniTabBar(this, '/pages/home/index')
   },
 
+  onHide() {
+    this.stopTaglineRotation()
+  },
+
+  onUnload() {
+    this.stopTaglineRotation()
+  },
+
   async loadPageData() {
     this.setData({ loading: true })
 
     try {
-      const pageData = await getHomePageData()
+      const [pageData, mastheadSettings] = await Promise.all([
+        getHomePageData(),
+        getPageMastheadSettings()
+      ])
       this.setData({
         loading: false,
         profile: pageData.profile,
-        tags: pageData.tags,
+        homeSlogan: mastheadSettings.homeSlogan || '礼敬物品，礼赞生命。',
         slides: (pageData.slides || []).map((slide) => ({
           ...slide,
           hasImage: !!slide.imageUrl,
@@ -50,12 +67,22 @@ Page({
     }
   },
 
-  handleCardTap(event) {
-    const { path } = event.currentTarget.dataset
-    openMiniRoute(path)
+  startTaglineRotation() {
+    this.stopTaglineRotation()
+    this.taglineTimer = setInterval(() => {
+      const nextIndex = (this.data.taglineIndex + 1) % APP_TAGLINES.length
+      this.setData({ taglineIndex: nextIndex })
+    }, 2200)
   },
 
-  handleAwareTap() {
+  stopTaglineRotation() {
+    if (this.taglineTimer) {
+      clearInterval(this.taglineTimer)
+      this.taglineTimer = null
+    }
+  },
+
+  handleMeditationTap() {
     openMiniRoute('/pages/meditation/index')
   },
 

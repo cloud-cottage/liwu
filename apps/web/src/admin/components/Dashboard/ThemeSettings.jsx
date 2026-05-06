@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { THEME_PRESETS, getThemePreset } from '@liwu/shared-utils/theme-system.js';
 import { uploadImageAsWebp } from '../../utils/imageUpload.js';
+import BadgeSettings from './BadgeSettings.jsx';
+import MeditationSettings from './MeditationSettings.jsx';
 
 const ThemeSettings = ({
   settings,
@@ -8,22 +10,35 @@ const ThemeSettings = ({
   brandCarouselSettings,
   userAvatarOptionsSettings,
   clientDistributionSettings,
+  pageMastheadSettings,
+  meditationSettings,
+  badgeSettings,
   error,
   saving,
   savingAwarenessDisplay,
   savingCarousel,
   savingAvatarOptions,
   savingClientDistribution,
+  savingPageMasthead,
+  savingMeditationSettings,
+  savingBadgeSettings,
   onSave,
   onSaveAwarenessDisplay,
   onSaveBrandCarousel,
   onSaveUserAvatarOptions,
-  onSaveClientDistribution
+  onSaveClientDistribution,
+  onSavePageMasthead,
+  onSaveMeditationSettings,
+  onSaveBadgeSettings
 }) => {
-  const [activeTab, setActiveTab] = useState('theme');
+  const [activeTab, setActiveTab] = useState('home');
   const [draftTheme, setDraftTheme] = useState(settings.theme);
   const [draftShowDebugCard, setDraftShowDebugCard] = useState(Boolean(settings.showDebugCard));
   const [draftPopularTagCount, setDraftPopularTagCount] = useState(Number(awarenessDisplaySettings.popularTagCount || 33));
+  const [draftHomeSlogan, setDraftHomeSlogan] = useState(pageMastheadSettings.homeSlogan || '');
+  const [draftAwarenessSlogan, setDraftAwarenessSlogan] = useState(pageMastheadSettings.awarenessSlogan || '');
+  const [draftShopSlogan, setDraftShopSlogan] = useState(pageMastheadSettings.shopSlogan || '');
+  const [draftMeditationSlogan, setDraftMeditationSlogan] = useState(pageMastheadSettings.meditationSlogan || '');
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
   const [draftAvatarOptions, setDraftAvatarOptions] = useState(() => userAvatarOptionsSettings.avatars || []);
   const [draftPreviewUrl, setDraftPreviewUrl] = useState(clientDistributionSettings.previewUrl || '');
@@ -110,6 +125,18 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftPopularTagCount(Number(awarenessDisplaySettings.popularTagCount || 33));
   }, [awarenessDisplaySettings.popularTagCount]);
+
+  useEffect(() => {
+    setDraftHomeSlogan(pageMastheadSettings.homeSlogan || '');
+    setDraftAwarenessSlogan(pageMastheadSettings.awarenessSlogan || '');
+    setDraftShopSlogan(pageMastheadSettings.shopSlogan || '');
+    setDraftMeditationSlogan(pageMastheadSettings.meditationSlogan || '');
+  }, [
+    pageMastheadSettings.homeSlogan,
+    pageMastheadSettings.awarenessSlogan,
+    pageMastheadSettings.shopSlogan,
+    pageMastheadSettings.meditationSlogan
+  ]);
 
   useEffect(() => {
     setDraftSlides(brandCarouselSettings.slides || []);
@@ -256,6 +283,34 @@ const ThemeSettings = ({
     }
   };
 
+  const normalizeSloganInput = (value = '') => String(value || '').slice(0, 60);
+
+  const draftPageMastheadPayload = {
+    ...pageMastheadSettings,
+    homeSlogan: normalizeSloganInput(draftHomeSlogan),
+    awarenessSlogan: normalizeSloganInput(draftAwarenessSlogan),
+    shopSlogan: normalizeSloganInput(draftShopSlogan),
+    meditationSlogan: normalizeSloganInput(draftMeditationSlogan)
+  };
+
+  const handleSaveHomeSettings = async () => {
+    await onSave({ ...settings, theme: draftTheme, showDebugCard: draftShowDebugCard });
+    await onSavePageMasthead(draftPageMastheadPayload);
+  };
+
+  const handleSaveAwarenessSettings = async () => {
+    await onSaveAwarenessDisplay({ ...awarenessDisplaySettings, popularTagCount: draftPopularTagCount });
+    await onSavePageMasthead(draftPageMastheadPayload);
+  };
+
+  const handleSaveShopSettings = async () => {
+    await onSavePageMasthead(draftPageMastheadPayload);
+  };
+
+  const handleSaveMeditationSettings = async () => {
+    await onSavePageMasthead(draftPageMastheadPayload);
+  };
+
   return (
     <section
       style={{
@@ -268,7 +323,7 @@ const ThemeSettings = ({
       <div style={{ marginBottom: '20px' }}>
         <h2 style={{ margin: '0 0 8px', fontSize: '24px', color: '#333' }}>设置</h2>
         <div style={{ fontSize: '14px', color: '#666', lineHeight: 1.7 }}>
-          统一控制 app、web 和小程序三端同步使用的主题样式。
+          统一控制 app、web 和小程序三端同步使用的 PageMasthead、主题与入口配置。
         </div>
       </div>
 
@@ -278,10 +333,12 @@ const ThemeSettings = ({
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
         {[
-          { key: 'theme', label: '主题样式' },
+          { key: 'home', label: '首页' },
+          { key: 'shop', label: '工坊' },
+          { key: 'meditation', label: '冥想' },
           { key: 'awareness', label: '觉察' },
-          { key: 'avatar', label: '用户头像' },
-          { key: 'distribution', label: '客户端分发' }
+          { key: 'avatar', label: '我的' },
+          { key: 'distribution', label: '版本' }
         ].map((item) => (
           <button
             key={item.key}
@@ -304,8 +361,33 @@ const ThemeSettings = ({
         ))}
       </div>
 
-      {activeTab === 'theme' && (
+      {activeTab === 'home' && (
       <div style={{ display: 'grid', gap: '16px' }}>
+        <div style={previewCardStyle}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            page_masthead
+          </div>
+          <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+            首页 PageMasthead
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+            `PageMasthead` 指的是页眉处的三行组合：英文标签、页面标题、slogan 文案。
+          </div>
+          <label style={{ ...fieldStyle, marginTop: '18px' }}>
+            <span style={fieldLabelStyle}>首页 slogan</span>
+            <input
+              type="text"
+              maxLength="60"
+              value={draftHomeSlogan}
+              onChange={(event) => setDraftHomeSlogan(normalizeSloganInput(event.target.value))}
+              style={fieldInputStyle}
+            />
+            <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+              不超过 60 字符，纯文字。当前 {draftHomeSlogan.length}/60
+            </div>
+          </label>
+        </div>
+
         <label style={fieldStyle}>
           <span style={fieldLabelStyle}>当前主题</span>
           <select
@@ -444,50 +526,51 @@ const ThemeSettings = ({
           </div>
         </div>
 
-        <div style={previewCardStyle}>
-          <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-            profile_debug
-          </div>
-          <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
-            调试卡片
-          </div>
-          <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
-            控制【我的】页面中的调试卡片显示与否，便于后续统一隐藏。
-          </div>
-
-          <label
-            style={{
-              marginTop: '18px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px',
-              padding: '14px 16px',
-              borderRadius: '14px',
-              border: '1px solid #e2e8f0',
-              backgroundColor: '#ffffff',
-              cursor: 'pointer'
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>显示调试卡片</div>
-              <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
-                开启后，【我的】页面会显示登录方式与邮箱信息卡片。
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={draftShowDebugCard}
-              onChange={(event) => setDraftShowDebugCard(event.target.checked)}
-              style={{ width: '18px', height: '18px', flexShrink: 0 }}
-            />
-          </label>
-        </div>
       </div>
       )}
 
       {activeTab === 'avatar' && (
         <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              profile_debug
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              调试卡片
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              控制【我的】页面中的调试卡片显示与否，便于后续统一隐藏。
+            </div>
+
+            <label
+              style={{
+                marginTop: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                padding: '14px 16px',
+                borderRadius: '14px',
+                border: '1px solid #e2e8f0',
+                backgroundColor: '#ffffff',
+                cursor: 'pointer'
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>显示调试卡片</div>
+                <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
+                  开启后，【我的】页面会显示登录方式与邮箱信息卡片。
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={draftShowDebugCard}
+                onChange={(event) => setDraftShowDebugCard(event.target.checked)}
+                style={{ width: '18px', height: '18px', flexShrink: 0 }}
+              />
+            </label>
+          </div>
+
           <div style={previewCardStyle}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               user_avatar_options
@@ -576,6 +659,14 @@ const ThemeSettings = ({
               ))}
             </div>
           </div>
+
+          <BadgeSettings
+            key={`${badgeSettings.documentId || 'default'}-${badgeSettings.version || 1}`}
+            settings={badgeSettings}
+            error={error}
+            saving={savingBadgeSettings}
+            onSave={onSaveBadgeSettings}
+          />
         </div>
       )}
 
@@ -591,6 +682,20 @@ const ThemeSettings = ({
             <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
               设置【觉察】页面词云中最多显示多少个标签。该参数会影响同心照亮词云聚合区。
             </div>
+
+            <label style={{ ...fieldStyle, marginTop: '18px' }}>
+              <span style={fieldLabelStyle}>觉察 slogan</span>
+              <input
+                type="text"
+                maxLength="60"
+                value={draftAwarenessSlogan}
+                onChange={(event) => setDraftAwarenessSlogan(normalizeSloganInput(event.target.value))}
+                style={fieldInputStyle}
+              />
+              <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                不超过 60 字符，纯文字。当前 {draftAwarenessSlogan.length}/60
+              </div>
+            </label>
 
             <label style={{ ...fieldStyle, marginTop: '18px', maxWidth: '280px' }}>
               <span style={fieldLabelStyle}>词云显示数量</span>
@@ -609,6 +714,72 @@ const ThemeSettings = ({
               默认值为 33。你可以根据词云密度在 1-200 之间调整。
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'shop' && (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              page_masthead
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              工坊 PageMasthead
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              设置【工坊】页面页眉的 slogan 文案。
+            </div>
+            <label style={{ ...fieldStyle, marginTop: '18px' }}>
+              <span style={fieldLabelStyle}>工坊 slogan</span>
+              <input
+                type="text"
+                maxLength="60"
+                value={draftShopSlogan}
+                onChange={(event) => setDraftShopSlogan(normalizeSloganInput(event.target.value))}
+                style={fieldInputStyle}
+              />
+              <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                不超过 60 字符，纯文字。当前 {draftShopSlogan.length}/60
+              </div>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'meditation' && (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              page_masthead
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              冥想 PageMasthead
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              设置【冥想】页面页眉的 slogan 文案。
+            </div>
+            <label style={{ ...fieldStyle, marginTop: '18px' }}>
+              <span style={fieldLabelStyle}>冥想 slogan</span>
+              <input
+                type="text"
+                maxLength="60"
+                value={draftMeditationSlogan}
+                onChange={(event) => setDraftMeditationSlogan(normalizeSloganInput(event.target.value))}
+                style={fieldInputStyle}
+              />
+              <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                不超过 60 字符，纯文字。当前 {draftMeditationSlogan.length}/60
+              </div>
+            </label>
+          </div>
+
+          <MeditationSettings
+            key={`${meditationSettings.documentId || 'default'}-${meditationSettings.rewardPoints}-${String(meditationSettings.allowRepeatRewards)}-${meditationSettings.inviterRewardRate || 0}`}
+            settings={meditationSettings}
+            error={error}
+            saving={savingMeditationSettings}
+            onSave={onSaveMeditationSettings}
+          />
         </div>
       )}
 
@@ -735,15 +906,15 @@ const ThemeSettings = ({
         </div>
       )}
 
-      {activeTab === 'theme' && (
+      {activeTab === 'home' && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
           <button
             type="button"
-            onClick={() => onSave({ ...settings, theme: draftTheme, showDebugCard: draftShowDebugCard })}
-            disabled={saving}
+            onClick={() => { void handleSaveHomeSettings(); }}
+            disabled={saving || savingPageMasthead}
             style={primaryButtonStyle}
           >
-            {saving ? '保存中...' : '保存主题设置'}
+            {(saving || savingPageMasthead) ? '保存中...' : '保存首页设置'}
           </button>
         </div>
       )}
@@ -752,11 +923,14 @@ const ThemeSettings = ({
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
           <button
             type="button"
-            onClick={() => onSaveUserAvatarOptions({ ...userAvatarOptionsSettings, avatars: draftAvatarOptions })}
-            disabled={savingAvatarOptions}
+            onClick={async () => {
+              await onSave({ ...settings, theme: draftTheme, showDebugCard: draftShowDebugCard });
+              await onSaveUserAvatarOptions({ ...userAvatarOptionsSettings, avatars: draftAvatarOptions });
+            }}
+            disabled={savingAvatarOptions || saving}
             style={primaryButtonStyle}
           >
-            {savingAvatarOptions ? '保存中...' : '保存头像设置'}
+            {(savingAvatarOptions || saving) ? '保存中...' : '保存我的设置'}
           </button>
         </div>
       )}
@@ -765,11 +939,37 @@ const ThemeSettings = ({
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
           <button
             type="button"
-            onClick={() => onSaveAwarenessDisplay({ ...awarenessDisplaySettings, popularTagCount: draftPopularTagCount })}
-            disabled={savingAwarenessDisplay}
+            onClick={() => { void handleSaveAwarenessSettings(); }}
+            disabled={savingAwarenessDisplay || savingPageMasthead}
             style={primaryButtonStyle}
           >
-            {savingAwarenessDisplay ? '保存中...' : '保存觉察设置'}
+            {(savingAwarenessDisplay || savingPageMasthead) ? '保存中...' : '保存觉察设置'}
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'shop' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button
+            type="button"
+            onClick={() => { void handleSaveShopSettings(); }}
+            disabled={savingPageMasthead}
+            style={primaryButtonStyle}
+          >
+            {savingPageMasthead ? '保存中...' : '保存工坊设置'}
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'meditation' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button
+            type="button"
+            onClick={() => { void handleSaveMeditationSettings(); }}
+            disabled={savingPageMasthead}
+            style={primaryButtonStyle}
+          >
+            {savingPageMasthead ? '保存中...' : '保存冥想设置'}
           </button>
         </div>
       )}

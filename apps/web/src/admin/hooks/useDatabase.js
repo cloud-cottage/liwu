@@ -10,6 +10,8 @@ import DatabaseService, {
   DEFAULT_MEDITATION_COMPOSITION_SETTINGS,
   DEFAULT_MEDITATION_CALENDAR,
   DEFAULT_MEDITATION_LIBRARY,
+  DEFAULT_PAGE_MASTHEAD,
+  DEFAULT_SHOP_HOME_LIVING_SETTINGS,
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   DEFAULT_THEME_SETTINGS,
   DEFAULT_USER_AVATAR_OPTIONS
@@ -47,6 +49,8 @@ export const useDatabase = () => {
   const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
   const [userAvatarOptionsSettings, setUserAvatarOptionsSettings] = useState(DEFAULT_USER_AVATAR_OPTIONS);
   const [clientDistributionSettings, setClientDistributionSettings] = useState(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
+  const [pageMastheadSettings, setPageMastheadSettings] = useState(DEFAULT_PAGE_MASTHEAD);
+  const [shopHomeLivingSettings, setShopHomeLivingSettings] = useState(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
   const [studentMembershipSettings, setStudentMembershipSettings] = useState(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [meditationAudioLibrary, setMeditationAudioLibrary] = useState(DEFAULT_MEDITATION_AUDIO_LIBRARY);
@@ -71,6 +75,8 @@ export const useDatabase = () => {
   const [savingBrandCarouselSettings, setSavingBrandCarouselSettings] = useState(false);
   const [savingUserAvatarOptionsSettings, setSavingUserAvatarOptionsSettings] = useState(false);
   const [savingClientDistributionSettings, setSavingClientDistributionSettings] = useState(false);
+  const [savingPageMastheadSettings, setSavingPageMastheadSettings] = useState(false);
+  const [savingShopHomeLivingSettings, setSavingShopHomeLivingSettings] = useState(false);
   const [savingStudentMembershipSettings, setSavingStudentMembershipSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -81,7 +87,7 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessDisplaySettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextClientDistributionSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData, nextMeditationAudioLibrary, nextMeditationCompositionSettings, nextMeditationCalendar, nextMeditationLibrary] = await Promise.all([
+      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessDisplaySettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextClientDistributionSettings, nextPageMastheadSettings, nextShopHomeLivingSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData, nextMeditationAudioLibrary, nextMeditationCompositionSettings, nextMeditationCalendar, nextMeditationLibrary] = await Promise.all([
         DatabaseService.getDashboardData(),
         DatabaseService.getMeditationSettings(),
         DatabaseService.getAwarenessTagSettings(),
@@ -91,6 +97,8 @@ export const useDatabase = () => {
         DatabaseService.getBrandCarouselSettings(),
         DatabaseService.getUserAvatarOptionsSettings(),
         DatabaseService.getClientDistributionSettings(),
+        DatabaseService.getPageMastheadSettings(),
+        DatabaseService.getShopHomeLivingSettings(),
         DatabaseService.getStudentMembershipSettings(),
         DatabaseService.getAwarenessTagOverview(),
         DatabaseService.getShopManagementData(),
@@ -116,6 +124,8 @@ export const useDatabase = () => {
       setBrandCarouselSettings(nextBrandCarouselSettings);
       setUserAvatarOptionsSettings(nextUserAvatarOptionsSettings);
       setClientDistributionSettings(nextClientDistributionSettings);
+      setPageMastheadSettings(nextPageMastheadSettings);
+      setShopHomeLivingSettings(nextShopHomeLivingSettings);
       setStudentMembershipSettings(nextStudentMembershipSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
@@ -128,7 +138,7 @@ export const useDatabase = () => {
       setMeditationCalendar(nextMeditationCalendar);
       setMeditationLibrary(nextMeditationLibrary);
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextClientDistributionSettings.missingCollection || nextStudentMembershipSettings.missingCollection
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextClientDistributionSettings.missingCollection || nextPageMastheadSettings.missingCollection || nextShopHomeLivingSettings.missingCollection || nextStudentMembershipSettings.missingCollection
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
           : null
       );
@@ -151,6 +161,8 @@ export const useDatabase = () => {
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
       setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
+      setPageMastheadSettings(DEFAULT_PAGE_MASTHEAD);
+      setShopHomeLivingSettings(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -198,6 +210,8 @@ export const useDatabase = () => {
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
       setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
+      setPageMastheadSettings(DEFAULT_PAGE_MASTHEAD);
+      setShopHomeLivingSettings(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -458,6 +472,38 @@ export const useDatabase = () => {
     }
   };
 
+  const updateShopHomeLivingSettings = async (settingsData) => {
+    try {
+      setSavingShopHomeLivingSettings(true);
+      setSettingsError(null);
+      const savedSettings = await DatabaseService.saveShopHomeLivingSettings(settingsData);
+      setShopHomeLivingSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating shop home living settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingShopHomeLivingSettings(false);
+    }
+  };
+
+  const updatePageMastheadSettings = async (settingsData) => {
+    try {
+      setSavingPageMastheadSettings(true);
+      setSettingsError(null);
+      const savedSettings = await DatabaseService.savePageMastheadSettings(settingsData);
+      setPageMastheadSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating page masthead settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingPageMastheadSettings(false);
+    }
+  };
+
   const saveShopProduct = async (productData) => {
     try {
       await DatabaseService.saveShopProduct(productData);
@@ -563,6 +609,8 @@ export const useDatabase = () => {
     brandCarouselSettings,
     userAvatarOptionsSettings,
     clientDistributionSettings,
+    pageMastheadSettings,
+    shopHomeLivingSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -583,6 +631,8 @@ export const useDatabase = () => {
     savingBrandCarouselSettings,
     savingUserAvatarOptionsSettings,
     savingClientDistributionSettings,
+    savingPageMastheadSettings,
+    savingShopHomeLivingSettings,
     savingStudentMembershipSettings,
     savingMeditationAudioLibrary,
     savingMeditationCompositionSettings,
@@ -608,6 +658,8 @@ export const useDatabase = () => {
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
     updateClientDistributionSettings,
+    updatePageMastheadSettings,
+    updateShopHomeLivingSettings,
     updateStudentMembershipSettings,
     saveShopProduct,
     updateShopOrderStatus,

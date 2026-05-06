@@ -18,10 +18,13 @@ const WebAdminPage = () => {
       return undefined
     }
 
+    const previousTitle = document.title
+    document.title = '理悟管理后台'
     document.body.classList.add('liwu-web-admin-route')
     document.documentElement.classList.add('liwu-web-admin-route')
 
     return () => {
+      document.title = previousTitle
       document.body.classList.remove('liwu-web-admin-route')
       document.documentElement.classList.remove('liwu-web-admin-route')
     }

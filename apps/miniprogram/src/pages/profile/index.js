@@ -5,6 +5,7 @@ Page({
   data: {
     loading: true,
     saving: false,
+    showEditor: false,
     profile: null,
     recentTags: [],
     recentWealthEntries: [],
@@ -38,6 +39,7 @@ Page({
         loading: false,
         profile: pageData.profile,
         profileInitial: (pageData.profile.name || '悟').slice(0, 1),
+        hasBoundPhone: Boolean(pageData.profile.phone),
         recentTags: pageData.tags,
         recentWealthEntries: pageData.recentWealthEntries,
         awareCount: pageData.awareCount,
@@ -60,6 +62,12 @@ Page({
     const { field } = event.currentTarget.dataset
     this.setData({
       [`form.${field}`]: event.detail.value
+    })
+  },
+
+  handleToggleEditor() {
+    this.setData({
+      showEditor: !this.data.showEditor
     })
   },
 
@@ -97,6 +105,10 @@ Page({
 
   handleGoAddresses() {
     openMiniRoute('/pages/profile/addresses/index')
+  },
+
+  handleGoOrders() {
+    openMiniRoute('/pages/shop/orders/index')
   },
 
   handleShowAlbumSoon() {

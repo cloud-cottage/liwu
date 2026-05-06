@@ -1,26 +1,27 @@
 <view class="page-shell aware-page-shell">
-  <view class="page-header">
-    <view class="page-title">觉察</view>
-    <view class="page-caption">属于你的此刻觉察</view>
+  <view class="page-masthead">
+    <view class="page-masthead__pill">Awareness</view>
+    <view class="page-masthead__title">觉察</view>
+    <view class="page-masthead__slogan">{{awarenessSlogan}}</view>
   </view>
 
   <view class="section-card composer-card">
-    <view class="section-kicker">觉察此刻</view>
-    <view class="section-title">属于你的此刻觉察</view>
-    <input
-      class="aware-input"
-      placeholder="属于你的此刻觉察"
-      maxlength="6"
-      value="{{inputValue}}"
-      bindinput="handleInput"
-    />
-    <button class="primary-button publish-button" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="handlePublish">
-      觉察此刻
-    </button>
+    <view class="composer-body">
+      <input
+        class="aware-input"
+        placeholder="属于你的此刻觉察"
+        maxlength="6"
+        value="{{inputValue}}"
+        bindinput="handleInput"
+      />
+      <view class="aware-input-meta">{{inputValue.length}}/6</view>
+      <button class="primary-button publish-button" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="handlePublish">
+        觉察此刻
+      </button>
+    </view>
   </view>
 
   <view class="section-card common-card" wx:if="{{myTags.length}}">
-    <view class="section-kicker">个人常用</view>
     <view class="section-title">我的常用觉察</view>
     <view class="tag-pills">
       <view class="tag-pill" wx:for="{{myTags}}" wx:key="key">{{item.content}}</view>
@@ -28,16 +29,15 @@
   </view>
 
   <view class="section-card cloud-card">
-    <view class="section-kicker">社区觉察</view>
     <view class="section-title">同心照亮</view>
-    <view class="cloud-wrap" wx:if="{{popularTags.length}}">
+    <view class="cloud-wrap" wx:if="{{popularTags.length}}" style="height: {{cloudHeight}}rpx;">
       <view
         class="cloud-tag {{item.accessType === 'student' ? 'cloud-tag-student' : ''}}"
         wx:for="{{popularTags}}"
         wx:key="key"
         data-tag="{{item}}"
         bindtap="handleTagTap"
-        style="font-size: {{item.fontSize}}rpx;"
+        style="{{item.style}}"
       >
         {{item.content}}
       </view>

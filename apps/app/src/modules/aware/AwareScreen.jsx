@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowRight,
   CheckCircle2,
   Copy,
   Share2,
@@ -9,8 +8,9 @@ import {
   UserRound,
   X
 } from 'lucide-react';
+import PageMasthead from '../../components/Layout/PageMasthead.jsx';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
-import { awarenessService } from '../../services/cloudbase';
+import { awarenessService, pageMastheadSettingsService } from '../../services/cloudbase';
 
 const AWARENESS_REPUBLISH_INTERVAL_MS = 60 * 60 * 1000;
 const AWARENESS_PENDING_QUEUE_KEY_PREFIX = 'liwu_awareness_pending_queue_v1';
@@ -31,7 +31,6 @@ const ACCESS_TYPE_META = {
 const getAccessMeta = (accessType) => ACCESS_TYPE_META[accessType] || ACCESS_TYPE_META.public;
 
 const canPublishTag = (tag, currentUser) => tag.accessType !== 'student' || Boolean(currentUser?.isStudent);
-const isAppClient = () => typeof document !== 'undefined' && document.documentElement?.dataset?.liwuClient === 'app';
 
 const getTagCloudFontSize = (count, maxCount) => {
   if (!maxCount) {
@@ -617,7 +616,6 @@ const AwareTagModal = ({
 const Record = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const appClient = isAppClient();
   const {
     authStatus,
     currentUser,
@@ -639,6 +637,7 @@ const Record = () => {
   const [sharePayload, setSharePayload] = useState(null);
   const [shareStatus, setShareStatus] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+  const [awarenessSlogan, setAwarenessSlogan] = useState('把此刻命名清楚，再安静地把它交还给自己。');
   const [pendingQueueItem, setPendingQueueItem] = useState(null);
   const [queueTick, setQueueTick] = useState(0);
   const [wordCloudBounds, setWordCloudBounds] = useState({ width: WORD_CLOUD_MIN_WIDTH, height: WORD_CLOUD_MIN_HEIGHT });
@@ -687,6 +686,21 @@ const Record = () => {
       disposed = true;
     };
   }, [initialSharedTag, initialShortTagCode]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void (async () => {
+      const settings = await pageMastheadSettingsService.getSettings();
+      if (!disposed) {
+        setAwarenessSlogan(settings.awarenessSlogan || '把此刻命名清楚，再安静地把它交还给自己。');
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!toastMessage) {
@@ -1011,56 +1025,26 @@ const Record = () => {
     >
       <InlineToast message={toastMessage} onClose={() => setToastMessage('')} />
 
-      <header
+      <PageMasthead
+        eyebrow="Awareness"
+        title="觉察"
+        slogan={awarenessSlogan}
+      />
+
+      <section
         style={{
-          marginTop: '8px',
-          marginBottom: '18px',
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,245,239,0.94))',
           padding: '18px',
           borderRadius: '24px',
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,245,239,0.94))',
           boxShadow: 'var(--shadow-sm)',
-          border: '1px solid rgba(143, 165, 138, 0.12)'
+          border: '1px solid rgba(143, 165, 138, 0.12)',
+          marginBottom: '18px'
         }}
       >
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-          <span
-            style={{
-              padding: '6px 10px',
-              borderRadius: '999px',
-              background: 'rgba(143, 165, 138, 0.12)',
-              color: 'var(--color-accent-clay)',
-              fontSize: '11px',
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase'
-            }}
-          >
-            Awareness
-          </span>
-        </div>
-
-        <h1
-          style={{
-            fontSize: '32px',
-            fontFamily: 'var(--font-serif)',
-            color: 'var(--color-text-primary)',
-            margin: 0
-          }}
-        >
-          觉察
-        </h1>
-        <p style={{ color: 'var(--color-text-secondary)', marginTop: '10px', lineHeight: 1.7 }}>
-          把此刻命名清楚，再安静地把它交还给自己。
-        </p>
-
-        {appClient && !pendingQueueItem && (
+        {!pendingQueueItem && (
           <div
             id="awareness-composer-card"
-            style={{
-              marginTop: '18px',
-              paddingTop: '16px',
-              borderTop: '1px solid rgba(143, 165, 138, 0.12)'
-            }}
+            style={{ display: 'grid' }}
           >
             <form onSubmit={handleSubmit}>
               <div style={{ marginBottom: '16px' }}>
@@ -1130,74 +1114,7 @@ const Record = () => {
             </form>
           </div>
         )}
-
-        {!appClient && (
-          <>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '12px',
-                marginTop: '16px'
-              }}
-            >
-              <div
-                style={{
-                  padding: '14px',
-                  borderRadius: '18px',
-                  background: 'rgba(248, 245, 239, 0.92)',
-                  border: '1px solid rgba(143, 165, 138, 0.12)'
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#4d5a4b' }}>当前身份</div>
-                <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: 700, color: '#111827' }}>
-                  {authStatus.isAuthenticated ? (currentUser?.isStudent ? '学员' : '普通用户') : '游客'}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  padding: '14px',
-                  borderRadius: '18px',
-                  background: 'rgba(248, 245, 239, 0.92)',
-                  border: '1px solid rgba(143, 165, 138, 0.12)'
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#4d5a4b' }}>我的常用</div>
-                <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: 700, color: '#111827' }}>
-                  {userTags.length} 条
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                const targetSection = document.getElementById('awareness-composer-card');
-                targetSection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }}
-              style={{
-                marginTop: '14px',
-                border: 'none',
-                borderRadius: '999px',
-                padding: '10px 14px',
-                background: 'var(--theme-button-primary-bg)',
-                color: 'var(--theme-button-primary-text)',
-                fontSize: '12px',
-                fontWeight: 700,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer',
-                boxShadow: 'var(--shadow-sm)'
-              }}
-            >
-              <span>开始觉察</span>
-              <ArrowRight size={14} />
-            </button>
-          </>
-        )}
-      </header>
+      </section>
 
       {(error || cloudError) && (
         <div
@@ -1213,89 +1130,6 @@ const Record = () => {
           }}
         >
           {error || cloudError}
-        </div>
-      )}
-
-      {!appClient && !pendingQueueItem && (
-        <div
-          id="awareness-composer-card"
-          style={{
-            background: 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,245,239,0.94))',
-            padding: '24px',
-            borderRadius: '20px',
-            boxShadow: 'var(--shadow-sm)',
-            marginBottom: '24px'
-          }}
-        >
-          <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: '#8fa58a', textTransform: 'uppercase', marginBottom: '12px' }}>
-            觉察此刻
-          </div>
-          <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: '16px' }}>
-              <input
-                id="awareness-status"
-                name="awareness-status"
-                type="text"
-                value={inputValue}
-                disabled={!canPublishAwareness}
-                onChange={(event) => {
-                  setInputValue(event.target.value);
-                  setError('');
-                }}
-                placeholder="属于你的此刻觉察"
-                maxLength={6}
-                style={{
-                  width: '100%',
-                  padding: '14px',
-                  border: error ? '2px solid #f56565' : '1px solid var(--color-border)',
-                  borderRadius: '12px',
-                  fontSize: '16px',
-                  boxSizing: 'border-box',
-                  fontFamily: 'var(--font-sans)',
-                  outline: 'none',
-                  transition: 'border-color 0.2s',
-                  backgroundColor: canPublishAwareness ? '#fff' : '#f8fafc',
-                  cursor: canPublishAwareness ? 'text' : 'not-allowed'
-                }}
-              />
-              <div
-                style={{
-                  fontSize: '12px',
-                  color: 'var(--color-text-secondary)',
-                  marginTop: '8px',
-                  textAlign: 'right'
-                }}
-              >
-                {inputValue.length}/6
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={submitting || loading || !canPublishAwareness}
-              style={{
-                width: '100%',
-                padding: '14px',
-              backgroundColor: submitting || !canPublishAwareness ? '#ccc' : 'var(--color-accent-ink)',
-              background: submitting || !canPublishAwareness ? '#ccc' : 'var(--theme-button-primary-bg)',
-              color: submitting || !canPublishAwareness ? '#fff' : 'var(--theme-button-primary-text)',
-              border: 'none',
-              borderRadius: '12px',
-              fontWeight: '500',
-                fontSize: '16px',
-                cursor: submitting || !canPublishAwareness ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                transition: 'opacity 0.2s',
-                opacity: submitting ? 0.7 : 1
-              }}
-            >
-              <Sparkles size={18} />
-              {submitting ? '提交中...' : canPublishAwareness ? '觉察此刻' : '登录后可发布'}
-            </button>
-          </form>
         </div>
       )}
 

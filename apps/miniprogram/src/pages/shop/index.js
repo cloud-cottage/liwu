@@ -1,6 +1,7 @@
 const {
   listShopCategories,
   listShopProducts,
+  getShopHomeLivingSettings,
   getShopProductDetail,
   listUserAddresses,
   saveUserAddress,
@@ -8,6 +9,7 @@ const {
   getCurrentShopProfile
 } = require('../../utils/shop')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
+const { getPageMastheadSettings } = require('../../utils/pageMasthead')
 
 const PENDING_PRODUCT_STORAGE_KEY = 'liwu_mp_pending_shop_product_id'
 
@@ -63,10 +65,16 @@ Page({
   data: {
     loading: true,
     submitting: false,
+    livingCards: [],
+    livingImageWidth: 700,
+    livingImageHeight: 700,
+    currentLivingIndex: 0,
+    categoryTabs: [],
     categories: [],
     products: [],
     addresses: [],
     walletBalance: 0,
+    shopSlogan: '适合静心、阅读与日常安住的小器物。',
     activeCategoryId: '',
     selectedCategory: null,
     selectedCategoryName: '全部',
@@ -74,6 +82,7 @@ Page({
     activeProduct: null,
     showProductModal: false,
     selectedSkuId: '',
+    selectedSkuSummary: null,
     addressDraft: { ...EMPTY_ADDRESS }
   },
 
@@ -97,22 +106,32 @@ Page({
 
     try {
       const activeCategoryId = this.data.activeCategoryId || ''
-      const [categories, products, addresses, profile] = await Promise.all([
+      const [categories, products, addresses, profile, livingSettings, mastheadSettings] = await Promise.all([
         listShopCategories(),
         listShopProducts({ categoryId: activeCategoryId }),
         listUserAddresses(),
-        getCurrentShopProfile()
+        getCurrentShopProfile(),
+        getShopHomeLivingSettings(),
+        getPageMastheadSettings()
       ])
 
       const selectedCategory = getSelectedCategory(categories, activeCategoryId)
       this.setData({
         loading: false,
+        livingCards: livingSettings.cards || [],
+        livingImageWidth: livingSettings.imageWidth || 700,
+        livingImageHeight: livingSettings.imageHeight || 700,
+        categoryTabs: buildCategoryTabs(categories),
         categories,
         products: decorateProducts(products, categories),
         addresses,
         walletBalance: profile.balance,
+        shopSlogan: mastheadSettings.shopSlogan || '适合静心、阅读与日常安住的小器物。',
         selectedCategory,
         ...getCategoryPresentation(selectedCategory)
+      })
+      wx.nextTick(() => {
+        this.drawLivingCanvases()
       })
       await this.openPendingProduct(categories)
     } catch (error) {
@@ -136,6 +155,7 @@ Page({
       const selectedCategory = getSelectedCategory(this.data.categories, categoryId)
       this.setData({
         loading: false,
+        categoryTabs: buildCategoryTabs(this.data.categories),
         products: decorateProducts(products, this.data.categories),
         selectedCategory,
         ...getCategoryPresentation(selectedCategory)
@@ -154,6 +174,35 @@ Page({
     await this.openProductDetail(productId)
   },
 
+  handleLivingSwiperChange(event) {
+    this.setData({
+      currentLivingIndex: Number(event.detail.current || 0)
+    })
+  },
+
+  async handleLivingCardTap(event) {
+    const { productId } = event.currentTarget.dataset
+    if (!productId) {
+      return
+    }
+
+    await this.openProductDetail(productId)
+  },
+
+  handleCartTap() {
+    wx.showToast({
+      title: '购物车入口已预留',
+      icon: 'none'
+    })
+  },
+
+  handleScrollList() {
+    wx.pageScrollTo({
+      selector: '#shop-list-section',
+      duration: 260
+    })
+  },
+
   async openProductDetail(productId) {
     try {
       const detail = await getShopProductDetail(productId)
@@ -169,6 +218,7 @@ Page({
         activeProduct: decorateProduct(detail, this.data.categories),
         showProductModal: true,
         selectedSkuId: detail.skus[0]?.id || '',
+        selectedSkuSummary: resolveSkuSummary(detail, detail.skus[0]?.id || ''),
         addressDraft: addressesToDraft(this.data.addresses)
       })
     } catch (error) {
@@ -199,13 +249,16 @@ Page({
       activeProduct: null,
       showProductModal: false,
       selectedSkuId: '',
+      selectedSkuSummary: null,
       addressDraft: { ...EMPTY_ADDRESS }
     })
   },
 
   handleSkuTap(event) {
+    const nextSkuId = event.currentTarget.dataset.skuId
     this.setData({
-      selectedSkuId: event.currentTarget.dataset.skuId
+      selectedSkuId: nextSkuId,
+      selectedSkuSummary: resolveSkuSummary(this.data.activeProduct, nextSkuId)
     })
   },
 
@@ -291,6 +344,57 @@ Page({
 
   noop() {},
 
+  drawLivingCanvases() {
+    const cards = this.data.livingCards || []
+    cards.forEach((_, index) => {
+      this.drawLivingCanvas(index)
+    })
+  },
+
+  drawLivingCanvas(index) {
+    const query = wx.createSelectorQuery().in(this)
+    query.select(`#livingCanvas${index}`).fields({ node: true, size: true }).exec((result) => {
+      const canvasInfo = result?.[0]
+      if (!canvasInfo?.node || !canvasInfo.width || !canvasInfo.height) {
+        return
+      }
+
+      const { node: canvas, width, height } = canvasInfo
+      if (typeof canvas.getContext !== 'function') {
+        return
+      }
+
+      const context = canvas.getContext('2d')
+      if (!context) {
+        return
+      }
+
+      const pixelRatio = wx.getWindowInfo ? (wx.getWindowInfo().pixelRatio || 1) : 1
+
+      canvas.width = width * pixelRatio
+      canvas.height = height * pixelRatio
+      context.scale(pixelRatio, pixelRatio)
+      context.clearRect(0, 0, width, height)
+
+      const centerX = width / 2
+      const centerY = height / 2
+      const radius = Math.min(width, height) * 0.1
+
+      context.beginPath()
+      context.arc(centerX, centerY, radius, 0, Math.PI * 2)
+      context.fillStyle = 'rgba(255, 255, 255, 0.22)'
+      context.fill()
+      context.lineWidth = Math.max(2, radius * 0.12)
+      context.strokeStyle = 'rgba(255, 255, 255, 0.94)'
+      context.stroke()
+
+      context.beginPath()
+      context.arc(centerX, centerY, radius * 0.32, 0, Math.PI * 2)
+      context.fillStyle = 'rgba(255, 255, 255, 0.94)'
+      context.fill()
+    })
+  },
+
   onShareAppMessage(event) {
     if (event?.from === 'button' && event.target?.dataset?.shareType === 'product' && this.data.activeProduct) {
       const activeProduct = this.data.activeProduct
@@ -342,6 +446,31 @@ const getCategoryPresentation = (category) => ({
     : '从日常仪式、空间器物到心意礼物，挑一件适合此刻练习的物品。'
 })
 
+const CATEGORY_TAB_ORDER = ['日常仪式', '空间器物', '心意礼物']
+
+const buildCategoryTabs = (categories = []) => {
+  const orderedTabs = CATEGORY_TAB_ORDER
+    .map((name) => categories.find((item) => item.name === name))
+    .filter(Boolean)
+    .map((category) => ({
+      id: category.id,
+      name: category.name
+    }))
+
+  const remainingTabs = categories
+    .filter((category) => !CATEGORY_TAB_ORDER.includes(category.name))
+    .map((category) => ({
+      id: category.id,
+      name: category.name
+    }))
+
+  return [
+    { id: '', name: '全部' },
+    ...orderedTabs,
+    ...remainingTabs
+  ]
+}
+
 const getCoverStyle = (product = {}, tone) => (
   product.coverImage
     ? `background-image: linear-gradient(180deg, rgba(15, 23, 42, 0.08) 0%, rgba(15, 23, 42, 0.34) 100%), url(${product.coverImage}); background-size: cover; background-position: center;`
@@ -373,9 +502,24 @@ const decorateProduct = (product = {}, categories = []) => {
       : null,
     skus: (product.skus || []).map((sku) => ({
       ...sku,
-      priceLabel: formatPriceLabel(sku.pricePoints, sku.priceCash)
+      priceLabel: formatPriceLabel(sku.pricePoints, sku.priceCash),
+      rewardPointsReturn: Number(sku.rewardPointsReturn || 0)
     }))
   }
 }
 
 const decorateProducts = (products = [], categories = []) => products.map((product) => decorateProduct(product, categories))
+
+const resolveSkuSummary = (product = {}, skuId = '') => {
+  const selectedSku = (product?.skus || []).find((item) => item.id === skuId) || product?.skus?.[0] || null
+  if (!selectedSku) {
+    return null
+  }
+
+  return {
+    id: selectedSku.id,
+    priceLabel: selectedSku.priceLabel || formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash),
+    rewardPointsReturn: Number(selectedSku.rewardPointsReturn || 0),
+    stock: Number(selectedSku.stock || 0)
+  }
+}

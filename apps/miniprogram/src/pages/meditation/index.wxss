@@ -2,6 +2,21 @@
   padding-bottom: 44rpx;
 }
 
+.meditation-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(143, 165, 138, 0.12);
+  color: #8b5e34;
+  font-size: 20rpx;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 12rpx;
+}
+
 .meditation-hero-card {
   min-height: 660rpx;
   display: flex;
@@ -14,7 +29,7 @@
 }
 
 .meditation-kicker {
-  font-size: 30rpx;
+  font-size: 32rpx;
   line-height: 1.4;
   font-weight: 700;
   color: #111827;
@@ -25,6 +40,7 @@
   font-size: 24rpx;
   line-height: 1.7;
   color: #6b7280;
+  max-width: 88%;
 }
 
 .meditation-console {

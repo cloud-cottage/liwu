@@ -1,7 +1,8 @@
 <view class="page-shell home-page-shell">
-  <view class="page-header">
-    <view class="page-title">理悟</view>
-    <view class="page-caption">礼敬物品，安住当下</view>
+  <view class="page-masthead">
+    <view class="page-masthead__pill">{{taglines[taglineIndex]}}</view>
+    <view class="page-masthead__title">理悟</view>
+    <view class="page-masthead__slogan">{{homeSlogan}}</view>
   </view>
 
   <view class="hero-swiper-shell">
@@ -14,34 +15,10 @@
     </swiper>
   </view>
 
-  <view class="section-card practice-card" bindtap="handleAwareTap">
-    <view class="practice-kicker">今日静寂</view>
+  <view class="section-card practice-card" bindtap="handleMeditationTap">
     <view class="practice-orb">静</view>
-    <view class="practice-title">开始今日静寂</view>
-    <view class="practice-subtitle">给自己 15 分钟的留白，在呼吸间寻回内在的秩序。</view>
-  </view>
-
-  <view class="section-card quick-card">
-    <view class="section-kicker">今日路径</view>
-    <view class="section-title">此刻入口</view>
-    <view class="quick-list">
-      <view class="quick-item" wx:for="{{cards}}" wx:key="title" data-path="{{item.path}}" bindtap="handleCardTap">
-        <view class="quick-head">
-          <view class="quick-title">{{item.title}}</view>
-          <view class="quick-arrow">进入</view>
-        </view>
-        <view class="quick-subtitle">{{item.subtitle}}</view>
-      </view>
-    </view>
-  </view>
-
-  <view class="section-card cloud-card">
-    <view class="section-kicker">社区觉察</view>
-    <view class="section-title">同心照亮</view>
-    <view class="cloud-wrap" wx:if="{{tags.length}}">
-      <view class="cloud-tag" wx:for="{{tags}}" wx:key="key">{{item.content}}</view>
-    </view>
-    <view class="empty-text" wx:else>还没有可展示的社区标签。</view>
+    <view class="practice-title">开始今日冥想</view>
+    <view class="practice-subtitle">15 分钟，为今天留一段真正安静的时间。</view>
   </view>
 
   <view class="section-card showcase-card" bindtap="handleShopTap">

@@ -8,11 +8,13 @@
       bindtap="handleTabTap"
     >
       <view class="tabbar-indicator"></view>
-      <image
-        class="tabbar-icon-image"
-        mode="aspectFit"
-        src="{{item.icon}}"
-      />
+      <view class="tabbar-icon-slot">
+        <image
+          class="tabbar-icon-image {{item.iconClass}}"
+          mode="aspectFit"
+          src="{{item.icon}}"
+        />
+      </view>
       <view class="tabbar-label">{{item.text}}</view>
     </view>
   </view>
