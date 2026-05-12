@@ -13,6 +13,7 @@ const ThemeSettings = ({
   pageMastheadSettings,
   meditationSettings,
   badgeSettings,
+  shopPartnerPricingSettings,
   error,
   saving,
   savingAwarenessDisplay,
@@ -22,6 +23,7 @@ const ThemeSettings = ({
   savingPageMasthead,
   savingMeditationSettings,
   savingBadgeSettings,
+  savingShopPartnerPricing,
   onSave,
   onSaveAwarenessDisplay,
   onSaveBrandCarousel,
@@ -30,6 +32,8 @@ const ThemeSettings = ({
   onSavePageMasthead,
   onSaveMeditationSettings,
   onSaveBadgeSettings
+  ,
+  onSaveShopPartnerPricing
 }) => {
   const [activeTab, setActiveTab] = useState('home');
   const [draftTheme, setDraftTheme] = useState(settings.theme);
@@ -39,6 +43,7 @@ const ThemeSettings = ({
   const [draftAwarenessSlogan, setDraftAwarenessSlogan] = useState(pageMastheadSettings.awarenessSlogan || '');
   const [draftShopSlogan, setDraftShopSlogan] = useState(pageMastheadSettings.shopSlogan || '');
   const [draftMeditationSlogan, setDraftMeditationSlogan] = useState(pageMastheadSettings.meditationSlogan || '');
+  const [draftShopPartnerPricingTiers, setDraftShopPartnerPricingTiers] = useState(() => shopPartnerPricingSettings.tiers || []);
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
   const [draftAvatarOptions, setDraftAvatarOptions] = useState(() => userAvatarOptionsSettings.avatars || []);
   const [draftPreviewUrl, setDraftPreviewUrl] = useState(clientDistributionSettings.previewUrl || '');
@@ -145,6 +150,10 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftAvatarOptions(userAvatarOptionsSettings.avatars || []);
   }, [userAvatarOptionsSettings.avatars]);
+
+  useEffect(() => {
+    setDraftShopPartnerPricingTiers(shopPartnerPricingSettings.tiers || []);
+  }, [shopPartnerPricingSettings.tiers]);
 
   useEffect(() => {
     setDraftPreviewUrl(clientDistributionSettings.previewUrl || '');
@@ -305,6 +314,7 @@ const ThemeSettings = ({
 
   const handleSaveShopSettings = async () => {
     await onSavePageMasthead(draftPageMastheadPayload);
+    await onSaveShopPartnerPricing({ ...shopPartnerPricingSettings, tiers: draftShopPartnerPricingTiers });
   };
 
   const handleSaveMeditationSettings = async () => {
@@ -743,6 +753,69 @@ const ThemeSettings = ({
               </div>
             </label>
           </div>
+
+          <div style={previewCardStyle}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              partner_pricing
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              代理商折扣梯度
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              代理商折扣仅用于 web 端合作伙伴后台。5000 元档位按商品标价金额判断；10000 / 20000 / 50000 档位按折后实际付款额判断。
+            </div>
+
+            <div style={{ display: 'grid', gap: '12px', marginTop: '18px' }}>
+              {draftShopPartnerPricingTiers.map((tier, index) => (
+                <div
+                  key={`${tier.threshold}-${index}`}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '12px',
+                    padding: '14px',
+                    borderRadius: '14px',
+                    backgroundColor: '#fff',
+                    border: '1px solid #e2e8f0'
+                  }}
+                >
+                  <label style={fieldStyle}>
+                    <span style={fieldLabelStyle}>实际付款额门槛（元）</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={tier.threshold}
+                      onChange={(event) => {
+                        const nextValue = Math.max(0, Number(event.target.value) || 0);
+                        setDraftShopPartnerPricingTiers((currentTiers) => currentTiers.map((currentTier, currentIndex) => (
+                          currentIndex === index ? { ...currentTier, threshold: nextValue } : currentTier
+                        )));
+                      }}
+                      style={fieldInputStyle}
+                    />
+                  </label>
+                  <label style={fieldStyle}>
+                    <span style={fieldLabelStyle}>折扣率</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="1"
+                      step="0.01"
+                      value={tier.discountRate}
+                      onChange={(event) => {
+                        const nextValue = Math.min(1, Math.max(0.01, Number(event.target.value) || 0.01));
+                        setDraftShopPartnerPricingTiers((currentTiers) => currentTiers.map((currentTier, currentIndex) => (
+                          currentIndex === index ? { ...currentTier, discountRate: nextValue } : currentTier
+                        )));
+                      }}
+                      style={fieldInputStyle}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -953,10 +1026,10 @@ const ThemeSettings = ({
           <button
             type="button"
             onClick={() => { void handleSaveShopSettings(); }}
-            disabled={savingPageMasthead}
+            disabled={savingPageMasthead || savingShopPartnerPricing}
             style={primaryButtonStyle}
           >
-            {savingPageMasthead ? '保存中...' : '保存工坊设置'}
+            {(savingPageMasthead || savingShopPartnerPricing) ? '保存中...' : '保存工坊设置'}
           </button>
         </div>
       )}

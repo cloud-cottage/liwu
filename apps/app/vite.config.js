@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   envPrefix: ['VITE_', 'REACT_APP_'],
   server: {
+    port: 5176,
     proxy: {
       '/api/cloudbase-proxy': {
         target: 'https://liwu.yunduojihua.com',

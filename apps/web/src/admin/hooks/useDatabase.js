@@ -11,6 +11,7 @@ import DatabaseService, {
   DEFAULT_MEDITATION_CALENDAR,
   DEFAULT_MEDITATION_LIBRARY,
   DEFAULT_PAGE_MASTHEAD,
+  DEFAULT_SHOP_PARTNER_PRICING,
   DEFAULT_SHOP_HOME_LIVING_SETTINGS,
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   DEFAULT_THEME_SETTINGS,
@@ -32,15 +33,50 @@ const getSetupErrorMessage = (error) => {
   return rawMessage;
 };
 
+const isTransientNetworkIssue = (error) => {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('network request error') || message.includes('timeout');
+};
+
+const wait = (ms) => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+
+const runWithRetry = async (requestFactory, { retries = 2, delayMs = 250 } = {}) => {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await requestFactory();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientNetworkIssue(error) || attempt === retries) {
+        throw error;
+      }
+
+      await wait(delayMs * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+};
+
 export const useDatabase = () => {
-  const [users, setUsers] = useState([]);
-  const [tags, setTags] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [overviewStats, setOverviewStats] = useState({
+  const EMPTY_OVERVIEW_STATS = {
     awarenessDailyCounts: [],
     meditationDailyCounts: [],
     meditationDailyDurationMinutes: []
-  });
+  };
+  const EMPTY_DASHBOARD_DATA = {
+    users: [],
+    tags: [],
+    categories: [],
+    overviewStats: EMPTY_OVERVIEW_STATS
+  };
+  const [users, setUsers] = useState([]);
+  const [tags, setTags] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [overviewStats, setOverviewStats] = useState(EMPTY_OVERVIEW_STATS);
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
   const [awarenessDisplaySettings, setAwarenessDisplaySettings] = useState(DEFAULT_AWARENESS_DISPLAY);
@@ -51,6 +87,7 @@ export const useDatabase = () => {
   const [clientDistributionSettings, setClientDistributionSettings] = useState(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
   const [pageMastheadSettings, setPageMastheadSettings] = useState(DEFAULT_PAGE_MASTHEAD);
   const [shopHomeLivingSettings, setShopHomeLivingSettings] = useState(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
+  const [shopPartnerPricingSettings, setShopPartnerPricingSettings] = useState(DEFAULT_SHOP_PARTNER_PRICING);
   const [studentMembershipSettings, setStudentMembershipSettings] = useState(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
   const [meditationAudioLibrary, setMeditationAudioLibrary] = useState(DEFAULT_MEDITATION_AUDIO_LIBRARY);
@@ -66,6 +103,8 @@ export const useDatabase = () => {
   const [shopSkus, setShopSkus] = useState([]);
   const [shopOrders, setShopOrders] = useState([]);
   const [shopOrderItems, setShopOrderItems] = useState([]);
+  const [partnerOrders, setPartnerOrders] = useState([]);
+  const [partnerSubOrders, setPartnerSubOrders] = useState([]);
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
@@ -77,6 +116,7 @@ export const useDatabase = () => {
   const [savingClientDistributionSettings, setSavingClientDistributionSettings] = useState(false);
   const [savingPageMastheadSettings, setSavingPageMastheadSettings] = useState(false);
   const [savingShopHomeLivingSettings, setSavingShopHomeLivingSettings] = useState(false);
+  const [savingShopPartnerPricingSettings, setSavingShopPartnerPricingSettings] = useState(false);
   const [savingStudentMembershipSettings, setSavingStudentMembershipSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -87,35 +127,102 @@ export const useDatabase = () => {
       setLoading(true);
       setError(null);
 
-      const [dashboardData, nextMeditationSettings, nextAwarenessTagSettings, nextAwarenessDisplaySettings, nextBadgeSettings, nextThemeSettings, nextBrandCarouselSettings, nextUserAvatarOptionsSettings, nextClientDistributionSettings, nextPageMastheadSettings, nextShopHomeLivingSettings, nextStudentMembershipSettings, nextAwarenessTagOverview, nextShopManagementData, nextMeditationAudioLibrary, nextMeditationCompositionSettings, nextMeditationCalendar, nextMeditationLibrary] = await Promise.all([
-        DatabaseService.getDashboardData(),
-        DatabaseService.getMeditationSettings(),
-        DatabaseService.getAwarenessTagSettings(),
-        DatabaseService.getAwarenessDisplaySettings(),
-        DatabaseService.getBadgeSettings(),
-        DatabaseService.getThemeSettings(),
-        DatabaseService.getBrandCarouselSettings(),
-        DatabaseService.getUserAvatarOptionsSettings(),
-        DatabaseService.getClientDistributionSettings(),
-        DatabaseService.getPageMastheadSettings(),
-        DatabaseService.getShopHomeLivingSettings(),
-        DatabaseService.getStudentMembershipSettings(),
-        DatabaseService.getAwarenessTagOverview(),
-        DatabaseService.getShopManagementData(),
-        DatabaseService.getMeditationAudioLibrary(),
-        DatabaseService.getMeditationCompositionSettings(),
-        DatabaseService.getMeditationCalendar(),
-        DatabaseService.getMeditationLibrary()
+      const runSettledBatch = async (requestFactories) => Promise.all(
+        requestFactories.map(async (requestFactory) => {
+          try {
+            const value = await runWithRetry(requestFactory);
+            return { status: 'fulfilled', value };
+          } catch (reason) {
+            return { status: 'rejected', reason };
+          }
+        })
+      );
+
+      const [
+        dashboardDataResult,
+        meditationSettingsResult,
+        awarenessTagSettingsResult,
+        awarenessDisplaySettingsResult,
+        badgeSettingsResult
+      ] = await runSettledBatch([
+        () => DatabaseService.getDashboardData(),
+        () => DatabaseService.getMeditationSettings(),
+        () => DatabaseService.getAwarenessTagSettings(),
+        () => DatabaseService.getAwarenessDisplaySettings(),
+        () => DatabaseService.getBadgeSettings()
       ]);
+
+      const [
+        themeSettingsResult,
+        brandCarouselSettingsResult,
+        userAvatarOptionsSettingsResult,
+        clientDistributionSettingsResult,
+        pageMastheadSettingsResult
+      ] = await runSettledBatch([
+        () => DatabaseService.getThemeSettings(),
+        () => DatabaseService.getBrandCarouselSettings(),
+        () => DatabaseService.getUserAvatarOptionsSettings(),
+        () => DatabaseService.getClientDistributionSettings(),
+        () => DatabaseService.getPageMastheadSettings()
+      ]);
+
+      const [
+        shopHomeLivingSettingsResult,
+        shopPartnerPricingSettingsResult,
+        studentMembershipSettingsResult,
+        awarenessTagOverviewResult,
+        shopManagementDataResult
+      ] = await runSettledBatch([
+        () => DatabaseService.getShopHomeLivingSettings(),
+        () => DatabaseService.getShopPartnerPricingSettings(),
+        () => DatabaseService.getStudentMembershipSettings(),
+        () => DatabaseService.getAwarenessTagOverview(),
+        () => DatabaseService.getShopManagementData()
+      ]);
+
+      const [
+        partnerOrderDataResult,
+        meditationAudioLibraryResult,
+        meditationCompositionSettingsResult,
+        meditationCalendarResult,
+        meditationLibraryResult
+      ] = await runSettledBatch([
+        () => DatabaseService.getPartnerOrderData(),
+        () => DatabaseService.getMeditationAudioLibrary(),
+        () => DatabaseService.getMeditationCompositionSettings(),
+        () => DatabaseService.getMeditationCalendar(),
+        () => DatabaseService.getMeditationLibrary()
+      ]);
+
+      const dashboardData = dashboardDataResult.status === 'fulfilled' ? dashboardDataResult.value : EMPTY_DASHBOARD_DATA;
+      const nextMeditationSettings = meditationSettingsResult.status === 'fulfilled' ? meditationSettingsResult.value : DEFAULT_MEDITATION_SETTINGS;
+      const nextAwarenessTagSettings = awarenessTagSettingsResult.status === 'fulfilled' ? awarenessTagSettingsResult.value : DEFAULT_AWARENESS_TAG_SETTINGS;
+      const nextAwarenessDisplaySettings = awarenessDisplaySettingsResult.status === 'fulfilled' ? awarenessDisplaySettingsResult.value : DEFAULT_AWARENESS_DISPLAY;
+      const nextBadgeSettings = badgeSettingsResult.status === 'fulfilled' ? badgeSettingsResult.value : DEFAULT_BADGE_SETTINGS;
+      const nextThemeSettings = themeSettingsResult.status === 'fulfilled' ? themeSettingsResult.value : DEFAULT_THEME_SETTINGS;
+      const nextBrandCarouselSettings = brandCarouselSettingsResult.status === 'fulfilled' ? brandCarouselSettingsResult.value : DEFAULT_BRAND_CAROUSEL;
+      const nextUserAvatarOptionsSettings = userAvatarOptionsSettingsResult.status === 'fulfilled' ? userAvatarOptionsSettingsResult.value : DEFAULT_USER_AVATAR_OPTIONS;
+      const nextClientDistributionSettings = clientDistributionSettingsResult.status === 'fulfilled' ? clientDistributionSettingsResult.value : DEFAULT_CLIENT_DISTRIBUTION_SETTINGS;
+      const nextPageMastheadSettings = pageMastheadSettingsResult.status === 'fulfilled' ? pageMastheadSettingsResult.value : DEFAULT_PAGE_MASTHEAD;
+      const nextShopHomeLivingSettings = shopHomeLivingSettingsResult.status === 'fulfilled' ? shopHomeLivingSettingsResult.value : DEFAULT_SHOP_HOME_LIVING_SETTINGS;
+      const nextShopPartnerPricingSettings = shopPartnerPricingSettingsResult.status === 'fulfilled' ? shopPartnerPricingSettingsResult.value : DEFAULT_SHOP_PARTNER_PRICING;
+      const nextStudentMembershipSettings = studentMembershipSettingsResult.status === 'fulfilled' ? studentMembershipSettingsResult.value : DEFAULT_STUDENT_MEMBERSHIP_SETTINGS;
+      const nextAwarenessTagOverview = awarenessTagOverviewResult.status === 'fulfilled' ? awarenessTagOverviewResult.value : [];
+      const nextShopManagementData = shopManagementDataResult.status === 'fulfilled'
+        ? shopManagementDataResult.value
+        : { categories: [], products: [], skus: [], orders: [], orderItems: [] };
+      const nextPartnerOrderData = partnerOrderDataResult.status === 'fulfilled'
+        ? partnerOrderDataResult.value
+        : { orders: [], subOrders: [] };
+      const nextMeditationAudioLibrary = meditationAudioLibraryResult.status === 'fulfilled' ? meditationAudioLibraryResult.value : DEFAULT_MEDITATION_AUDIO_LIBRARY;
+      const nextMeditationCompositionSettings = meditationCompositionSettingsResult.status === 'fulfilled' ? meditationCompositionSettingsResult.value : DEFAULT_MEDITATION_COMPOSITION_SETTINGS;
+      const nextMeditationCalendar = meditationCalendarResult.status === 'fulfilled' ? meditationCalendarResult.value : DEFAULT_MEDITATION_CALENDAR;
+      const nextMeditationLibrary = meditationLibraryResult.status === 'fulfilled' ? meditationLibraryResult.value : DEFAULT_MEDITATION_LIBRARY;
 
       setUsers(dashboardData.users);
       setTags(dashboardData.tags);
       setCategories(dashboardData.categories);
-      setOverviewStats(dashboardData.overviewStats || {
-        awarenessDailyCounts: [],
-        meditationDailyCounts: [],
-        meditationDailyDurationMinutes: []
-      });
+      setOverviewStats(dashboardData.overviewStats || EMPTY_OVERVIEW_STATS);
       setMeditationSettings(nextMeditationSettings);
       setAwarenessTagSettings(nextAwarenessTagSettings);
       setAwarenessDisplaySettings(nextAwarenessDisplaySettings);
@@ -126,6 +233,7 @@ export const useDatabase = () => {
       setClientDistributionSettings(nextClientDistributionSettings);
       setPageMastheadSettings(nextPageMastheadSettings);
       setShopHomeLivingSettings(nextShopHomeLivingSettings);
+      setShopPartnerPricingSettings(nextShopPartnerPricingSettings);
       setStudentMembershipSettings(nextStudentMembershipSettings);
       setAwarenessTagOverview(nextAwarenessTagOverview);
       setShopCategories(nextShopManagementData.categories);
@@ -133,14 +241,44 @@ export const useDatabase = () => {
       setShopSkus(nextShopManagementData.skus);
       setShopOrders(nextShopManagementData.orders);
       setShopOrderItems(nextShopManagementData.orderItems);
+      setPartnerOrders(nextPartnerOrderData.orders);
+      setPartnerSubOrders(nextPartnerOrderData.subOrders);
       setMeditationAudioLibrary(nextMeditationAudioLibrary);
       setMeditationCompositionSettings(nextMeditationCompositionSettings);
       setMeditationCalendar(nextMeditationCalendar);
       setMeditationLibrary(nextMeditationLibrary);
+      const missingCollectionWarning =
+        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextClientDistributionSettings.missingCollection || nextPageMastheadSettings.missingCollection || nextShopHomeLivingSettings.missingCollection || nextShopPartnerPricingSettings.missingCollection || nextStudentMembershipSettings.missingCollection;
+
+      const partialFailureLabels = [
+        dashboardDataResult.status === 'rejected' ? '总览与用户' : '',
+        meditationSettingsResult.status === 'rejected' ? '冥想设置' : '',
+        awarenessTagSettingsResult.status === 'rejected' ? '觉察标签设置' : '',
+        awarenessDisplaySettingsResult.status === 'rejected' ? '觉察显示设置' : '',
+        badgeSettingsResult.status === 'rejected' ? '徽章设置' : '',
+        themeSettingsResult.status === 'rejected' ? '主题设置' : '',
+        brandCarouselSettingsResult.status === 'rejected' ? '首页轮播' : '',
+        userAvatarOptionsSettingsResult.status === 'rejected' ? '用户头像' : '',
+        clientDistributionSettingsResult.status === 'rejected' ? '版本分发' : '',
+        pageMastheadSettingsResult.status === 'rejected' ? 'PageMasthead' : '',
+        shopHomeLivingSettingsResult.status === 'rejected' ? '我的居心地' : '',
+        shopPartnerPricingSettingsResult.status === 'rejected' ? '代理商折扣' : '',
+        studentMembershipSettingsResult.status === 'rejected' ? '学员设置' : '',
+        awarenessTagOverviewResult.status === 'rejected' ? '觉察统计' : '',
+        shopManagementDataResult.status === 'rejected' ? '工坊数据' : '',
+        partnerOrderDataResult.status === 'rejected' ? '合作伙伴订单' : '',
+        meditationAudioLibraryResult.status === 'rejected' ? '冥想音频库' : '',
+        meditationCompositionSettingsResult.status === 'rejected' ? '冥想编排' : '',
+        meditationCalendarResult.status === 'rejected' ? '冥想日历' : '',
+        meditationLibraryResult.status === 'rejected' ? '冥想库' : ''
+      ].filter(Boolean);
+
       setSettingsError(
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextClientDistributionSettings.missingCollection || nextPageMastheadSettings.missingCollection || nextShopHomeLivingSettings.missingCollection || nextStudentMembershipSettings.missingCollection
+        missingCollectionWarning
           ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
-          : null
+          : partialFailureLabels.length > 0
+            ? `部分管理数据加载失败，已使用默认值：${partialFailureLabels.join('、')}`
+            : null
       );
     } catch (err) {
       console.error('Error loading dashboard data from CloudBase:', err);
@@ -148,11 +286,7 @@ export const useDatabase = () => {
       setUsers([]);
       setTags([]);
       setCategories([]);
-      setOverviewStats({
-        awarenessDailyCounts: [],
-        meditationDailyCounts: [],
-        meditationDailyDurationMinutes: []
-      });
+      setOverviewStats(EMPTY_OVERVIEW_STATS);
       setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
       setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
       setAwarenessDisplaySettings(DEFAULT_AWARENESS_DISPLAY);
@@ -163,6 +297,7 @@ export const useDatabase = () => {
       setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
       setPageMastheadSettings(DEFAULT_PAGE_MASTHEAD);
       setShopHomeLivingSettings(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
+      setShopPartnerPricingSettings(DEFAULT_SHOP_PARTNER_PRICING);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -170,6 +305,8 @@ export const useDatabase = () => {
       setShopSkus([]);
       setShopOrders([]);
       setShopOrderItems([]);
+      setPartnerOrders([]);
+      setPartnerSubOrders([]);
       setMeditationAudioLibrary(DEFAULT_MEDITATION_AUDIO_LIBRARY);
       setMeditationCompositionSettings(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
       setMeditationCalendar(DEFAULT_MEDITATION_CALENDAR);
@@ -191,6 +328,9 @@ export const useDatabase = () => {
         throw new Error(connectionCheck.error || 'CloudBase connection failed');
       }
 
+      await DatabaseService.ensureSystemRoleTags();
+      await DatabaseService.ensureBrandScopeTagsAndShopCategories();
+      await DatabaseService.ensureBrandRoleModel();
       await loadData();
     } catch (err) {
       console.error('Error initializing database:', err);
@@ -212,6 +352,7 @@ export const useDatabase = () => {
       setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
       setPageMastheadSettings(DEFAULT_PAGE_MASTHEAD);
       setShopHomeLivingSettings(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
+      setShopPartnerPricingSettings(DEFAULT_SHOP_PARTNER_PRICING);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
@@ -219,6 +360,8 @@ export const useDatabase = () => {
       setShopSkus([]);
       setShopOrders([]);
       setShopOrderItems([]);
+      setPartnerOrders([]);
+      setPartnerSubOrders([]);
       setMeditationAudioLibrary(DEFAULT_MEDITATION_AUDIO_LIBRARY);
       setMeditationCompositionSettings(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
       setMeditationCalendar(DEFAULT_MEDITATION_CALENDAR);
@@ -472,6 +615,35 @@ export const useDatabase = () => {
     }
   };
 
+  const updatePartnerSubOrderStatus = async (subOrderId, nextStatus) => {
+    try {
+      setSettingsError(null);
+      await DatabaseService.updatePartnerSubOrderStatus(subOrderId, nextStatus);
+      await loadData();
+    } catch (err) {
+      console.error('Error updating partner sub order status:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    }
+  };
+
+  const updateShopPartnerPricingSettings = async (settingsData) => {
+    try {
+      setSavingShopPartnerPricingSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveShopPartnerPricingSettings(settingsData);
+      setShopPartnerPricingSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating shop partner pricing settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingShopPartnerPricingSettings(false);
+    }
+  };
+
   const updateShopHomeLivingSettings = async (settingsData) => {
     try {
       setSavingShopHomeLivingSettings(true);
@@ -611,6 +783,7 @@ export const useDatabase = () => {
     clientDistributionSettings,
     pageMastheadSettings,
     shopHomeLivingSettings,
+    shopPartnerPricingSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -618,6 +791,8 @@ export const useDatabase = () => {
     shopSkus,
     shopOrders,
     shopOrderItems,
+    partnerOrders,
+    partnerSubOrders,
     meditationAudioLibrary,
     meditationCompositionSettings,
     meditationCalendar,
@@ -633,6 +808,7 @@ export const useDatabase = () => {
     savingClientDistributionSettings,
     savingPageMastheadSettings,
     savingShopHomeLivingSettings,
+    savingShopPartnerPricingSettings,
     savingStudentMembershipSettings,
     savingMeditationAudioLibrary,
     savingMeditationCompositionSettings,
@@ -660,7 +836,9 @@ export const useDatabase = () => {
     updateClientDistributionSettings,
     updatePageMastheadSettings,
     updateShopHomeLivingSettings,
+    updateShopPartnerPricingSettings,
     updateStudentMembershipSettings,
+    updatePartnerSubOrderStatus,
     saveShopProduct,
     updateShopOrderStatus,
     updateMeditationAudioLibrary,

@@ -190,6 +190,11 @@
         </view>
       </view>
 
+      <view class="modal-section">
+        <view class="modal-section-kicker">交付方式</view>
+        <view class="modal-section-title">{{activeProduct.productType === 'service' ? '线上交付，无需收货地址' : '实物寄送，需要收货地址'}}</view>
+      </view>
+
       <view class="modal-section" wx:if="{{activeProduct.productType === 'physical'}}">
         <view class="modal-section-kicker">收货地址</view>
         <view class="modal-section-title">寄送到哪里</view>

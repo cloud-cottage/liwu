@@ -95,7 +95,84 @@ const SortHeader = ({ label, active, direction, onClick, align = 'left' }) => (
   </th>
 );
 
-const UserList = ({ users, onEditUser, onManageTags }) => {
+const ADMIN_PHONE = '16601061656';
+const BRAND_LEAD_ROLE_TAG_NAME = '品牌方主理人';
+const BRAND_MEMBER_ROLE_TAG_NAME = '品牌方';
+
+const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '').slice(-11);
+
+const hasRoleTag = (user, labels = []) => {
+  const normalizedLabels = labels.map((label) => String(label || '').trim());
+  return (user.tags || []).some((tag) => normalizedLabels.includes(String(tag.name || tag.label || '').trim()));
+};
+
+const getRoleLabels = (user) => {
+  const labels = [];
+  if (normalizePhone(user.phone || '') === ADMIN_PHONE || hasRoleTag(user, ['超级管理员'])) {
+    labels.push('超级管理员');
+  }
+  if (hasRoleTag(user, ['管理员'])) {
+    labels.push('管理员');
+  }
+  if (hasRoleTag(user, ['代理商'])) {
+    labels.push('代理商');
+  }
+  if (hasRoleTag(user, [BRAND_LEAD_ROLE_TAG_NAME])) {
+    labels.push(BRAND_LEAD_ROLE_TAG_NAME);
+  }
+  if (hasRoleTag(user, [BRAND_MEMBER_ROLE_TAG_NAME])) {
+    labels.push(BRAND_MEMBER_ROLE_TAG_NAME);
+  }
+
+  return labels;
+};
+
+const getInlineTags = (user) => {
+  const roleLabels = getRoleLabels(user);
+  const nextTags = [];
+
+  if (user.isStudent) {
+    nextTags.push({
+      key: '学员',
+      label: '学员',
+      backgroundColor: '#ccfbf1',
+      color: '#0f766e'
+    });
+  }
+
+  roleLabels.forEach((roleLabel) => {
+    nextTags.push({
+      key: roleLabel,
+      label: roleLabel,
+      backgroundColor:
+        roleLabel === '超级管理员' ? '#ffedd5' :
+        roleLabel === '管理员' ? '#ede9fe' :
+        roleLabel === '代理商' ? '#ccfbf1' : '#dbeafe',
+      color:
+        roleLabel === '超级管理员' ? '#7c2d12' :
+        roleLabel === '管理员' ? '#5b21b6' :
+        roleLabel === '代理商' ? '#0f766e' : '#1d4ed8'
+    });
+  });
+
+  (user.tags || []).forEach((tag) => {
+    const tagName = String(tag.name || '').trim();
+    if (!tagName || roleLabels.includes(tagName) || tagName === '学员') {
+      return;
+    }
+
+    nextTags.push({
+      key: `${tag.id || tagName}`,
+      label: tagName,
+      backgroundColor: `${tag.color || '#666'}20`,
+      color: tag.color || '#666'
+    });
+  });
+
+  return nextTags;
+};
+
+const UserList = ({ users, roleView = 'all', onEditUser, onManageTags }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({
     key: 'recentLoginAt',
@@ -104,19 +181,33 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
 
   const filteredUsers = useMemo(() => {
     const normalizedQuery = searchTerm.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return users;
-    }
+    return users.filter((user) => {
+      const normalizedPhone = normalizePhone(user.phone || '');
+      const isSuperAdmin = normalizedPhone === ADMIN_PHONE;
+      const matchesRole =
+        roleView === 'all' ||
+        (roleView === 'admin' && (isSuperAdmin || hasRoleTag(user, ['超级管理员', '管理员']))) ||
+        (roleView === 'agent' && hasRoleTag(user, ['代理商'])) ||
+        (roleView === 'brand' && hasRoleTag(user, [BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME]));
 
-    return users.filter((user) => (
-      (user.name || '').toLowerCase().includes(normalizedQuery) ||
-      (user.noteName || '').toLowerCase().includes(normalizedQuery) ||
-      (user.email || '').toLowerCase().includes(normalizedQuery) ||
-      (user.phone || '').toLowerCase().includes(normalizedQuery) ||
-      (user.id || '').toLowerCase().includes(normalizedQuery) ||
-      String(user.uid || '').includes(normalizedQuery)
-    ));
-  }, [users, searchTerm]);
+      if (!matchesRole) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return (
+        (user.name || '').toLowerCase().includes(normalizedQuery) ||
+        (user.noteName || '').toLowerCase().includes(normalizedQuery) ||
+        (user.email || '').toLowerCase().includes(normalizedQuery) ||
+        (user.phone || '').toLowerCase().includes(normalizedQuery) ||
+        (user.id || '').toLowerCase().includes(normalizedQuery) ||
+        String(user.uid || '').includes(normalizedQuery)
+      );
+    });
+  }, [users, roleView, searchTerm]);
 
   const sortedUsers = useMemo(() => {
     const sorter = SORTABLE_COLUMNS[sortConfig.key];
@@ -146,6 +237,13 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
     });
   }, [filteredUsers, sortConfig]);
 
+  const roleCounts = useMemo(() => ({
+    all: users.length,
+    admin: users.filter((user) => normalizePhone(user.phone || '') === ADMIN_PHONE || hasRoleTag(user, ['超级管理员', '管理员'])).length,
+    agent: users.filter((user) => hasRoleTag(user, ['代理商'])).length,
+    brand: users.filter((user) => hasRoleTag(user, [BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME])).length
+  }), [users]);
+
   const handleSort = (key) => {
     setSortConfig((currentConfig) => (
       currentConfig.key === key
@@ -163,7 +261,12 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
   return (
     <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '20px', boxShadow: 'var(--shadow-sm)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '16px', flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0, fontSize: '18px' }}>用户列表</h3>
+        <div>
+          <h3 style={{ margin: 0, fontSize: '18px' }}>用户列表</h3>
+          <div style={{ marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+            全部 {roleCounts.all} · 管理员 {roleCounts.admin} · 代理商 {roleCounts.agent} · 品牌方 {roleCounts.brand}
+          </div>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f5f5f5', borderRadius: '8px', padding: '8px 12px' }}>
           <Search size={16} color="#666" />
           <input
@@ -183,7 +286,6 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
               <SortHeader label={SORTABLE_COLUMNS.user.label} active={sortConfig.key === 'user'} direction={sortConfig.direction} onClick={() => handleSort('user')} />
               <SortHeader label={SORTABLE_COLUMNS.contact.label} active={sortConfig.key === 'contact'} direction={sortConfig.direction} onClick={() => handleSort('contact')} />
               <SortHeader label={SORTABLE_COLUMNS.balance.label} active={sortConfig.key === 'balance'} direction={sortConfig.direction} onClick={() => handleSort('balance')} />
-              <SortHeader label={SORTABLE_COLUMNS.tagCount.label} active={sortConfig.key === 'tagCount'} direction={sortConfig.direction} onClick={() => handleSort('tagCount')} />
               <SortHeader label={SORTABLE_COLUMNS.recentLoginAt.label} active={sortConfig.key === 'recentLoginAt'} direction={sortConfig.direction} onClick={() => handleSort('recentLoginAt')} />
               <SortHeader label={SORTABLE_COLUMNS.earnedBadgeCount.label} active={sortConfig.key === 'earnedBadgeCount'} direction={sortConfig.direction} onClick={() => handleSort('earnedBadgeCount')} />
               <SortHeader label={SORTABLE_COLUMNS.recentSevenDayPoints.label} active={sortConfig.key === 'recentSevenDayPoints'} direction={sortConfig.direction} onClick={() => handleSort('recentSevenDayPoints')} />
@@ -225,11 +327,20 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <div style={{ fontSize: '14px', fontWeight: 500 }}>{user.name || '未命名用户'}</div>
-                        {user.isStudent && (
-                          <span style={{ fontSize: '11px', color: '#0f766e', backgroundColor: '#ccfbf1', borderRadius: '999px', padding: '2px 8px' }}>
-                            学员
+                        {getInlineTags(user).map((tag) => (
+                          <span
+                            key={`${user.id}-${tag.key}`}
+                            style={{
+                              fontSize: '11px',
+                              color: tag.color,
+                              backgroundColor: tag.backgroundColor,
+                              borderRadius: '999px',
+                              padding: '2px 8px'
+                            }}
+                          >
+                            {tag.label}
                           </span>
-                        )}
+                        ))}
                       </div>
                       {user.noteName && (
                         <div style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
@@ -248,31 +359,6 @@ const UserList = ({ users, onEditUser, onManageTags }) => {
                 <td style={{ padding: '12px', fontSize: '14px' }}>
                   <div style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>{user.balance || 0}</div>
                   <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>当前福豆</div>
-                </td>
-                <td style={{ padding: '12px' }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                    {(user.tags || []).slice(0, 2).map((tag) => (
-                      <span
-                        key={tag.id}
-                        style={{
-                          display: 'inline-block',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          backgroundColor: `${tag.color || '#666'}20`,
-                          color: tag.color || '#666'
-                        }}
-                      >
-                        {tag.name}
-                      </span>
-                    ))}
-                    {(user.tags || []).length > 2 && (
-                      <span style={{ fontSize: '12px', color: '#666' }}>+{user.tags.length - 2}</span>
-                    )}
-                    {(user.tags || []).length === 0 && (
-                      <span style={{ fontSize: '12px', color: '#94a3b8' }}>暂无标签</span>
-                    )}
-                  </div>
                 </td>
                 <td style={{ padding: '12px', fontSize: '13px', color: '#475569', whiteSpace: 'nowrap' }}>
                   {formatDateTime(user.lastActive)}

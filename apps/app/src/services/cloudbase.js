@@ -50,6 +50,7 @@ import {
   getStudentMembershipPlan,
   normalizeStudentMembershipSettings
 } from '@liwu/shared-utils/student-membership-settings.js';
+import { resolveProductTypeByCategoryName } from '@liwu/shared-utils/brand-scope-mapping.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
@@ -567,7 +568,13 @@ const normalizeCurrentUserProfile = (document = {}) => ({
   rewardClaims: normalizeRewardClaims(document.reward_claims || document.rewardClaims),
   nameUpdatedAt: document.name_updated_at || document.nameUpdatedAt || '',
   joinDate: document.join_date || document.joinDate || '',
-  lastActive: document.last_active || document.lastActive || ''
+  lastActive: document.last_active || document.lastActive || '',
+  storeId: document.store_id || document.storeId || '',
+  storeName: document.store_name || document.storeName || '',
+  storeRole: document.store_role || document.storeRole || '',
+  storeOwnerUserId: document.store_owner_user_id || document.storeOwnerUserId || '',
+  storeDescription: document.store_description || document.storeDescription || '',
+  storeContact: document.store_contact || document.storeContact || ''
 });
 
 const getRecordTimestamp = (record = {}) =>
@@ -652,7 +659,7 @@ const normalizeShopProduct = (product = {}) => ({
   subtitle: product.subtitle || '',
   categoryId: product.category_id || product.categoryId || '',
   relatedProductId: product.related_product_id || product.relatedProductId || '',
-  productType: product.product_type || product.productType || 'physical',
+  productType: product.product_type || product.productType || resolveProductTypeByCategoryName(product.category_name || product.categoryName || product.category_id || product.categoryId || ''),
   coverImage: product.cover_image || product.coverImage || '',
   gallery: product.gallery || [],
   showcaseMedia: Array.isArray(product.showcase_media || product.showcaseMedia) ? (product.showcase_media || product.showcaseMedia) : [],
@@ -1628,6 +1635,26 @@ const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
   const baseStatus = normalizeAuthStatus({ session, currentUser });
   const mockPhoneAuthSession = readMockPhoneAuthSession();
 
+  const hasValidMockPhoneSession = Boolean(
+    mockPhoneAuthSession &&
+    normalizePhone(mockPhoneAuthSession.phoneNumber)
+  );
+
+  if (hasValidMockPhoneSession && (!baseStatus.isAuthenticated || baseStatus.isAnonymous || !baseStatus.phoneNumber)) {
+    return {
+      ...baseStatus,
+      hasSession: true,
+      authUid: mockPhoneAuthSession.authUid || baseStatus.authUid,
+      phoneNumber: mockPhoneAuthSession.phoneNumber || baseStatus.phoneNumber,
+      displayName: mockPhoneAuthSession.displayName || baseStatus.displayName,
+      provider: 'mock_phone',
+      loginMethod: 'phone',
+      isAnonymous: false,
+      isAuthenticated: true,
+      isMockSession: true
+    };
+  }
+
   if (baseStatus.isAuthenticated) {
     return baseStatus;
   }
@@ -1741,6 +1768,20 @@ export const userProfileService = {
       const nowIso = new Date().toISOString();
 
       if (!authUid) {
+        const mockPhoneAuthSession = readMockPhoneAuthSession();
+        if (mockPhoneAuthSession?.phoneNumber) {
+          const normalizedMockPhone = normalizePhone(mockPhoneAuthSession.phoneNumber);
+          if (normalizedMockPhone) {
+            const existingResult = await db.collection(collections.users).where({ phone: normalizedMockPhone }).limit(1).get();
+            const existingDocument = getFirstDocument(existingResult, collections.users);
+            if (existingDocument) {
+              const existingProfile = normalizeCurrentUserProfile(existingDocument);
+              clearCurrentProfileCache();
+              return updateCurrentProfileCache(existingProfile);
+            }
+          }
+        }
+
         clearCurrentProfileCache();
         return null;
       }

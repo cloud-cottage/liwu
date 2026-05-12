@@ -45,6 +45,13 @@ import {
   normalizeStudentMembershipSettings,
   toStudentMembershipSettingsPayload
 } from '@liwu/shared-utils/student-membership-settings.js';
+import {
+  DEFAULT_SHOP_PARTNER_PRICING_SETTINGS,
+  normalizeShopPartnerPricingSettings,
+  SHOP_PARTNER_PRICING_SETTINGS_KEY,
+  toShopPartnerPricingSettingsPayload
+} from '@liwu/shared-utils/shop-partner-pricing-settings.js';
+import { BRAND_SCOPE_DEFINITIONS, resolveProductTypeByCategoryName } from '@liwu/shared-utils/brand-scope-mapping.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -155,6 +162,10 @@ export const DEFAULT_STUDENT_MEMBERSHIP_SETTINGS = {
   ...SHARED_DEFAULT_STUDENT_MEMBERSHIP_SETTINGS
 };
 
+export const DEFAULT_SHOP_PARTNER_PRICING = {
+  ...DEFAULT_SHOP_PARTNER_PRICING_SETTINGS
+};
+
 export const MEDITATION_AUDIO_LIBRARY_TYPES = ['bowl', 'greeting', 'nature', 'breath', 'quote', 'goodbye'];
 
 export const DEFAULT_MEDITATION_AUDIO_LIBRARY = {
@@ -254,6 +265,12 @@ const normalizeTag = (tag, categoriesById = new Map()) => {
   };
 };
 
+export const BRAND_LEAD_ROLE_TAG_NAME = '品牌方主理人';
+export const BRAND_MEMBER_ROLE_TAG_NAME = '品牌方';
+const SYSTEM_ROLE_TAG_NAMES = ['超级管理员', '管理员', '代理商', BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME];
+const SUPER_ADMIN_PHONE = '16601061656';
+const LEGACY_SHOP_CATEGORY_NAMES = ['日常仪式', '空间器物', '心意礼物'];
+
 const normalizeShopCategory = (category = {}) => ({
   id: getDocumentId(category),
   name: category.name || '',
@@ -283,6 +300,11 @@ const normalizeShopProduct = (product = {}) => ({
   salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
   limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
   sortOrder: Number(product.sort_order ?? product.sortOrder ?? 0)
+  ,
+  brandId: product.brand_id || product.brandId || '',
+  storeId: product.store_id || product.storeId || '',
+  storeName: product.store_name || product.storeName || '',
+  storeOwnerUserId: product.store_owner_user_id || product.storeOwnerUserId || ''
 });
 
 const normalizeShopSku = (sku = {}) => ({
@@ -371,7 +393,7 @@ const toShopProductPayload = (productData = {}) => ({
   subtitle: productData.subtitle || '',
   category_id: productData.categoryId || '',
   related_product_id: productData.relatedProductId || '',
-  product_type: productData.productType || 'physical',
+  product_type: resolveProductTypeByCategoryName(productData.categoryName || productData.categoryLabel || productData.categoryNameResolved || ''),
   cover_image: productData.coverImage || '',
   gallery: productData.gallery || [],
   showcase_media: productData.showcaseMedia || [],
@@ -386,7 +408,11 @@ const toShopProductPayload = (productData = {}) => ({
   sales_count: Number(productData.salesCount || 0),
   limit_per_user: Number(productData.limitPerUser || 0),
   sort_order: Number(productData.sortOrder || 0),
-  tags: productData.tags || []
+  tags: productData.tags || [],
+  brand_id: productData.brandId || '',
+  store_id: productData.storeId || '',
+  store_name: productData.storeName || '',
+  store_owner_user_id: productData.storeOwnerUserId || ''
 });
 
 const toShopSkuPayload = (skuData = {}, productId) => ({
@@ -408,6 +434,118 @@ const toClientDistributionSettingsPayload = (settingsData = {}) => ({
   preview_url: String(settingsData.previewUrl || '').trim(),
   android_apk_url: String(settingsData.androidApkUrl || '').trim(),
   ios_distribution_url: String(settingsData.iosDistributionUrl || '').trim()
+});
+
+const buildDefaultStoreId = (user = {}) => {
+  const normalizedUid = Number(user.uid || 0);
+  if (normalizedUid > 0) {
+    return `store_${normalizedUid}`;
+  }
+
+  const userId = getDocumentId(user);
+  return userId ? `store_${userId}` : `store_${Date.now()}`;
+};
+
+const buildDefaultStoreName = (user = {}) => {
+  const normalizedName = String(user.store_name || user.storeName || user.name || '').trim();
+  return normalizedName ? `${normalizedName}店铺` : '品牌方店铺';
+};
+
+const isBrandScopeTagName = (value = '') => (
+  BRAND_SCOPE_DEFINITIONS.some((definition) => definition.tagName === String(value || '').trim())
+);
+
+const normalizePartnerOrder = (order = {}) => ({
+  id: getDocumentId(order),
+  orderNo: order.order_no || order.orderNo || '',
+  roleType: order.role_type || order.roleType || 'agent',
+  status: order.status || 'pending_payment',
+  listAmount: Number(order.list_amount ?? order.listAmount ?? 0),
+  payableAmount: Number(order.payable_amount ?? order.payableAmount ?? 0),
+  discountRate: Number(order.discount_rate ?? order.discountRate ?? 1),
+  submittedAt: order.submitted_at || order.submittedAt || order.created_at || order.createdAt || '',
+  note: order.note || ''
+});
+
+const normalizePartnerSubOrder = (order = {}) => ({
+  id: getDocumentId(order),
+  partnerOrderId: order.partner_order_id || order.partnerOrderId || '',
+  subOrderNo: order.sub_order_no || order.subOrderNo || '',
+  brandId: order.brand_id || order.brandId || '',
+  storeId: order.store_id || order.storeId || '',
+  supplier: order.supplier || '',
+  category: order.category || '',
+  status: order.status || 'pending_payment',
+  itemCount: Number(order.item_count ?? order.itemCount ?? 0),
+  payableAmount: Number(order.payable_amount ?? order.payableAmount ?? 0),
+  discountRate: Number(order.discount_rate ?? order.discountRate ?? 1)
+});
+
+const normalizePartnerBrand = (brand = {}) => ({
+  id: getDocumentId(brand),
+  name: brand.name || '',
+  slug: brand.slug || '',
+  status: brand.status || 'active',
+  ownerUserId: brand.owner_user_id || brand.ownerUserId || '',
+  description: brand.description || '',
+  contactName: brand.contact_name || brand.contactName || '',
+  contactPhone: brand.contact_phone || brand.contactPhone || '',
+  contactWechat: brand.contact_wechat || brand.contactWechat || '',
+  shippingAddress: brand.shipping_address || brand.shippingAddress || {},
+  returnAddress: brand.return_address || brand.returnAddress || {},
+  brandScopeTags: Array.isArray(brand.brand_scope_tags || brand.brandScopeTags) ? (brand.brand_scope_tags || brand.brandScopeTags) : [],
+  allowedCategoryNames: Array.isArray(brand.allowed_category_names || brand.allowedCategoryNames) ? (brand.allowed_category_names || brand.allowedCategoryNames) : [],
+  createdAt: brand.created_at || brand.createdAt || '',
+  updatedAt: brand.updated_at || brand.updatedAt || ''
+});
+
+const normalizePartnerBrandMember = (member = {}) => ({
+  id: getDocumentId(member),
+  brandId: member.brand_id || member.brandId || '',
+  userId: member.user_id || member.userId || '',
+  role: member.role || 'member',
+  status: member.status || 'active',
+  invitedByUserId: member.invited_by_user_id || member.invitedByUserId || '',
+  joinedAt: member.joined_at || member.joinedAt || '',
+  createdAt: member.created_at || member.createdAt || ''
+});
+
+const normalizePartnerBrandInvite = (invite = {}) => ({
+  id: getDocumentId(invite),
+  brandId: invite.brand_id || invite.brandId || '',
+  inviteeUserId: invite.invitee_user_id || invite.inviteeUserId || '',
+  inviteePhone: invite.invitee_phone || invite.inviteePhone || '',
+  role: invite.role || 'member',
+  status: invite.status || 'pending',
+  invitedByUserId: invite.invited_by_user_id || invite.invitedByUserId || '',
+  note: invite.note || '',
+  createdAt: invite.created_at || invite.createdAt || '',
+  acceptedAt: invite.accepted_at || invite.acceptedAt || '',
+  expiredAt: invite.expired_at || invite.expiredAt || ''
+});
+
+const toPartnerOrderPayload = (orderData = {}) => ({
+  order_no: orderData.orderNo || '',
+  role_type: orderData.roleType || 'agent',
+  status: orderData.status || 'pending_payment',
+  list_amount: Number(orderData.listAmount || 0),
+  payable_amount: Number(orderData.payableAmount || 0),
+  discount_rate: Number(orderData.discountRate || 1),
+  submitted_at: orderData.submittedAt || new Date().toISOString(),
+  note: orderData.note || ''
+});
+
+const toPartnerSubOrderPayload = (subOrderData = {}, partnerOrderId = '') => ({
+  partner_order_id: partnerOrderId,
+  sub_order_no: subOrderData.subOrderNo || '',
+  brand_id: subOrderData.brandId || '',
+  store_id: subOrderData.storeId || '',
+  supplier: subOrderData.supplier || '',
+  category: subOrderData.category || '',
+  status: subOrderData.status || 'pending_payment',
+  item_count: Number(subOrderData.itemCount || 0),
+  payable_amount: Number(subOrderData.payableAmount || 0),
+  discount_rate: Number(subOrderData.discountRate || 1)
 });
 
 const createWealthHistoryEntry = ({ amount, description, source, relatedUserId = '' }) => ({
@@ -477,6 +615,12 @@ const normalizeUser = (user) => ({
   bio: user.bio || '',
   location: user.location || '',
   age: user.age ?? '',
+  storeId: user.store_id || user.storeId || '',
+  storeName: user.store_name || user.storeName || '',
+  storeRole: user.store_role || user.storeRole || '',
+  storeOwnerUserId: user.store_owner_user_id || user.storeOwnerUserId || '',
+  storeDescription: user.store_description || user.storeDescription || '',
+  storeContact: user.store_contact || user.storeContact || '',
   tags: []
 });
 
@@ -559,6 +703,12 @@ const toUserPayload = (userData) => {
   delete rest.inviteCode;
   delete rest.inviterUserId;
   delete rest.balance;
+  delete rest.storeId;
+  delete rest.storeName;
+  delete rest.storeRole;
+  delete rest.storeOwnerUserId;
+  delete rest.storeDescription;
+  delete rest.storeContact;
   delete rest.created_at;
   delete rest.updated_at;
 
@@ -572,6 +722,13 @@ const toUserPayload = (userData) => {
     ...(userData.isStudent !== undefined ? { is_student: Boolean(userData.isStudent) } : {}),
     ...(userData.inviterUserId !== undefined ? { inviter_user_id: userData.inviterUserId } : {}),
     ...(userData.balance !== undefined ? { balance: Math.max(0, Number(userData.balance) || 0) } : {})
+    ,
+    ...(userData.storeId !== undefined ? { store_id: String(userData.storeId || '').trim() } : {}),
+    ...(userData.storeName !== undefined ? { store_name: String(userData.storeName || '').trim() } : {}),
+    ...(userData.storeRole !== undefined ? { store_role: String(userData.storeRole || '').trim() } : {}),
+    ...(userData.storeOwnerUserId !== undefined ? { store_owner_user_id: String(userData.storeOwnerUserId || '').trim() } : {}),
+    ...(userData.storeDescription !== undefined ? { store_description: String(userData.storeDescription || '').trim() } : {}),
+    ...(userData.storeContact !== undefined ? { store_contact: String(userData.storeContact || '').trim() } : {})
   };
 };
 
@@ -1022,12 +1179,21 @@ class DatabaseService {
         db.collection(collections.shopOrderItems).limit(2000).get()
       ]);
 
+      const normalizedCategories = getDocuments(categoriesResult, collections.shopCategories)
+        .map(normalizeShopCategory)
+        .sort((left, right) => left.sortOrder - right.sortOrder);
+
       return {
-        categories: getDocuments(categoriesResult, collections.shopCategories)
-          .map(normalizeShopCategory)
-          .sort((left, right) => left.sortOrder - right.sortOrder),
+        categories: normalizedCategories,
         products: getDocuments(productsResult, collections.shopProducts)
-          .map(normalizeShopProduct)
+          .map((product) => {
+            const normalizedProduct = normalizeShopProduct(product);
+            const matchedCategory = normalizedCategories.find((category) => category.id === normalizedProduct.categoryId);
+            return {
+              ...normalizedProduct,
+              productType: resolveProductTypeByCategoryName(matchedCategory?.name || '')
+            };
+          })
           .sort((left, right) => {
             if (left.sortOrder !== right.sortOrder) {
               return left.sortOrder - right.sortOrder;
@@ -1050,18 +1216,242 @@ class DatabaseService {
     }
   }
 
-  static async saveShopProduct(productData) {
+  static async getPartnerOrderData() {
     try {
       await ensureAnonymousLogin();
+      const [ordersResult, subOrdersResult] = await Promise.all([
+        db.collection(collections.partnerOrders).limit(500).get(),
+        db.collection(collections.partnerSubOrders).limit(2000).get()
+      ]);
+
+      return {
+        orders: getDocuments(ordersResult, collections.partnerOrders)
+          .map(normalizePartnerOrder)
+          .sort((left, right) => new Date(right.submittedAt || 0).getTime() - new Date(left.submittedAt || 0).getTime()),
+        subOrders: getDocuments(subOrdersResult, collections.partnerSubOrders)
+          .map(normalizePartnerSubOrder)
+      };
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          orders: [],
+          subOrders: []
+        };
+      }
+
+      console.error('Error fetching partner order data:', error);
+      throw error;
+    }
+  }
+
+  static async createPartnerOrder(orderData) {
+    try {
+      await ensureAnonymousLogin();
+      const partnerOrderPayload = {
+        ...toPartnerOrderPayload(orderData),
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      const orderResult = await db.collection(collections.partnerOrders).add(partnerOrderPayload);
+      const partnerOrderId = orderResult.id || orderResult._id;
+
+      for (const subOrder of (orderData.subOrders || [])) {
+        await db.collection(collections.partnerSubOrders).add({
+          ...toPartnerSubOrderPayload(subOrder, partnerOrderId),
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+      }
+
+      return {
+        id: partnerOrderId,
+        ...normalizePartnerOrder({
+          _id: partnerOrderId,
+          ...partnerOrderPayload
+        })
+      };
+    } catch (error) {
+      console.error('Error creating partner order:', error);
+      throw error;
+    }
+  }
+
+  static async updatePartnerSubOrderStatus(subOrderId, nextStatus) {
+    try {
+      await ensureAnonymousLogin();
+
+      let subOrderDocument = getFirstDocument(
+        await db.collection(collections.partnerSubOrders).doc(subOrderId).get(),
+        collections.partnerSubOrders
+      );
+
+      if (!subOrderDocument && subOrderId) {
+        subOrderDocument = getFirstDocument(
+          await db.collection(collections.partnerSubOrders).where({ sub_order_no: subOrderId }).limit(1).get(),
+          collections.partnerSubOrders
+        );
+      }
+
+      if (!subOrderDocument) {
+        throw new Error('合作方子订单不存在');
+      }
+
+      const resolvedSubOrderId = getDocumentId(subOrderDocument);
+
+      await db.collection(collections.partnerSubOrders).doc(resolvedSubOrderId).update({
+        status: nextStatus,
+        updated_at: new Date()
+      });
+
+      return normalizePartnerSubOrder({
+        ...subOrderDocument,
+        _id: resolvedSubOrderId,
+        status: nextStatus
+      });
+    } catch (error) {
+      console.error('Error updating partner sub order status:', error);
+      throw error;
+    }
+  }
+
+  static async getPartnerBrandWorkspaceData() {
+    try {
+      await ensureAnonymousLogin();
+      const [brandsResult, membersResult, invitesResult] = await Promise.all([
+        db.collection(collections.partnerBrands).limit(500).get().catch(() => ({ data: [] })),
+        db.collection(collections.partnerBrandMembers).limit(2000).get().catch(() => ({ data: [] })),
+        db.collection(collections.partnerBrandInvites).limit(2000).get().catch(() => ({ data: [] }))
+      ]);
+
+      return {
+        brands: getDocuments(brandsResult, collections.partnerBrands).map(normalizePartnerBrand),
+        members: getDocuments(membersResult, collections.partnerBrandMembers).map(normalizePartnerBrandMember),
+        invites: getDocuments(invitesResult, collections.partnerBrandInvites).map(normalizePartnerBrandInvite)
+      };
+    } catch (error) {
+      console.error('Error fetching partner brand workspace data:', error);
+      throw error;
+    }
+  }
+
+  static async savePartnerBrand(brandData = {}) {
+    try {
+      await ensureAnonymousLogin();
+      const payload = {
+        name: String(brandData.name || '').trim(),
+        slug: String(brandData.slug || '').trim(),
+        status: brandData.status || 'active',
+        owner_user_id: String(brandData.ownerUserId || '').trim(),
+        description: String(brandData.description || '').trim(),
+        contact_name: String(brandData.contactName || '').trim(),
+        contact_phone: String(brandData.contactPhone || '').trim(),
+        contact_wechat: String(brandData.contactWechat || '').trim(),
+        shipping_address: brandData.shippingAddress || {},
+        return_address: brandData.returnAddress || {},
+        brand_scope_tags: brandData.brandScopeTags || [],
+        allowed_category_names: brandData.allowedCategoryNames || [],
+        updated_at: new Date()
+      };
+
+      if (brandData.id) {
+        await db.collection(collections.partnerBrands).doc(brandData.id).update(payload);
+        return normalizePartnerBrand({ ...brandData, ...payload });
+      }
+
+      const result = await db.collection(collections.partnerBrands).add({
+        ...payload,
+        created_at: new Date()
+      });
+      return normalizePartnerBrand({ ...brandData, ...payload, _id: result.id });
+    } catch (error) {
+      console.error('Error saving partner brand:', error);
+      throw error;
+    }
+  }
+
+  static async invitePartnerBrandMember(inviteData = {}) {
+    try {
+      await ensureAnonymousLogin();
+      const payload = {
+        brand_id: String(inviteData.brandId || '').trim(),
+        invitee_user_id: String(inviteData.inviteeUserId || '').trim(),
+        invitee_phone: String(inviteData.inviteePhone || '').trim(),
+        role: inviteData.role || 'member',
+        status: 'accepted',
+        invited_by_user_id: String(inviteData.invitedByUserId || '').trim(),
+        note: String(inviteData.note || '').trim(),
+        accepted_at: new Date().toISOString(),
+        updated_at: new Date()
+      };
+      const createdInvite = await db.collection(collections.partnerBrandInvites).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      const existingMemberResult = await db.collection(collections.partnerBrandMembers).where({
+        brand_id: payload.brand_id,
+        user_id: payload.invitee_user_id
+      }).limit(1).get().catch(() => ({ data: [] }));
+      const existingMember = getFirstDocument(existingMemberResult, collections.partnerBrandMembers);
+
+      if (!existingMember) {
+        await db.collection(collections.partnerBrandMembers).add({
+          brand_id: payload.brand_id,
+          user_id: payload.invitee_user_id,
+          role: payload.role,
+          status: 'active',
+          invited_by_user_id: payload.invited_by_user_id,
+          joined_at: new Date().toISOString(),
+          created_at: new Date()
+        });
+      }
+
+      return normalizePartnerBrandInvite({ ...payload, _id: createdInvite.id });
+    } catch (error) {
+      console.error('Error inviting partner brand member:', error);
+      throw error;
+    }
+  }
+
+  static async saveShopProduct(productData, options = {}) {
+    try {
+      await ensureAnonymousLogin();
+      const actorUser = options.actorUser || null;
       const skus = Array.isArray(productData.skus) ? productData.skus : [];
       const derivedRewardPointsReturnFrom = skus.length > 0
         ? Math.min(...skus.map((sku) => Math.max(0, Number(sku.rewardPointsReturn || 0))))
         : Math.max(0, Number(productData.rewardPointsReturnFrom || 0));
+      const categoryDocument = productData.categoryId
+        ? getFirstDocument(await db.collection(collections.shopCategories).doc(productData.categoryId).get().catch(() => ({ data: [] })), collections.shopCategories)
+        : null;
+      const resolvedProductType = resolveProductTypeByCategoryName(categoryDocument?.name || productData.categoryNameResolved || '');
+
+      const resolvedStoreId = String(
+        productData.storeId ||
+        actorUser?.storeId ||
+        buildDefaultStoreId(actorUser || {})
+      ).trim();
+      const resolvedStoreName = String(
+        productData.storeName ||
+        actorUser?.storeName ||
+        buildDefaultStoreName(actorUser || {})
+      ).trim();
+      const resolvedStoreOwnerUserId = String(
+        productData.storeOwnerUserId ||
+        actorUser?.storeOwnerUserId ||
+        actorUser?.id ||
+        ''
+      ).trim();
 
       const productPayload = {
         ...toShopProductPayload({
           ...productData,
-          rewardPointsReturnFrom: derivedRewardPointsReturnFrom
+          rewardPointsReturnFrom: derivedRewardPointsReturnFrom,
+          productType: resolvedProductType,
+          storeId: resolvedStoreId,
+          storeName: resolvedStoreName,
+          storeOwnerUserId: resolvedStoreOwnerUserId
         }),
         updated_at: new Date()
       };
@@ -1915,6 +2305,43 @@ class DatabaseService {
     }
   }
 
+  static async getShopPartnerPricingSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: SHOP_PARTNER_PRICING_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_SHOP_PARTNER_PRICING,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_SHOP_PARTNER_PRICING };
+      }
+
+      return normalizeShopPartnerPricingSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_SHOP_PARTNER_PRICING,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching shop partner pricing settings:', error);
+      throw error;
+    }
+  }
+
   static async saveStudentMembershipSettings(settingsData) {
     try {
       await ensureAnonymousLogin();
@@ -1956,6 +2383,51 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving student membership settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveShopPartnerPricingSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: SHOP_PARTNER_PRICING_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toShopPartnerPricingSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeShopPartnerPricingSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeShopPartnerPricingSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving shop partner pricing settings:', error);
       throw error;
     }
   }
@@ -2536,6 +3008,349 @@ class DatabaseService {
     }
   }
 
+  static async ensureSystemRoleTags() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection(collections.tags).limit(1000).get();
+      const existingTags = getDocuments(result, collections.tags);
+      const existingNames = new Set(existingTags.map((tag) => String(tag.name || '').trim()));
+      const roleTagByName = new Map(existingTags.map((tag) => [String(tag.name || '').trim(), tag]));
+
+      for (const roleName of SYSTEM_ROLE_TAG_NAMES) {
+        if (existingNames.has(roleName)) {
+          continue;
+        }
+
+        const createResult = await db.collection(collections.tags).add({
+          name: roleName,
+          color: roleName === '超级管理员' ? '#c2410c' : roleName === '管理员' ? '#7c3aed' : roleName === '代理商' ? '#0f766e' : '#2563eb',
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+        roleTagByName.set(roleName, {
+          _id: createResult.id,
+          name: roleName
+        });
+      }
+
+      const superAdminTag = roleTagByName.get('超级管理员') || await this.getTagByName('超级管理员');
+      if (!superAdminTag?.id && !superAdminTag?._id) {
+        return;
+      }
+
+      const usersResult = await db.collection(collections.users).where({ phone: SUPER_ADMIN_PHONE }).limit(1).get();
+      const superAdminUser = getFirstDocument(usersResult, collections.users);
+      if (!superAdminUser) {
+        return;
+      }
+
+      const userTagLinksResult = await db.collection(collections.userTags).where({
+        user_id: getDocumentId(superAdminUser),
+        tag_id: getDocumentId(superAdminTag)
+      }).limit(1).get();
+
+      if (getDocuments(userTagLinksResult, collections.userTags).length === 0) {
+        await db.collection(collections.userTags).add({
+          user_id: getDocumentId(superAdminUser),
+          tag_id: getDocumentId(superAdminTag),
+          assigned_date: new Date().toISOString().split('T')[0],
+          created_at: new Date()
+        });
+      }
+    } catch (error) {
+      console.error('Error ensuring system role tags:', error);
+      throw error;
+    }
+  }
+
+  static async ensureBrandScopeTagsAndShopCategories() {
+    try {
+      await ensureAnonymousLogin();
+
+      const [tagsResult, categoriesResult, productsResult] = await Promise.all([
+        db.collection(collections.tags).limit(1000).get(),
+        db.collection(collections.shopCategories).limit(500).get(),
+        db.collection(collections.shopProducts).limit(1000).get()
+      ]);
+
+      const existingTags = getDocuments(tagsResult, collections.tags);
+      const existingCategories = getDocuments(categoriesResult, collections.shopCategories);
+      const existingProducts = getDocuments(productsResult, collections.shopProducts);
+
+      const tagByName = new Map(existingTags.map((tag) => [String(tag.name || '').trim(), tag]));
+      const categoryByName = new Map(existingCategories.map((category) => [String(category.name || '').trim(), category]));
+
+      for (const [index, definition] of BRAND_SCOPE_DEFINITIONS.entries()) {
+        if (!tagByName.has(definition.tagName)) {
+          const createTagResult = await db.collection(collections.tags).add({
+            name: definition.tagName,
+            color: definition.color,
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+
+          tagByName.set(definition.tagName, {
+            _id: createTagResult.id,
+            name: definition.tagName,
+            color: definition.color
+          });
+        }
+
+        if (!categoryByName.has(definition.categoryName)) {
+          const createCategoryResult = await db.collection(collections.shopCategories).add({
+            name: definition.categoryName,
+            slug: definition.slug,
+            description: '',
+            status: 'active',
+            sort_order: index + 1,
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+
+          categoryByName.set(definition.categoryName, {
+            _id: createCategoryResult.id,
+            name: definition.categoryName
+          });
+        }
+      }
+
+      for (const product of existingProducts) {
+        const productId = getDocumentId(product);
+        if (!productId) {
+          continue;
+        }
+
+        const productName = String(product.name || '').trim();
+        const productSubtitle = String(product.subtitle || '').trim();
+        const currentCategoryId = product.category_id || product.categoryId || '';
+        const currentCategoryName = existingCategories.find((category) => getDocumentId(category) === currentCategoryId)?.name || '';
+        const searchableText = `${productName} ${productSubtitle} ${currentCategoryName}`.toLowerCase();
+
+        const matchedDefinition = BRAND_SCOPE_DEFINITIONS.find((definition) => (
+          definition.keywords.some((keyword) => searchableText.includes(String(keyword).toLowerCase()))
+        ));
+
+        const fallbackDefinition = BRAND_SCOPE_DEFINITIONS[0];
+        const targetDefinition = matchedDefinition || fallbackDefinition;
+        const targetCategory = categoryByName.get(targetDefinition.categoryName);
+        const targetCategoryId = getDocumentId(targetCategory);
+
+        if (targetCategoryId && currentCategoryId !== targetCategoryId) {
+          await db.collection(collections.shopProducts).doc(productId).update({
+            category_id: targetCategoryId,
+            updated_at: new Date()
+          });
+        }
+      }
+
+      const latestCategoriesResult = await db.collection(collections.shopCategories).limit(500).get();
+      const latestCategories = getDocuments(latestCategoriesResult, collections.shopCategories);
+
+      for (const legacyCategoryName of LEGACY_SHOP_CATEGORY_NAMES) {
+        const legacyCategory = latestCategories.find((category) => String(category.name || '').trim() === legacyCategoryName);
+        if (!legacyCategory) {
+          continue;
+        }
+
+        await db.collection(collections.shopCategories).doc(getDocumentId(legacyCategory)).remove().catch(() => {});
+      }
+    } catch (error) {
+      console.error('Error ensuring brand scope tags and shop categories:', error);
+      throw error;
+    }
+  }
+
+  static async ensureBrandRoleModel() {
+    try {
+      await ensureAnonymousLogin();
+
+      const [usersResult, tagsResult, userTagsResult, productsResult, brandsResult, brandMembersResult] = await Promise.all([
+        db.collection(collections.users).limit(2000).get(),
+        db.collection(collections.tags).limit(1000).get(),
+        db.collection(collections.userTags).limit(10000).get(),
+        db.collection(collections.shopProducts).limit(1000).get(),
+        db.collection(collections.partnerBrands).limit(500).get().catch(() => ({ data: [] })),
+        db.collection(collections.partnerBrandMembers).limit(2000).get().catch(() => ({ data: [] }))
+      ]);
+
+      const users = getDocuments(usersResult, collections.users);
+      const tags = getDocuments(tagsResult, collections.tags);
+      const userTagLinks = getDocuments(userTagsResult, collections.userTags);
+      const products = getDocuments(productsResult, collections.shopProducts);
+      const brands = getDocuments(brandsResult, collections.partnerBrands);
+      const brandMembers = getDocuments(brandMembersResult, collections.partnerBrandMembers);
+
+      const tagByName = new Map(tags.map((tag) => [String(tag.name || '').trim(), tag]));
+      const leadTag = tagByName.get(BRAND_LEAD_ROLE_TAG_NAME);
+      const memberTag = tagByName.get(BRAND_MEMBER_ROLE_TAG_NAME);
+      if (!leadTag || !memberTag) {
+        return;
+      }
+
+      const linksByUserId = new Map();
+      userTagLinks.forEach((link) => {
+        const userId = link.user_id || link.userId || '';
+        if (!userId) {
+          return;
+        }
+        if (!linksByUserId.has(userId)) {
+          linksByUserId.set(userId, []);
+        }
+        linksByUserId.get(userId).push(link);
+      });
+
+      const uid102User = users.find((user) => Number(user.uid || 0) === 102) || null;
+      const defaultStoreOwner = uid102User || users.find((user) => getDocumentId(user)) || null;
+
+      for (const user of users) {
+        const userId = getDocumentId(user);
+        if (!userId) {
+          continue;
+        }
+
+        const userLinks = linksByUserId.get(userId) || [];
+        const tagNames = new Set(
+          userLinks
+            .map((link) => tags.find((tag) => getDocumentId(tag) === (link.tag_id || link.tagId || '')))
+            .filter(Boolean)
+            .map((tag) => String(tag.name || '').trim())
+        );
+
+        const hasLegacyBrandRole = tagNames.has(BRAND_MEMBER_ROLE_TAG_NAME);
+        const hasLeadRole = tagNames.has(BRAND_LEAD_ROLE_TAG_NAME);
+        const hasBrandScope = [...tagNames].some((tagName) => isBrandScopeTagName(tagName));
+        const shouldBeLead = Number(user.uid || 0) === 102 || (hasLegacyBrandRole && hasBrandScope);
+
+        if (shouldBeLead && !hasLeadRole) {
+          await db.collection(collections.userTags).add({
+            user_id: userId,
+            tag_id: getDocumentId(leadTag),
+            assigned_date: new Date().toISOString().split('T')[0],
+            created_at: new Date()
+          });
+        }
+
+        if (shouldBeLead && hasLegacyBrandRole) {
+          const removableMemberLinks = userLinks.filter((link) => (link.tag_id || link.tagId || '') === getDocumentId(memberTag));
+          for (const removableLink of removableMemberLinks) {
+            const linkId = getDocumentId(removableLink);
+            if (linkId) {
+              await db.collection(collections.userTags).doc(linkId).remove().catch(() => {});
+            }
+          }
+        }
+
+        if (shouldBeLead) {
+          const nextStoreId = String(user.store_id || user.storeId || buildDefaultStoreId(user)).trim();
+          const nextStoreName = String(user.store_name || user.storeName || buildDefaultStoreName(user)).trim();
+          const nextStoreOwnerUserId = String(user.store_owner_user_id || user.storeOwnerUserId || userId).trim();
+
+          await db.collection(collections.users).doc(userId).update({
+            store_id: nextStoreId,
+            store_name: nextStoreName,
+            store_role: 'lead',
+            store_owner_user_id: nextStoreOwnerUserId,
+            updated_at: new Date()
+          }).catch(() => {});
+        } else if (hasLegacyBrandRole) {
+          const ownerUser = defaultStoreOwner || user;
+          const nextStoreId = String(user.store_id || user.storeId || buildDefaultStoreId(ownerUser)).trim();
+          const nextStoreName = String(user.store_name || user.storeName || buildDefaultStoreName(ownerUser)).trim();
+          const nextStoreOwnerUserId = String(user.store_owner_user_id || user.storeOwnerUserId || getDocumentId(ownerUser)).trim();
+
+          await db.collection(collections.users).doc(userId).update({
+            store_id: nextStoreId,
+            store_name: nextStoreName,
+            store_role: 'member',
+            store_owner_user_id: nextStoreOwnerUserId,
+            updated_at: new Date()
+          }).catch(() => {});
+        }
+      }
+
+      if (defaultStoreOwner) {
+        const ownerStoreId = String(defaultStoreOwner.store_id || defaultStoreOwner.storeId || buildDefaultStoreId(defaultStoreOwner)).trim();
+        const ownerStoreName = String(defaultStoreOwner.store_name || defaultStoreOwner.storeName || buildDefaultStoreName(defaultStoreOwner)).trim();
+        const ownerStoreUserId = String(defaultStoreOwner.store_owner_user_id || defaultStoreOwner.storeOwnerUserId || getDocumentId(defaultStoreOwner)).trim();
+
+        let existingBrand = brands.find((brand) => String(brand.owner_user_id || brand.ownerUserId || '').trim() === ownerStoreUserId);
+        if (!existingBrand) {
+          const createBrandResult = await db.collection(collections.partnerBrands).add({
+            name: ownerStoreName,
+            slug: ownerStoreId,
+            status: 'active',
+            owner_user_id: ownerStoreUserId,
+            description: defaultStoreOwner.store_description || defaultStoreOwner.storeDescription || '',
+            contact_name: defaultStoreOwner.name || '',
+            contact_phone: defaultStoreOwner.phone || '',
+            contact_wechat: '',
+            shipping_address: {},
+            return_address: {},
+            brand_scope_tags: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.tagName),
+            allowed_category_names: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.categoryName),
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+          existingBrand = { _id: createBrandResult.id, owner_user_id: ownerStoreUserId };
+        }
+
+        const existingOwnerMember = brandMembers.find((member) => (
+          String(member.brand_id || member.brandId || '').trim() === getDocumentId(existingBrand) &&
+          String(member.user_id || member.userId || '').trim() === ownerStoreUserId
+        ));
+        if (!existingOwnerMember) {
+          await db.collection(collections.partnerBrandMembers).add({
+            brand_id: getDocumentId(existingBrand),
+            user_id: ownerStoreUserId,
+            role: 'owner',
+            status: 'active',
+            invited_by_user_id: ownerStoreUserId,
+            joined_at: new Date().toISOString(),
+            created_at: new Date()
+          }).catch(() => {});
+        }
+
+        for (const product of products) {
+          const productId = getDocumentId(product);
+          if (!productId) {
+            continue;
+          }
+
+          const needsStoreBinding =
+            !String(product.store_id || product.storeId || '').trim() ||
+            !String(product.store_owner_user_id || product.storeOwnerUserId || '').trim();
+
+          if (!needsStoreBinding) {
+            continue;
+          }
+
+          await db.collection(collections.shopProducts).doc(productId).update({
+            store_id: ownerStoreId,
+            store_name: ownerStoreName,
+            store_owner_user_id: ownerStoreUserId,
+            brand_id: getDocumentId(existingBrand),
+            updated_at: new Date()
+          }).catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.error('Error ensuring brand role model:', error);
+      throw error;
+    }
+  }
+
+  static async getTagByName(tagName = '') {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection(collections.tags).where({ name: tagName }).limit(1).get();
+      const document = getFirstDocument(result, collections.tags);
+      return document ? normalizeTag(document) : null;
+    } catch (error) {
+      console.error('Error fetching tag by name:', error);
+      throw error;
+    }
+  }
+
   static async createCategory(categoryData) {
     try {
       await ensureAnonymousLogin();
@@ -2706,6 +3521,56 @@ class DatabaseService {
       }
     } catch (error) {
       console.error('Error updating user tags:', error);
+      throw error;
+    }
+  }
+
+  static async getPartnerUsers() {
+    try {
+      await ensureAnonymousLogin();
+      const [usersResult, tagsResult, categoriesResult, userTagsResult] = await Promise.all([
+        db.collection(collections.users).limit(2000).get(),
+        db.collection(collections.tags).limit(1000).get(),
+        db.collection(collections.tagCategories).limit(1000).get(),
+        db.collection(collections.userTags).limit(10000).get()
+      ]);
+
+      return attachTagsToUsers(
+        getDocuments(usersResult, collections.users),
+        getDocuments(tagsResult, collections.tags),
+        getDocuments(categoriesResult, collections.tagCategories),
+        getDocuments(userTagsResult, collections.userTags)
+      ).users;
+    } catch (error) {
+      console.error('Error fetching partner users:', error);
+      throw error;
+    }
+  }
+
+  static async assignUserToStore(userId, storeData = {}) {
+    try {
+      await ensureAnonymousLogin();
+
+      const memberTag = await this.getTagByName(BRAND_MEMBER_ROLE_TAG_NAME);
+      if (!memberTag?.id) {
+        throw new Error('缺少品牌方成员标签');
+      }
+
+      const userTags = await this.getUserTags(userId);
+      const hasBrandMemberRole = userTags.some((tag) => String(tag.name || '').trim() === BRAND_MEMBER_ROLE_TAG_NAME);
+      if (!hasBrandMemberRole) {
+        await this.assignTagToUser(userId, memberTag.id);
+      }
+
+      await db.collection(collections.users).doc(userId).update({
+        store_id: String(storeData.storeId || '').trim(),
+        store_name: String(storeData.storeName || '').trim(),
+        store_role: 'member',
+        store_owner_user_id: String(storeData.storeOwnerUserId || '').trim(),
+        updated_at: new Date()
+      });
+    } catch (error) {
+      console.error('Error assigning user to store:', error);
       throw error;
     }
   }

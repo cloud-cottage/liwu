@@ -1,15 +1,12 @@
-const { getProfilePageData, saveLocalProfile } = require('../../utils/profile')
-const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
+const { getProfilePageData, saveLocalProfile } = require('../../../utils/profile')
 
 Page({
   data: {
     loading: true,
     saving: false,
-    showEditor: false,
     profile: null,
-    recentTags: [],
-    recentWealthEntries: [],
-    awareCount: 0,
+    profileInitial: '悟',
+    hasBoundPhone: false,
     form: {
       name: '',
       phone: '',
@@ -19,10 +16,6 @@ Page({
 
   onLoad() {
     void this.loadPageData()
-  },
-
-  onShow() {
-    syncMiniTabBar(this, '/pages/profile/index')
   },
 
   async onPullDownRefresh() {
@@ -40,19 +33,16 @@ Page({
         profile: pageData.profile,
         profileInitial: (pageData.profile.name || '悟').slice(0, 1),
         hasBoundPhone: Boolean(pageData.profile.phone),
-        recentTags: pageData.tags,
-        recentWealthEntries: pageData.recentWealthEntries,
-        awareCount: pageData.awareCount,
         form: {
-          name: pageData.profile.name,
-          phone: pageData.profile.phone,
-          bio: pageData.profile.bio
+          name: pageData.profile.name || '',
+          phone: pageData.profile.phone || '',
+          bio: pageData.profile.bio || ''
         }
       })
     } catch (error) {
       this.setData({ loading: false })
       wx.showToast({
-        title: error.message || '资料加载失败',
+        title: error.message || '个人信息加载失败',
         icon: 'none'
       })
     }
@@ -62,12 +52,6 @@ Page({
     const { field } = event.currentTarget.dataset
     this.setData({
       [`form.${field}`]: event.detail.value
-    })
-  },
-
-  handleToggleEditor() {
-    this.setData({
-      showEditor: !this.data.showEditor
     })
   },
 
@@ -84,7 +68,8 @@ Page({
           ...this.data.profile,
           ...nextProfile
         },
-        profileInitial: (nextProfile.name || '悟').slice(0, 1)
+        profileInitial: (nextProfile.name || '悟').slice(0, 1),
+        hasBoundPhone: Boolean(nextProfile.phone)
       })
       wx.showToast({
         title: '已保存',
@@ -96,33 +81,6 @@ Page({
         title: error.message || '保存失败',
         icon: 'none'
       })
-    }
-  },
-
-  handleGoShop() {
-    openMiniRoute('/pages/shop/index')
-  },
-
-  handleGoAddresses() {
-    openMiniRoute('/pages/profile/addresses/index')
-  },
-
-  handleGoOrders() {
-    openMiniRoute('/pages/shop/orders/index')
-  },
-
-  handleShowAlbumSoon() {
-    openMiniRoute('/pages/profile/album/index')
-  },
-
-  handleOpenProfileInfo() {
-    openMiniRoute('/pages/profile/info/index')
-  },
-
-  onShareAppMessage() {
-    return {
-      title: '我的理悟小程序',
-      path: '/pages/profile/index'
     }
   }
 })

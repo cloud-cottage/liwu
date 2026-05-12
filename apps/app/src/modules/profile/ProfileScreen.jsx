@@ -12,6 +12,19 @@ const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/
 
 const isValidPhoneNumber = (value = '') => /^(?:\+?86)?1\d{10}$/.test(normalizePhoneInput(value));
 
+const readMockPhoneAuthSession = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem('liwu_mock_phone_auth_session');
+    return rawValue ? JSON.parse(rawValue) : null;
+  } catch {
+    return null;
+  }
+};
+
 const getDisplayName = (authStatus, currentUser) => {
   if (authStatus?.isAnonymous) {
     return '游客';
@@ -402,6 +415,16 @@ const Profile = () => {
     refreshData,
     syncAuthState
   } = useCloudAwareness();
+  const mockPhoneAuthSession = readMockPhoneAuthSession();
+  const effectiveAuthStatus = authStatus?.isAuthenticated || mockPhoneAuthSession?.phoneNumber
+    ? {
+        ...authStatus,
+        isAuthenticated: true,
+        isAnonymous: false,
+        phoneNumber: mockPhoneAuthSession?.phoneNumber || authStatus?.phoneNumber || '',
+        displayName: mockPhoneAuthSession?.displayName || authStatus?.displayName || ''
+      }
+    : authStatus;
   const { equippedBadge } = useBadgeState();
 
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -624,7 +647,7 @@ const Profile = () => {
     }
   };
 
-  const boundPhoneNumber = currentUser?.phone || authStatus.phoneNumber || '';
+  const boundPhoneNumber = currentUser?.phone || effectiveAuthStatus.phoneNumber || '';
   const hasBoundPhone = Boolean(String(boundPhoneNumber || '').trim());
 
   return (
@@ -730,7 +753,7 @@ const Profile = () => {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <h2 style={{ fontSize: '20px', margin: 0, fontFamily: 'var(--font-serif)' }}>
-                  {getDisplayName(authStatus, currentUser)}
+                  {getDisplayName(effectiveAuthStatus, currentUser || { name: mockPhoneAuthSession?.displayName || '' })}
                 </h2>
                 <button
                   type="button"
@@ -814,7 +837,7 @@ const Profile = () => {
           </div>
         )}
 
-        {!authStatus.isAuthenticated && (
+        {!effectiveAuthStatus.isAuthenticated && (
           <div>
             <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', marginBottom: '10px' }}>
               登录后可保存账号状态

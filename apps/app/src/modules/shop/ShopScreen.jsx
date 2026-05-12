@@ -21,9 +21,9 @@ const EMPTY_ADDRESS = {
 };
 
 const PRODUCT_TYPE_LABELS = {
-  physical: '实物寄送',
+  physical: '实物寄送，需要收货地址',
   digital: '数字内容',
-  service: '服务体验'
+  service: '线上交付，无需收货地址'
 };
 
 const PRODUCT_STATUS_LABELS = {
@@ -341,6 +341,14 @@ const ProductModal = ({
               <strong>{selectedSku?.rewardPointsReturn || 0}</strong>
             </div>
           </div>
+
+          <section className="shop-modal__section">
+            <div className="shop-modal__section-head">
+              <Sparkles size={16} />
+              <span>交付方式</span>
+            </div>
+            <div className="shop-modal__intro">{PRODUCT_TYPE_LABELS[product.productType] || PRODUCT_TYPE_LABELS.physical}</div>
+          </section>
 
           {product.relatedProduct && (
             <section className="shop-modal__section">

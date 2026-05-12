@@ -26,9 +26,9 @@ const EMPTY_ADDRESS = {
 }
 
 const PRODUCT_TYPE_LABELS = {
-  physical: '实物寄送',
+  physical: '实物寄送，需要收货地址',
   digital: '数字内容',
-  service: '服务体验'
+  service: '线上交付，无需收货地址'
 }
 
 const PRODUCT_STATUS_LABELS = {

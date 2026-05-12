@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
       }
     },
     server: {
+      port: 5175,
       proxy: {
         '/api/cloudbase-proxy': {
           target: 'https://liwu.yunduojihua.com',

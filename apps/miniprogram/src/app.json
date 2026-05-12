@@ -6,6 +6,7 @@
     "pages/shop/orders/index",
     "pages/aware/index",
     "pages/profile/index",
+    "pages/profile/info/index",
     "pages/profile/album/index",
     "pages/profile/addresses/index"
   ],

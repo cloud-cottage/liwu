@@ -33,7 +33,11 @@ if (typeof window !== 'undefined') {
   addCSSReset();
 }
 
-const Dashboard = () => {
+const Dashboard = ({
+  embedded = false,
+  activeTabOverride = null,
+  onActiveTabChange = null
+}) => {
   const readInitialSidebarState = () => {
     if (typeof window === 'undefined') {
       return true;
@@ -46,9 +50,12 @@ const Dashboard = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [internalActiveTab, setInternalActiveTab] = useState('overview');
   const [activeUserSection, setActiveUserSection] = useState('users');
+  const [activeUserRoleView, setActiveUserRoleView] = useState('all');
   const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarState);
+  const activeTab = activeTabOverride ?? internalActiveTab;
+  const setActiveTab = onActiveTabChange ?? setInternalActiveTab;
   
   const {
     users,
@@ -65,6 +72,7 @@ const Dashboard = () => {
     clientDistributionSettings,
     pageMastheadSettings,
     shopHomeLivingSettings,
+    shopPartnerPricingSettings,
     studentMembershipSettings,
     awarenessTagOverview,
     shopCategories,
@@ -72,6 +80,8 @@ const Dashboard = () => {
     shopSkus,
     shopOrders,
     shopOrderItems,
+    partnerOrders,
+    partnerSubOrders,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
@@ -83,6 +93,7 @@ const Dashboard = () => {
     savingClientDistributionSettings,
     savingPageMastheadSettings,
     savingShopHomeLivingSettings,
+    savingShopPartnerPricingSettings,
     savingStudentMembershipSettings,
     loading,
     error,
@@ -102,7 +113,9 @@ const Dashboard = () => {
     updateClientDistributionSettings,
     updatePageMastheadSettings,
     updateShopHomeLivingSettings,
+    updateShopPartnerPricingSettings,
     updateStudentMembershipSettings,
+    updatePartnerSubOrderStatus,
     saveShopProduct,
     updateShopOrderStatus,
     meditationAudioLibrary,
@@ -278,11 +291,27 @@ const Dashboard = () => {
     }
   };
 
+  const handleSaveShopPartnerPricingSettings = async (settingsDraft) => {
+    try {
+      await updateShopPartnerPricingSettings(settingsDraft);
+    } catch (err) {
+      console.error('Failed to save shop partner pricing settings:', err);
+    }
+  };
+
   const handleUpdateShopOrderStatus = async (orderId, nextStatus) => {
     try {
       await updateShopOrderStatus(orderId, nextStatus);
     } catch (err) {
       console.error('Failed to update shop order status:', err);
+    }
+  };
+
+  const handleUpdatePartnerSubOrderStatus = async (subOrderId, nextStatus) => {
+    try {
+      await updatePartnerSubOrderStatus(subOrderId, nextStatus);
+    } catch (err) {
+      console.error('Failed to update partner sub order status:', err);
     }
   };
 
@@ -418,6 +447,7 @@ const Dashboard = () => {
       overflow: 'hidden',
     }}>
       {/* Sidebar */}
+      {!embedded && (
       <div style={{
         width: sidebarOpen ? '240px' : '0px',
         minWidth: sidebarOpen ? '240px' : '0px',
@@ -488,10 +518,12 @@ const Dashboard = () => {
           </button>
         </div>
       </div>
+      )}
 
       {/* Main Content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, width: '100%' }}>
         {/* Top bar */}
+        {!embedded && (
         <div style={{
           position: 'sticky', top: 0, zIndex: 30,
           display: 'flex', alignItems: 'center', gap: '12px',
@@ -516,8 +548,9 @@ const Dashboard = () => {
             {NAV_ITEMS.find(n => n.key === activeTab)?.label ?? '管理后台'}
           </span>
         </div>
+        )}
 
-        <div style={{ flex: 1, padding: '28px 24px', overflowY: 'auto' }}>
+        <div style={{ flex: 1, padding: embedded ? '0' : '28px 24px', overflowY: embedded ? 'visible' : 'auto' }}>
         {/* Loading State */}
         {loading && (
           <div style={{ 
@@ -666,12 +699,43 @@ const Dashboard = () => {
                 >
                   {item.label}
                 </button>
-              ))}
+                ))}
             </div>
 
             {activeUserSection === 'users' && (
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {[
+                  { key: 'all', label: '全部' },
+                  { key: 'agent', label: '代理商' },
+                  { key: 'brand', label: '品牌方' },
+                  { key: 'admin', label: '管理员' }
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setActiveUserRoleView(item.key)}
+                    style={{
+                      border: 'none',
+                      borderRadius: '999px',
+                      backgroundColor: activeUserRoleView === item.key ? '#111827' : '#fff',
+                      color: activeUserRoleView === item.key ? '#fff' : '#334155',
+                      boxShadow: 'var(--shadow-sm)',
+                      padding: '10px 16px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {activeUserSection === 'users' && (
               <UserList 
-                users={users} 
+                users={users}
+                roleView={activeUserRoleView}
                 onEditUser={handleEditUser}
                 onManageTags={handleManageTags}
               />
@@ -713,11 +777,14 @@ const Dashboard = () => {
             skus={shopSkus}
             orders={shopOrders}
             orderItems={shopOrderItems}
+            partnerOrders={partnerOrders}
+            partnerSubOrders={partnerSubOrders}
             shopHomeLivingSettings={shopHomeLivingSettings}
             savingShopHomeLivingSettings={savingShopHomeLivingSettings}
             onSaveProduct={handleSaveShopProduct}
             onSaveShopHomeLivingSettings={handleSaveShopHomeLivingSettings}
             onUpdateOrderStatus={handleUpdateShopOrderStatus}
+            onUpdatePartnerSubOrderStatus={handleUpdatePartnerSubOrderStatus}
           />
         )}
 
@@ -750,6 +817,7 @@ const Dashboard = () => {
             pageMastheadSettings={pageMastheadSettings}
             meditationSettings={meditationSettings}
             badgeSettings={badgeSettings}
+            shopPartnerPricingSettings={shopPartnerPricingSettings}
             error={settingsError}
             saving={savingThemeSettings}
             savingAwarenessDisplay={savingAwarenessDisplaySettings}
@@ -759,6 +827,7 @@ const Dashboard = () => {
             savingPageMasthead={savingPageMastheadSettings}
             savingMeditationSettings={savingMeditationSettings}
             savingBadgeSettings={savingBadgeSettings}
+            savingShopPartnerPricing={savingShopPartnerPricingSettings}
             onSave={handleSaveThemeSettings}
             onSaveAwarenessDisplay={handleSaveAwarenessDisplaySettings}
             onSaveBrandCarousel={handleSaveBrandCarouselSettings}
@@ -767,6 +836,7 @@ const Dashboard = () => {
             onSavePageMasthead={handleSavePageMastheadSettings}
             onSaveMeditationSettings={handleSaveMeditationSettings}
             onSaveBadgeSettings={handleSaveBadgeSettings}
+            onSaveShopPartnerPricing={handleSaveShopPartnerPricingSettings}
           />
         )}
 

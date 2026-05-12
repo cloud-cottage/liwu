@@ -16,7 +16,7 @@ import { ThemeProvider } from '@app/context/ThemeContext.jsx'
 import { WealthProvider } from '@app/context/WealthContext.jsx'
 import WebExperienceBanner from './components/WebExperienceBanner.jsx'
 import DownloadPage from './pages/DownloadPage.jsx'
-import WebAdminPage from './pages/WebAdminPage.jsx'
+import PartnerPortalPage from './pages/PartnerPortalPage.jsx'
 import '@app/App.css'
 
 const Layout = () => (
@@ -43,8 +43,9 @@ const App = () => (
       <CloudAwarenessProvider>
         <Router>
           <Routes>
-            <Route path="/admin" element={<WebAdminPage />} />
-            <Route path="/admin/*" element={<WebAdminPage />} />
+            <Route path="/admin" element={<Navigate to="/partner" replace />} />
+            <Route path="/admin/*" element={<Navigate to="/partner" replace />} />
+            <Route path="/partner" element={<PartnerPortalPage />} />
             <Route path="/" element={<Layout />}>
             <Route index element={<WebPrimaryPage><Home /></WebPrimaryPage>} />
             <Route path="m" element={<MeditationHome />} />

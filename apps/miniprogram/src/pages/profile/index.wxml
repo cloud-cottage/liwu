@@ -20,7 +20,7 @@
   <view class="section-card profile-card">
     <view class="profile-card-top">
       <view class="profile-head">
-        <view class="profile-avatar">{{profileInitial || '悟'}}</view>
+        <view class="profile-avatar" bindtap="handleOpenProfileInfo">{{profileInitial || '悟'}}</view>
         <view class="profile-meta">
           <view class="profile-name-row">
             <view class="profile-name">{{profile.name || '我的'}}</view>

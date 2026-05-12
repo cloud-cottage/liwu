@@ -21,6 +21,10 @@ const DEFAULT_SHOP_HOME_LIVING_CARDS = Array.from({ length: 6 }, (_, index) => (
   height: 700
 }))
 
+const resolveProductTypeByCategoryName = (categoryName = '') => (
+  String(categoryName || '').trim() === '课程' ? 'service' : 'physical'
+)
+
 const parseNaturalNumber = (value = '') => {
   const normalizedValue = String(value || '').trim()
   if (!/^\d+$/.test(normalizedValue)) {
@@ -70,7 +74,7 @@ const normalizeProduct = (product = {}) => ({
   subtitle: product.subtitle || '',
   categoryId: product.category_id || product.categoryId || '',
   relatedProductId: product.related_product_id || product.relatedProductId || '',
-  productType: product.product_type || product.productType || 'physical',
+  productType: product.product_type || product.productType || resolveProductTypeByCategoryName(product.category_name || product.categoryName || product.category_id || product.categoryId || ''),
   coverImage: product.cover_image || product.coverImage || '',
   description: product.description || '',
   status: product.status || 'draft',

@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Tag as TagIcon, Trash2, X } from 'lucide-react';
+import { X } from 'lucide-react';
+
+const BRAND_LEAD_ROLE_TAG_NAME = '品牌方主理人';
+const BRAND_MEMBER_ROLE_TAG_NAME = '品牌方';
+const SYSTEM_ROLE_TAG_NAMES = ['超级管理员', '管理员', '代理商', BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME];
+const BRAND_SCOPE_TAG_NAMES = ['禅品', '文品', '香品', '茶品', '理悟课程'];
+const SUPER_ADMIN_PHONE = '16601061656';
+const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '').slice(-11);
 
 const TagManager = ({ user, isOpen, onClose, allTags, tagCategories, onUpdateUserTags }) => {
   const [userTags, setUserTags] = useState(() => user?.tags || []);
@@ -10,41 +17,134 @@ const TagManager = ({ user, isOpen, onClose, allTags, tagCategories, onUpdateUse
     [tagCategories]
   );
 
-  const availableTags = useMemo(() => {
-    const assignedTagIds = new Set(userTags.map((tag) => tag.id));
-    return allTags.filter((tag) => !assignedTagIds.has(tag.id));
-  }, [allTags, userTags]);
-
-  const handleAddTag = () => {
-    if (!selectedTagId) {
-      return;
-    }
-
-    const tagToAdd = allTags.find((tag) => tag.id === selectedTagId);
-    if (!tagToAdd) {
-      return;
-    }
-
-    setUserTags((currentTags) => [
-      ...currentTags,
-      {
-        ...tagToAdd,
-        assignedDate: new Date().toISOString().split('T')[0]
+  const otherTags = useMemo(() => {
+    const nonRoleTags = allTags.filter((tag) => !SYSTEM_ROLE_TAG_NAMES.includes(String(tag?.name || '').trim()));
+    const uniqueByName = new Map();
+    nonRoleTags.forEach((tag) => {
+      const tagName = String(tag?.name || '').trim();
+      if (tagName && !uniqueByName.has(tagName)) {
+        uniqueByName.set(tagName, tag);
       }
-    ]);
-    setSelectedTagId('');
+    });
+    return [...uniqueByName.values()].sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN'));
+  }, [allTags]);
+
+  const roleTags = useMemo(() => {
+    const uniqueByName = new Map();
+    allTags.forEach((tag) => {
+      const tagName = String(tag?.name || '').trim();
+      if (SYSTEM_ROLE_TAG_NAMES.includes(tagName) && !uniqueByName.has(tagName)) {
+        uniqueByName.set(tagName, tag);
+      }
+    });
+    return [...uniqueByName.values()];
+  }, [allTags]);
+
+  const assignedRoleTagIds = useMemo(
+    () => new Set(userTags.filter((tag) => SYSTEM_ROLE_TAG_NAMES.includes(String(tag.name || '').trim())).map((tag) => tag.id)),
+    [userTags]
+  );
+
+  const isSuperAdminUser = normalizePhone(user?.phone || '') === SUPER_ADMIN_PHONE;
+
+  const toggleTag = (tag) => {
+    if (!tag?.id) {
+      return;
+    }
+
+    const tagName = String(tag.name || '').trim();
+    if (isSuperAdminUser && tagName === '超级管理员') {
+      return;
+    }
+
+    setUserTags((currentTags) => {
+      const exists = currentTags.some((item) => item.id === tag.id);
+      if (exists) {
+        return currentTags.filter((item) => item.id !== tag.id);
+      }
+
+      return [
+        ...currentTags,
+        {
+          ...tag,
+          assignedDate: new Date().toISOString().split('T')[0]
+        }
+      ];
+    });
   };
 
-  const handleDeleteTag = (tagId) => {
-    setUserTags((currentTags) => currentTags.filter((tag) => tag.id !== tagId));
+  const handleToggleRoleTag = (tag) => {
+    if (!tag?.id) {
+      return;
+    }
+
+    if (isSuperAdminUser && String(tag.name || '').trim() === '超级管理员') {
+      return;
+    }
+
+    setUserTags((currentTags) => {
+      const exists = currentTags.some((item) => item.id === tag.id);
+      if (exists) {
+        return currentTags.filter((item) => item.id !== tag.id);
+      }
+
+      return [
+        ...currentTags,
+        {
+          ...tag,
+          assignedDate: new Date().toISOString().split('T')[0]
+        }
+      ];
+    });
   };
 
   const handleSaveChanges = async () => {
+    const hasBrandLeadRole = userTags.some((tag) => String(tag.name || '').trim() === BRAND_LEAD_ROLE_TAG_NAME);
+    const hasBrandScope = userTags.some((tag) => BRAND_SCOPE_TAG_NAMES.includes(String(tag.name || '').trim()));
+
+    if (hasBrandLeadRole && !hasBrandScope) {
+      window.alert('品牌方主理人至少需要分配一个二级标签：禅品 / 文品 / 香品 / 茶品 / 理悟课程。');
+      return;
+    }
+
     await onUpdateUserTags(user.id, userTags);
     onClose();
   };
 
   const getCategoryName = (categoryId) => categoriesById.get(categoryId)?.name || '未分类';
+
+  const renderTagChips = (tags) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+      {tags.map((tag) => {
+        const assignedTag = userTags.find((item) => item.id === tag.id);
+        const active = Boolean(assignedTag);
+        const assignedDate = assignedTag?.assignedDate || '';
+
+        return (
+          <button
+            key={tag.id}
+            type="button"
+            title={active && assignedDate ? `分配时间：${assignedDate}` : active ? '已分配' : '未分配'}
+            onClick={() => toggleTag(tag)}
+            disabled={isSuperAdminUser && String(tag.name || '').trim() === '超级管理员'}
+            style={{
+              border: 'none',
+              borderRadius: '999px',
+              padding: '10px 14px',
+              backgroundColor: active ? '#111827' : '#f8fafc',
+              color: active ? '#fff' : '#334155',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 700,
+              opacity: isSuperAdminUser && String(tag.name || '').trim() === '超级管理员' ? 0.8 : 1
+            }}
+          >
+            {tag.name}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   if (!isOpen) return null;
 
@@ -87,90 +187,48 @@ const TagManager = ({ user, isOpen, onClose, allTags, tagCategories, onUpdateUse
         </div>
 
         <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '16px', marginBottom: '12px' }}>当前标签</h4>
-          {userTags.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '20px', color: '#666', backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
-              暂无标签
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {userTags.map((tag) => (
-                <div
+          <h4 style={{ fontSize: '16px', marginBottom: '12px' }}>角色标签</h4>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+            {roleTags.map((tag) => {
+              const active = assignedRoleTagIds.has(tag.id);
+              const disabled = isSuperAdminUser && String(tag.name || '').trim() === '超级管理员';
+              const assignedTag = userTags.find((item) => item.id === tag.id);
+              const assignedDate = assignedTag?.assignedDate || '';
+
+              return (
+                <button
                   key={tag.id}
+                  type="button"
+                  onClick={() => handleToggleRoleTag(tag)}
+                  disabled={disabled}
+                  title={active && assignedDate ? `分配时间：${assignedDate}` : active ? '已分配' : '未分配'}
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '12px',
-                    border: '1px solid #eee',
-                    borderRadius: '8px',
-                    backgroundColor: '#fafafa'
+                    border: 'none',
+                    borderRadius: '999px',
+                    padding: '10px 14px',
+                    backgroundColor: active ? '#111827' : '#f8fafc',
+                    color: active ? '#fff' : '#334155',
+                    cursor: disabled ? 'default' : 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    opacity: disabled ? 0.8 : 1
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <TagIcon size={16} color={tag.color || '#666'} />
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: 500 }}>{tag.name}</div>
-                      <div style={{ fontSize: '12px', color: '#666' }}>
-                        {getCategoryName(tag.categoryId)}{tag.assignedDate ? ` · 分配于 ${tag.assignedDate}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteTag(tag.id)}
-                    style={{ padding: '4px', border: 'none', borderRadius: '4px', backgroundColor: '#f0f0f0', cursor: 'pointer' }}
-                  >
-                    <Trash2 size={14} color="#666" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+                  {tag.name}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+            这里用于分配合作伙伴与后台权限标签。手机号 16601061656 对应用户会固定保留【超级管理员】。品牌方主理人必须绑定至少一个品牌品类二级标签。
+          </div>
         </div>
 
         <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '16px', marginBottom: '12px' }}>分配现有标签</h4>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', fontWeight: 500 }}>可选标签</label>
-              <select
-                value={selectedTagId}
-                onChange={(e) => setSelectedTagId(e.target.value)}
-                style={{ width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: '8px', fontSize: '14px' }}
-              >
-                <option value="">选择标签</option>
-                {availableTags.map((tag) => (
-                  <option key={tag.id} value={tag.id}>
-                    {tag.name} · {getCategoryName(tag.categoryId)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={handleAddTag}
-              disabled={!selectedTagId}
-              style={{
-                padding: '10px 16px',
-                border: 'none',
-                borderRadius: '8px',
-                backgroundColor: selectedTagId ? '#2196F3' : '#bbdefb',
-                color: '#fff',
-                cursor: selectedTagId ? 'pointer' : 'not-allowed',
-                fontSize: '14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              <Plus size={14} />
-              添加
-            </button>
-          </div>
-          {availableTags.length === 0 && (
-            <div style={{ marginTop: '12px', fontSize: '13px', color: '#666' }}>
-              该用户已经分配了所有可用标签。
-            </div>
-          )}
+          <h4 style={{ fontSize: '16px', marginBottom: '12px' }}>其它标签</h4>
+          {otherTags.length === 0 ? (
+            <div style={{ fontSize: '13px', color: '#94a3b8' }}>当前没有可分配的其它标签。</div>
+          ) : renderTagChips(otherTags)}
         </div>
 
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>

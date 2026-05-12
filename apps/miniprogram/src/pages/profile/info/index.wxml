@@ -1,0 +1,34 @@
+<view class="page-shell profile-info-shell">
+  <view class="page-masthead">
+    <view class="page-masthead__pill">Profile</view>
+    <view class="page-masthead__title">个人信息</view>
+    <view class="page-masthead__slogan">在这里查看并维护你当前的小程序身份资料。</view>
+  </view>
+
+  <view class="section-card profile-info-card">
+    <view class="profile-info-head">
+      <view class="profile-info-avatar">{{profileInitial || '悟'}}</view>
+      <view class="profile-info-meta">
+        <view class="profile-info-name-row">
+          <view class="profile-info-name">{{profile.name || '我的'}}</view>
+          <view class="status-chip" wx:if="{{profile.isStudent}}">学员</view>
+        </view>
+        <view class="profile-info-chip-row">
+          <view class="profile-info-chip {{hasBoundPhone ? 'profile-info-chip-active' : ''}}">{{hasBoundPhone ? '已绑定手机号' : '未绑定手机号'}}</view>
+          <view class="profile-info-expire" wx:if="{{profile.isStudent && profile.studentExpireAt}}">有效期至 {{profile.studentExpireAt}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section-card profile-info-editor">
+    <view class="section-title">编辑资料</view>
+    <view class="field-label">用户名</view>
+    <input class="field-input" value="{{form.name}}" data-field="name" bindinput="handleInput" />
+    <view class="field-label">手机号</view>
+    <input class="field-input" value="{{form.phone}}" data-field="phone" bindinput="handleInput" />
+    <view class="field-label">简介</view>
+    <textarea class="field-textarea" value="{{form.bio}}" data-field="bio" bindinput="handleInput" />
+    <button class="primary-button profile-info-save" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">保存</button>
+  </view>
+</view>

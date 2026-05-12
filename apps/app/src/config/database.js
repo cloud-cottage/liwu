@@ -43,6 +43,11 @@ export const DATABASE_CONFIG = {
     shopProductSkus: 'shop_product_skus',
     shopOrders: 'shop_orders',
     shopOrderItems: 'shop_order_items',
+    partnerOrders: 'partner_orders',
+    partnerSubOrders: 'partner_sub_orders',
+    partnerBrands: 'partner_brands',
+    partnerBrandMembers: 'partner_brand_members',
+    partnerBrandInvites: 'partner_brand_invites',
     userAddresses: 'user_addresses',
     pointLedger: 'point_ledger',
     badgeProfiles: 'badge_profiles'
