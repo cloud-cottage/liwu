@@ -6,24 +6,12 @@ import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { useBadgeState } from '../../hooks/useBadgeState.js';
 import { authService, studentMembershipService } from '../../services/cloudbase';
+import { readSession } from '@liwu/auth';
 import MembershipOrderModal from './MembershipOrderModal.jsx';
 
 const normalizePhoneInput = (value = '') => String(value || '').replace(/[^\d+]/g, '').trim();
 
 const isValidPhoneNumber = (value = '') => /^(?:\+?86)?1\d{10}$/.test(normalizePhoneInput(value));
-
-const readMockPhoneAuthSession = () => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  try {
-    const rawValue = window.localStorage.getItem('liwu_mock_phone_auth_session');
-    return rawValue ? JSON.parse(rawValue) : null;
-  } catch {
-    return null;
-  }
-};
 
 const getDisplayName = (authStatus, currentUser) => {
   if (authStatus?.isAnonymous) {
@@ -415,14 +403,14 @@ const Profile = () => {
     refreshData,
     syncAuthState
   } = useCloudAwareness();
-  const mockPhoneAuthSession = readMockPhoneAuthSession();
-  const effectiveAuthStatus = authStatus?.isAuthenticated || mockPhoneAuthSession?.phoneNumber
+  const liwuSession = readSession();
+  const effectiveAuthStatus = authStatus?.isAuthenticated || liwuSession?.phone
     ? {
         ...authStatus,
         isAuthenticated: true,
         isAnonymous: false,
-        phoneNumber: mockPhoneAuthSession?.phoneNumber || authStatus?.phoneNumber || '',
-        displayName: mockPhoneAuthSession?.displayName || authStatus?.displayName || ''
+        phoneNumber: liwuSession?.phone || authStatus?.phoneNumber || '',
+        displayName: liwuSession?.displayName || authStatus?.displayName || ''
       }
     : authStatus;
   const { equippedBadge } = useBadgeState();
@@ -753,7 +741,7 @@ const Profile = () => {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <h2 style={{ fontSize: '20px', margin: 0, fontFamily: 'var(--font-serif)' }}>
-                  {getDisplayName(effectiveAuthStatus, currentUser || { name: mockPhoneAuthSession?.displayName || '' })}
+                  {getDisplayName(effectiveAuthStatus, currentUser || { name: liwuSession?.displayName || '' })}
                 </h2>
                 <button
                   type="button"

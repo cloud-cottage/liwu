@@ -1,6 +1,6 @@
 import React from 'react'
-import Dashboard from './pages/Dashboard.jsx'
+import Partner from '../pages/Partner.jsx'
 
-const App = () => <Dashboard />
+const App = () => <Partner />
 
 export default App

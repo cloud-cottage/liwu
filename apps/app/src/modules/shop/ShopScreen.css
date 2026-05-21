@@ -297,6 +297,12 @@
   color: #64748b;
 }
 
+.shop-product-card__price--hero {
+  margin-top: 10px;
+  font-size: 18px;
+  color: #9a3412;
+}
+
 .shop-product-card__link {
   display: inline-flex;
   align-items: center;
@@ -423,6 +429,19 @@
   font-size: 14px;
   line-height: 1.75;
   color: #475569;
+}
+
+.shop-modal__price-hero {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  color: #9a3412;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .shop-modal__price-tag {

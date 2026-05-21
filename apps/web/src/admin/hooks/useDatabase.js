@@ -11,26 +11,31 @@ import DatabaseService, {
   DEFAULT_MEDITATION_CALENDAR,
   DEFAULT_MEDITATION_LIBRARY,
   DEFAULT_PAGE_MASTHEAD,
+  DEFAULT_PLATFORM_SERVICE_FEE,
+  DEFAULT_SHOP_REWARD,
+  DEFAULT_SYSTEM_FORTUNE,
   DEFAULT_SHOP_PARTNER_PRICING,
   DEFAULT_SHOP_HOME_LIVING_SETTINGS,
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   DEFAULT_THEME_SETTINGS,
   DEFAULT_USER_AVATAR_OPTIONS
 } from '../services/database.js';
-import DatabaseInitializer from '../services/databaseInit.js';
+import { getLatestCloudBaseProxyTrace } from '../services/cloudbase.js';
 
 const getSetupErrorMessage = (error) => {
   const rawMessage = error?.message || 'Unknown CloudBase error';
+  const proxyTrace = getLatestCloudBaseProxyTrace();
+  const traceSuffix = proxyTrace?.requestId ? `（requestId: ${proxyTrace.requestId}）` : '';
 
   if (rawMessage.includes('DATABASE_COLLECTION_NOT_EXIST') || rawMessage.includes('Db or Table not exist')) {
     return [
       'CloudBase 已连接，但当前环境缺少 Dashboard 所需集合。',
       '请先在 CloudBase 控制台创建这些集合：users、tag_categories、tags、user_tags。',
-      '创建后还需要为这些集合配置可读写权限，否则前端匿名登录后仍然无法访问。'
+      `创建后还需要为这些集合配置可读写权限，否则前端匿名登录后仍然无法访问。${traceSuffix}`
     ].join(' ');
   }
 
-  return rawMessage;
+  return `${rawMessage}${traceSuffix}`;
 };
 
 const isTransientNetworkIssue = (error) => {
@@ -71,12 +76,14 @@ export const useDatabase = () => {
     users: [],
     tags: [],
     categories: [],
-    overviewStats: EMPTY_OVERVIEW_STATS
+    overviewStats: EMPTY_OVERVIEW_STATS,
+    pointLedgerEntries: []
   };
   const [users, setUsers] = useState([]);
   const [tags, setTags] = useState([]);
   const [categories, setCategories] = useState([]);
   const [overviewStats, setOverviewStats] = useState(EMPTY_OVERVIEW_STATS);
+  const [pointLedgerEntries, setPointLedgerEntries] = useState([]);
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [awarenessTagSettings, setAwarenessTagSettings] = useState(DEFAULT_AWARENESS_TAG_SETTINGS);
   const [awarenessDisplaySettings, setAwarenessDisplaySettings] = useState(DEFAULT_AWARENESS_DISPLAY);
@@ -87,6 +94,9 @@ export const useDatabase = () => {
   const [clientDistributionSettings, setClientDistributionSettings] = useState(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
   const [pageMastheadSettings, setPageMastheadSettings] = useState(DEFAULT_PAGE_MASTHEAD);
   const [shopHomeLivingSettings, setShopHomeLivingSettings] = useState(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
+  const [platformServiceFeeSettings, setPlatformServiceFeeSettings] = useState(DEFAULT_PLATFORM_SERVICE_FEE);
+  const [shopRewardSettings, setShopRewardSettings] = useState(DEFAULT_SHOP_REWARD);
+  const [systemFortuneSettings, setSystemFortuneSettings] = useState(DEFAULT_SYSTEM_FORTUNE);
   const [shopPartnerPricingSettings, setShopPartnerPricingSettings] = useState(DEFAULT_SHOP_PARTNER_PRICING);
   const [studentMembershipSettings, setStudentMembershipSettings] = useState(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
   const [awarenessTagOverview, setAwarenessTagOverview] = useState([]);
@@ -105,6 +115,10 @@ export const useDatabase = () => {
   const [shopOrderItems, setShopOrderItems] = useState([]);
   const [partnerOrders, setPartnerOrders] = useState([]);
   const [partnerSubOrders, setPartnerSubOrders] = useState([]);
+  const [partnerUsers, setPartnerUsers] = useState([]);
+  const [partnerBrands, setPartnerBrands] = useState([]);
+  const [partnerBrandMembers, setPartnerBrandMembers] = useState([]);
+  const [partnerBrandInvites, setPartnerBrandInvites] = useState([]);
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
@@ -116,13 +130,23 @@ export const useDatabase = () => {
   const [savingClientDistributionSettings, setSavingClientDistributionSettings] = useState(false);
   const [savingPageMastheadSettings, setSavingPageMastheadSettings] = useState(false);
   const [savingShopHomeLivingSettings, setSavingShopHomeLivingSettings] = useState(false);
+  const [savingPlatformServiceFeeSettings, setSavingPlatformServiceFeeSettings] = useState(false);
+  const [savingShopRewardSettings, setSavingShopRewardSettings] = useState(false);
+  const [savingSystemFortuneSettings, setSavingSystemFortuneSettings] = useState(false);
   const [savingShopPartnerPricingSettings, setSavingShopPartnerPricingSettings] = useState(false);
   const [savingStudentMembershipSettings, setSavingStudentMembershipSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [loadedSections, setLoadedSections] = useState({
+    overview: false,
+    shop: false,
+    fortune: false,
+    meditation: false,
+    settings: false,
+    awareness: false
+  });
 
-  // Load all data from database
-  const loadData = useCallback(async () => {
+  const loadOverviewData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -140,145 +164,43 @@ export const useDatabase = () => {
 
       const [
         dashboardDataResult,
-        meditationSettingsResult,
-        awarenessTagSettingsResult,
-        awarenessDisplaySettingsResult,
-        badgeSettingsResult
-      ] = await runSettledBatch([
-        () => DatabaseService.getDashboardData(),
-        () => DatabaseService.getMeditationSettings(),
-        () => DatabaseService.getAwarenessTagSettings(),
-        () => DatabaseService.getAwarenessDisplaySettings(),
-        () => DatabaseService.getBadgeSettings()
-      ]);
-
-      const [
-        themeSettingsResult,
-        brandCarouselSettingsResult,
-        userAvatarOptionsSettingsResult,
-        clientDistributionSettingsResult,
-        pageMastheadSettingsResult
-      ] = await runSettledBatch([
-        () => DatabaseService.getThemeSettings(),
-        () => DatabaseService.getBrandCarouselSettings(),
-        () => DatabaseService.getUserAvatarOptionsSettings(),
-        () => DatabaseService.getClientDistributionSettings(),
-        () => DatabaseService.getPageMastheadSettings()
-      ]);
-
-      const [
-        shopHomeLivingSettingsResult,
-        shopPartnerPricingSettingsResult,
-        studentMembershipSettingsResult,
         awarenessTagOverviewResult,
         shopManagementDataResult
       ] = await runSettledBatch([
-        () => DatabaseService.getShopHomeLivingSettings(),
-        () => DatabaseService.getShopPartnerPricingSettings(),
-        () => DatabaseService.getStudentMembershipSettings(),
+        () => DatabaseService.getDashboardData(),
         () => DatabaseService.getAwarenessTagOverview(),
         () => DatabaseService.getShopManagementData()
       ]);
 
-      const [
-        partnerOrderDataResult,
-        meditationAudioLibraryResult,
-        meditationCompositionSettingsResult,
-        meditationCalendarResult,
-        meditationLibraryResult
-      ] = await runSettledBatch([
-        () => DatabaseService.getPartnerOrderData(),
-        () => DatabaseService.getMeditationAudioLibrary(),
-        () => DatabaseService.getMeditationCompositionSettings(),
-        () => DatabaseService.getMeditationCalendar(),
-        () => DatabaseService.getMeditationLibrary()
-      ]);
-
       const dashboardData = dashboardDataResult.status === 'fulfilled' ? dashboardDataResult.value : EMPTY_DASHBOARD_DATA;
-      const nextMeditationSettings = meditationSettingsResult.status === 'fulfilled' ? meditationSettingsResult.value : DEFAULT_MEDITATION_SETTINGS;
-      const nextAwarenessTagSettings = awarenessTagSettingsResult.status === 'fulfilled' ? awarenessTagSettingsResult.value : DEFAULT_AWARENESS_TAG_SETTINGS;
-      const nextAwarenessDisplaySettings = awarenessDisplaySettingsResult.status === 'fulfilled' ? awarenessDisplaySettingsResult.value : DEFAULT_AWARENESS_DISPLAY;
-      const nextBadgeSettings = badgeSettingsResult.status === 'fulfilled' ? badgeSettingsResult.value : DEFAULT_BADGE_SETTINGS;
-      const nextThemeSettings = themeSettingsResult.status === 'fulfilled' ? themeSettingsResult.value : DEFAULT_THEME_SETTINGS;
-      const nextBrandCarouselSettings = brandCarouselSettingsResult.status === 'fulfilled' ? brandCarouselSettingsResult.value : DEFAULT_BRAND_CAROUSEL;
-      const nextUserAvatarOptionsSettings = userAvatarOptionsSettingsResult.status === 'fulfilled' ? userAvatarOptionsSettingsResult.value : DEFAULT_USER_AVATAR_OPTIONS;
-      const nextClientDistributionSettings = clientDistributionSettingsResult.status === 'fulfilled' ? clientDistributionSettingsResult.value : DEFAULT_CLIENT_DISTRIBUTION_SETTINGS;
-      const nextPageMastheadSettings = pageMastheadSettingsResult.status === 'fulfilled' ? pageMastheadSettingsResult.value : DEFAULT_PAGE_MASTHEAD;
-      const nextShopHomeLivingSettings = shopHomeLivingSettingsResult.status === 'fulfilled' ? shopHomeLivingSettingsResult.value : DEFAULT_SHOP_HOME_LIVING_SETTINGS;
-      const nextShopPartnerPricingSettings = shopPartnerPricingSettingsResult.status === 'fulfilled' ? shopPartnerPricingSettingsResult.value : DEFAULT_SHOP_PARTNER_PRICING;
-      const nextStudentMembershipSettings = studentMembershipSettingsResult.status === 'fulfilled' ? studentMembershipSettingsResult.value : DEFAULT_STUDENT_MEMBERSHIP_SETTINGS;
       const nextAwarenessTagOverview = awarenessTagOverviewResult.status === 'fulfilled' ? awarenessTagOverviewResult.value : [];
       const nextShopManagementData = shopManagementDataResult.status === 'fulfilled'
         ? shopManagementDataResult.value
         : { categories: [], products: [], skus: [], orders: [], orderItems: [] };
-      const nextPartnerOrderData = partnerOrderDataResult.status === 'fulfilled'
-        ? partnerOrderDataResult.value
-        : { orders: [], subOrders: [] };
-      const nextMeditationAudioLibrary = meditationAudioLibraryResult.status === 'fulfilled' ? meditationAudioLibraryResult.value : DEFAULT_MEDITATION_AUDIO_LIBRARY;
-      const nextMeditationCompositionSettings = meditationCompositionSettingsResult.status === 'fulfilled' ? meditationCompositionSettingsResult.value : DEFAULT_MEDITATION_COMPOSITION_SETTINGS;
-      const nextMeditationCalendar = meditationCalendarResult.status === 'fulfilled' ? meditationCalendarResult.value : DEFAULT_MEDITATION_CALENDAR;
-      const nextMeditationLibrary = meditationLibraryResult.status === 'fulfilled' ? meditationLibraryResult.value : DEFAULT_MEDITATION_LIBRARY;
 
       setUsers(dashboardData.users);
       setTags(dashboardData.tags);
       setCategories(dashboardData.categories);
       setOverviewStats(dashboardData.overviewStats || EMPTY_OVERVIEW_STATS);
-      setMeditationSettings(nextMeditationSettings);
-      setAwarenessTagSettings(nextAwarenessTagSettings);
-      setAwarenessDisplaySettings(nextAwarenessDisplaySettings);
-      setBadgeSettings(nextBadgeSettings);
-      setThemeSettings(nextThemeSettings);
-      setBrandCarouselSettings(nextBrandCarouselSettings);
-      setUserAvatarOptionsSettings(nextUserAvatarOptionsSettings);
-      setClientDistributionSettings(nextClientDistributionSettings);
-      setPageMastheadSettings(nextPageMastheadSettings);
-      setShopHomeLivingSettings(nextShopHomeLivingSettings);
-      setShopPartnerPricingSettings(nextShopPartnerPricingSettings);
-      setStudentMembershipSettings(nextStudentMembershipSettings);
+      setPointLedgerEntries(dashboardData.pointLedgerEntries || []);
       setAwarenessTagOverview(nextAwarenessTagOverview);
-      setShopCategories(nextShopManagementData.categories);
-      setShopProducts(nextShopManagementData.products);
-      setShopSkus(nextShopManagementData.skus);
-      setShopOrders(nextShopManagementData.orders);
-      setShopOrderItems(nextShopManagementData.orderItems);
-      setPartnerOrders(nextPartnerOrderData.orders);
-      setPartnerSubOrders(nextPartnerOrderData.subOrders);
-      setMeditationAudioLibrary(nextMeditationAudioLibrary);
-      setMeditationCompositionSettings(nextMeditationCompositionSettings);
-      setMeditationCalendar(nextMeditationCalendar);
-      setMeditationLibrary(nextMeditationLibrary);
-      const missingCollectionWarning =
-        nextMeditationSettings.missingCollection || nextAwarenessTagSettings.missingCollection || nextAwarenessDisplaySettings.missingCollection || nextBadgeSettings.missingCollection || nextThemeSettings.missingCollection || nextBrandCarouselSettings.missingCollection || nextUserAvatarOptionsSettings.missingCollection || nextClientDistributionSettings.missingCollection || nextPageMastheadSettings.missingCollection || nextShopHomeLivingSettings.missingCollection || nextShopPartnerPricingSettings.missingCollection || nextStudentMembershipSettings.missingCollection;
+      setShopCategories(nextShopManagementData.categories || []);
+      setShopProducts(nextShopManagementData.products || []);
+      setShopSkus(nextShopManagementData.skus || []);
+      setShopOrders(nextShopManagementData.orders || []);
+      setShopOrderItems(nextShopManagementData.orderItems || []);
+      setLoadedSections((current) => ({ ...current, overview: true }));
 
       const partialFailureLabels = [
         dashboardDataResult.status === 'rejected' ? '总览与用户' : '',
-        meditationSettingsResult.status === 'rejected' ? '冥想设置' : '',
-        awarenessTagSettingsResult.status === 'rejected' ? '觉察标签设置' : '',
-        awarenessDisplaySettingsResult.status === 'rejected' ? '觉察显示设置' : '',
-        badgeSettingsResult.status === 'rejected' ? '徽章设置' : '',
-        themeSettingsResult.status === 'rejected' ? '主题设置' : '',
-        brandCarouselSettingsResult.status === 'rejected' ? '首页轮播' : '',
-        userAvatarOptionsSettingsResult.status === 'rejected' ? '用户头像' : '',
-        clientDistributionSettingsResult.status === 'rejected' ? '版本分发' : '',
-        pageMastheadSettingsResult.status === 'rejected' ? 'PageMasthead' : '',
-        shopHomeLivingSettingsResult.status === 'rejected' ? '我的居心地' : '',
-        shopPartnerPricingSettingsResult.status === 'rejected' ? '代理商折扣' : '',
-        studentMembershipSettingsResult.status === 'rejected' ? '学员设置' : '',
         awarenessTagOverviewResult.status === 'rejected' ? '觉察统计' : '',
-        shopManagementDataResult.status === 'rejected' ? '工坊数据' : '',
-        partnerOrderDataResult.status === 'rejected' ? '合作伙伴订单' : '',
-        meditationAudioLibraryResult.status === 'rejected' ? '冥想音频库' : '',
-        meditationCompositionSettingsResult.status === 'rejected' ? '冥想编排' : '',
-        meditationCalendarResult.status === 'rejected' ? '冥想日历' : '',
-        meditationLibraryResult.status === 'rejected' ? '冥想库' : ''
+        shopManagementDataResult.status === 'rejected' ? '工坊数据' : ''
       ].filter(Boolean);
 
       setSettingsError(
-        missingCollectionWarning
-          ? '当前使用默认配置。若要在后台保存设置，请先创建集合：app_settings。'
-          : partialFailureLabels.length > 0
-            ? `部分管理数据加载失败，已使用默认值：${partialFailureLabels.join('、')}`
-            : null
+        partialFailureLabels.length > 0
+          ? `部分管理数据加载失败，已使用默认值：${partialFailureLabels.join('、')}`
+          : null
       );
     } catch (err) {
       console.error('Error loading dashboard data from CloudBase:', err);
@@ -287,16 +209,16 @@ export const useDatabase = () => {
       setTags([]);
       setCategories([]);
       setOverviewStats(EMPTY_OVERVIEW_STATS);
-      setMeditationSettings(DEFAULT_MEDITATION_SETTINGS);
-      setAwarenessTagSettings(DEFAULT_AWARENESS_TAG_SETTINGS);
-      setAwarenessDisplaySettings(DEFAULT_AWARENESS_DISPLAY);
-      setBadgeSettings(DEFAULT_BADGE_SETTINGS);
+      setPointLedgerEntries([]);
       setThemeSettings(DEFAULT_THEME_SETTINGS);
       setBrandCarouselSettings(DEFAULT_BRAND_CAROUSEL);
       setUserAvatarOptionsSettings(DEFAULT_USER_AVATAR_OPTIONS);
       setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
       setPageMastheadSettings(DEFAULT_PAGE_MASTHEAD);
       setShopHomeLivingSettings(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
+      setPlatformServiceFeeSettings(DEFAULT_PLATFORM_SERVICE_FEE);
+      setShopRewardSettings(DEFAULT_SHOP_REWARD);
+      setSystemFortuneSettings(DEFAULT_SYSTEM_FORTUNE);
       setShopPartnerPricingSettings(DEFAULT_SHOP_PARTNER_PRICING);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
@@ -307,31 +229,172 @@ export const useDatabase = () => {
       setShopOrderItems([]);
       setPartnerOrders([]);
       setPartnerSubOrders([]);
+      setPartnerUsers([]);
+      setPartnerBrands([]);
+      setPartnerBrandMembers([]);
+      setPartnerBrandInvites([]);
       setMeditationAudioLibrary(DEFAULT_MEDITATION_AUDIO_LIBRARY);
       setMeditationCompositionSettings(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
       setMeditationCalendar(DEFAULT_MEDITATION_CALENDAR);
       setMeditationLibrary(DEFAULT_MEDITATION_LIBRARY);
+      setLoadedSections({
+        overview: false,
+        shop: false,
+        fortune: false,
+        meditation: false,
+        settings: false,
+        awareness: false
+      });
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Initialize database and migrate data
+  const loadData = useCallback(async () => {
+    await loadOverviewData();
+  }, [loadOverviewData]);
+
+  const loadAdminSection = useCallback(async (section, options = {}) => {
+    const force = Boolean(options.force);
+    if (!section || (!force && loadedSections[section])) {
+      return;
+    }
+
+    try {
+      setSettingsError(null);
+
+      if (section === 'users') {
+        const [studentMembership, nextUsers, nextTags, nextCategories] = await Promise.all([
+          runWithRetry(() => DatabaseService.getStudentMembershipSettings()),
+          runWithRetry(() => DatabaseService.getUsers()),
+          runWithRetry(() => DatabaseService.getTags()),
+          runWithRetry(() => DatabaseService.getTagCategories())
+        ]);
+
+        setStudentMembershipSettings(studentMembership);
+        setUsers(nextUsers);
+        setTags(nextTags);
+        setCategories(nextCategories);
+      }
+
+      if (section === 'shop') {
+        const [shopManagementData, partnerOrderData, partnerUsersData, partnerBrandWorkspace] = await Promise.all([
+          runWithRetry(() => DatabaseService.getShopManagementData()),
+          runWithRetry(() => DatabaseService.getPartnerOrderData()),
+          runWithRetry(() => DatabaseService.getPartnerUsers()),
+          runWithRetry(() => DatabaseService.getPartnerBrandWorkspaceData())
+        ]);
+
+        setShopCategories(shopManagementData.categories || []);
+        setShopProducts(shopManagementData.products || []);
+        setShopSkus(shopManagementData.skus || []);
+        setShopOrders(shopManagementData.orders || []);
+        setShopOrderItems(shopManagementData.orderItems || []);
+        setPartnerOrders(partnerOrderData.orders || []);
+        setPartnerSubOrders(partnerOrderData.subOrders || []);
+        setPartnerUsers(partnerUsersData || []);
+        setPartnerBrands(partnerBrandWorkspace.brands || []);
+        setPartnerBrandMembers(partnerBrandWorkspace.members || []);
+        setPartnerBrandInvites(partnerBrandWorkspace.invites || []);
+      }
+
+      if (section === 'fortune') {
+        const [systemFortune, partnerUsersData, partnerBrandWorkspace] = await Promise.all([
+          runWithRetry(() => DatabaseService.getSystemFortuneSettings()),
+          runWithRetry(() => DatabaseService.getPartnerUsers()),
+          runWithRetry(() => DatabaseService.getPartnerBrandWorkspaceData())
+        ]);
+
+        setSystemFortuneSettings(systemFortune);
+        setPartnerUsers(partnerUsersData || []);
+        setPartnerBrands(partnerBrandWorkspace.brands || []);
+        setPartnerBrandMembers(partnerBrandWorkspace.members || []);
+        setPartnerBrandInvites(partnerBrandWorkspace.invites || []);
+      }
+
+      if (section === 'settings') {
+        const [
+          meditation,
+          awarenessDisplay,
+          badge,
+          theme,
+          carousel,
+          avatarOptions,
+          distribution,
+          masthead,
+          homeLiving,
+          platformFee,
+          shopReward,
+          shopPricing
+        ] = await Promise.all([
+          runWithRetry(() => DatabaseService.getMeditationSettings()),
+          runWithRetry(() => DatabaseService.getAwarenessDisplaySettings()),
+          runWithRetry(() => DatabaseService.getBadgeSettings()),
+          runWithRetry(() => DatabaseService.getThemeSettings()),
+          runWithRetry(() => DatabaseService.getBrandCarouselSettings()),
+          runWithRetry(() => DatabaseService.getUserAvatarOptionsSettings()),
+          runWithRetry(() => DatabaseService.getClientDistributionSettings()),
+          runWithRetry(() => DatabaseService.getPageMastheadSettings()),
+          runWithRetry(() => DatabaseService.getShopHomeLivingSettings()),
+          runWithRetry(() => DatabaseService.getPlatformServiceFeeSettings()),
+          runWithRetry(() => DatabaseService.getShopRewardSettings()),
+          runWithRetry(() => DatabaseService.getShopPartnerPricingSettings())
+        ]);
+
+        setMeditationSettings(meditation);
+        setAwarenessDisplaySettings(awarenessDisplay);
+        setBadgeSettings(badge);
+        setThemeSettings(theme);
+        setBrandCarouselSettings(carousel);
+        setUserAvatarOptionsSettings(avatarOptions);
+        setClientDistributionSettings(distribution);
+        setPageMastheadSettings(masthead);
+        setShopHomeLivingSettings(homeLiving);
+        setPlatformServiceFeeSettings(platformFee);
+        setShopRewardSettings(shopReward);
+        setShopPartnerPricingSettings(shopPricing);
+      }
+
+      if (section === 'awareness') {
+        const [overview, settings, shopManagementData] = await Promise.all([
+          runWithRetry(() => DatabaseService.getAwarenessTagOverview()),
+          runWithRetry(() => DatabaseService.getAwarenessTagSettings()),
+          runWithRetry(() => DatabaseService.getShopManagementData())
+        ]);
+        setAwarenessTagOverview(overview || []);
+        setAwarenessTagSettings(settings);
+        setShopProducts(shopManagementData.products || []);
+      }
+
+      if (section === 'meditation') {
+        const [audioLibrary, compositionSettings, calendar, library] = await Promise.all([
+          runWithRetry(() => DatabaseService.getMeditationAudioLibrary()),
+          runWithRetry(() => DatabaseService.getMeditationCompositionSettings()),
+          runWithRetry(() => DatabaseService.getMeditationCalendar()),
+          runWithRetry(() => DatabaseService.getMeditationLibrary())
+        ]);
+
+        setMeditationAudioLibrary(audioLibrary);
+        setMeditationCompositionSettings(compositionSettings);
+        setMeditationCalendar(calendar);
+        setMeditationLibrary(library);
+      }
+
+      setLoadedSections((current) => ({ ...current, [section]: true }));
+    } catch (err) {
+      console.error(`Error loading admin section ${section}:`, err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    }
+  }, [loadedSections]);
+
+  // Initialize admin dashboard
   const initializeDatabase = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      
-      // First verify database connection
-      const connectionCheck = await DatabaseInitializer.verifyConnection();
-      if (!connectionCheck.connected) {
-        throw new Error(connectionCheck.error || 'CloudBase connection failed');
-      }
 
-      await DatabaseService.ensureSystemRoleTags();
-      await DatabaseService.ensureBrandScopeTagsAndShopCategories();
-      await DatabaseService.ensureBrandRoleModel();
-      await loadData();
+      await loadOverviewData();
     } catch (err) {
       console.error('Error initializing database:', err);
       setError(getSetupErrorMessage(err));
@@ -352,6 +415,7 @@ export const useDatabase = () => {
       setClientDistributionSettings(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
       setPageMastheadSettings(DEFAULT_PAGE_MASTHEAD);
       setShopHomeLivingSettings(DEFAULT_SHOP_HOME_LIVING_SETTINGS);
+      setShopRewardSettings(DEFAULT_SHOP_REWARD);
       setShopPartnerPricingSettings(DEFAULT_SHOP_PARTNER_PRICING);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
       setAwarenessTagOverview([]);
@@ -366,16 +430,25 @@ export const useDatabase = () => {
       setMeditationCompositionSettings(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
       setMeditationCalendar(DEFAULT_MEDITATION_CALENDAR);
       setMeditationLibrary(DEFAULT_MEDITATION_LIBRARY);
+      setLoadedSections({
+        overview: false,
+        shop: false,
+        fortune: false,
+        meditation: false,
+        settings: false,
+        awareness: false
+      });
     } finally {
       setLoading(false);
     }
-  }, [loadData]);
+  }, [loadOverviewData]);
 
   // User operations
   const updateUser = async (userId, userData) => {
     try {
       await DatabaseService.updateUser(userId, userData);
-      await loadData(); // Reload data
+      const refreshedUsers = await DatabaseService.getUsers();
+      setUsers(refreshedUsers);
     } catch (err) {
       console.error('Error updating user:', err);
       setError(getSetupErrorMessage(err));
@@ -391,7 +464,12 @@ export const useDatabase = () => {
       } else {
         await DatabaseService.updateCategory(categoryUpdate.id, categoryUpdate);
       }
-      await loadData(); // Reload data
+      const [nextCategories, nextTags] = await Promise.all([
+        DatabaseService.getTagCategories(),
+        DatabaseService.getTags()
+      ]);
+      setCategories(nextCategories);
+      setTags(nextTags);
     } catch (err) {
       console.error('Error updating category:', err);
       setError(getSetupErrorMessage(err));
@@ -402,7 +480,7 @@ export const useDatabase = () => {
   const createCategory = async (categoryData) => {
     try {
       await DatabaseService.createCategory(categoryData);
-      await loadData(); // Reload data
+      setCategories(await DatabaseService.getTagCategories());
     } catch (err) {
       console.error('Error creating category:', err);
       setError(getSetupErrorMessage(err));
@@ -418,7 +496,7 @@ export const useDatabase = () => {
       } else {
         await DatabaseService.updateTag(tagUpdate.id, tagUpdate);
       }
-      await loadData(); // Reload data
+      setTags(await DatabaseService.getTags());
     } catch (err) {
       console.error('Error updating tag:', err);
       setError(getSetupErrorMessage(err));
@@ -429,7 +507,7 @@ export const useDatabase = () => {
   const createTag = async (tagData) => {
     try {
       await DatabaseService.createTag(tagData);
-      await loadData(); // Reload data
+      setTags(await DatabaseService.getTags());
     } catch (err) {
       console.error('Error creating tag:', err);
       setError(getSetupErrorMessage(err));
@@ -442,7 +520,7 @@ export const useDatabase = () => {
     try {
       const tagIds = newTags.map(tag => tag.id);
       await DatabaseService.updateUserTags(userId, tagIds);
-      await loadData(); // Reload data
+      setUsers(await DatabaseService.getUsers());
     } catch (err) {
       console.error('Error updating user tags:', err);
       setError(getSetupErrorMessage(err));
@@ -619,7 +697,7 @@ export const useDatabase = () => {
     try {
       setSettingsError(null);
       await DatabaseService.updatePartnerSubOrderStatus(subOrderId, nextStatus);
-      await loadData();
+      await loadAdminSection('shop', { force: true });
     } catch (err) {
       console.error('Error updating partner sub order status:', err);
       setSettingsError(getSetupErrorMessage(err));
@@ -641,6 +719,150 @@ export const useDatabase = () => {
       throw err;
     } finally {
       setSavingShopPartnerPricingSettings(false);
+    }
+  };
+
+  const updatePlatformServiceFeeSettings = async (settingsData) => {
+    try {
+      setSavingPlatformServiceFeeSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.savePlatformServiceFeeSettings(settingsData);
+      setPlatformServiceFeeSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating platform service fee settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingPlatformServiceFeeSettings(false);
+    }
+  };
+
+  const updateShopRewardSettings = async (settingsData) => {
+    try {
+      setSavingShopRewardSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveShopRewardSettings(settingsData);
+      setShopRewardSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating shop reward settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingShopRewardSettings(false);
+    }
+  };
+
+  const updateSystemFortuneSettings = async (settingsData) => {
+    try {
+      setSavingSystemFortuneSettings(true);
+      setSettingsError(null);
+
+      const savedSettings = await DatabaseService.saveSystemFortuneSettings(settingsData);
+      setSystemFortuneSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating system fortune settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingSystemFortuneSettings(false);
+    }
+  };
+
+  const updatePartnerBrandCommunityBeansBalance = async (brandId, nextBalance) => {
+    try {
+      setSettingsError(null);
+      const currentBrand = partnerBrands.find((brand) => brand.id === brandId);
+      if (!currentBrand) {
+        throw new Error('未找到目标品牌店铺');
+      }
+
+      await DatabaseService.savePartnerBrand({
+        ...currentBrand,
+        id: currentBrand.id,
+        communityBeansBalance: Math.max(0, Number(nextBalance) || 0)
+      });
+
+      const refreshedBrandWorkspace = await DatabaseService.getPartnerBrandWorkspaceData();
+      setPartnerBrands(refreshedBrandWorkspace.brands || []);
+      setPartnerBrandMembers(refreshedBrandWorkspace.members || []);
+      setPartnerBrandInvites(refreshedBrandWorkspace.invites || []);
+    } catch (err) {
+      console.error('Error updating partner brand community beans balance:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    }
+  };
+
+  const adjustUserBalanceWithSystemPool = async (userId, delta, options = {}) => {
+    try {
+      setSavingSystemFortuneSettings(true);
+      setSettingsError(null);
+
+      const result = await DatabaseService.adjustUserBalanceWithSystemPool(userId, delta, options);
+      setUsers((currentUsers) => currentUsers.map((user) => (
+        user.id === userId ? { ...user, balance: result.userBalance } : user
+      )));
+      setSystemFortuneSettings((current) => ({
+        ...current,
+        systemBeansBalance: result.systemBeansBalance
+      }));
+      return result;
+    } catch (err) {
+      console.error('Error adjusting user balance with system pool:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingSystemFortuneSettings(false);
+    }
+  };
+
+  const adjustPartnerBrandCommunityBeansBalance = async (brandId, delta, options = {}) => {
+    try {
+      setSavingSystemFortuneSettings(true);
+      setSettingsError(null);
+
+      const result = await DatabaseService.adjustPartnerBrandCommunityBeansBalance(brandId, delta, options);
+      const refreshedBrandWorkspace = await DatabaseService.getPartnerBrandWorkspaceData();
+      setPartnerBrands(refreshedBrandWorkspace.brands || []);
+      setPartnerBrandMembers(refreshedBrandWorkspace.members || []);
+      setPartnerBrandInvites(refreshedBrandWorkspace.invites || []);
+      setSystemFortuneSettings((current) => ({
+        ...current,
+        systemBeansBalance: result.systemBeansBalance
+      }));
+      return result;
+    } catch (err) {
+      console.error('Error adjusting partner brand community beans balance with system pool:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingSystemFortuneSettings(false);
+    }
+  };
+
+  const adjustSystemFortuneBalance = async (delta, options = {}) => {
+    try {
+      setSavingSystemFortuneSettings(true);
+      setSettingsError(null);
+
+      const result = await DatabaseService.adjustSystemFortuneBalance(delta, options);
+      setSystemFortuneSettings((current) => ({
+        ...current,
+        systemBeansBalance: result.systemBeansBalance
+      }));
+      await loadOverviewData();
+      return result;
+    } catch (err) {
+      console.error('Error adjusting system fortune balance:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingSystemFortuneSettings(false);
     }
   };
 
@@ -679,7 +901,7 @@ export const useDatabase = () => {
   const saveShopProduct = async (productData) => {
     try {
       await DatabaseService.saveShopProduct(productData);
-      await loadData();
+      await loadAdminSection('shop', { force: true });
     } catch (err) {
       console.error('Error saving shop product:', err);
       setError(getSetupErrorMessage(err));
@@ -690,7 +912,7 @@ export const useDatabase = () => {
   const updateShopOrderStatus = async (orderId, nextStatus) => {
     try {
       await DatabaseService.updateShopOrderStatus(orderId, nextStatus);
-      await loadData();
+      await loadAdminSection('shop', { force: true });
     } catch (err) {
       console.error('Error updating shop order status:', err);
       setError(getSetupErrorMessage(err));
@@ -773,6 +995,7 @@ export const useDatabase = () => {
     tags,
     categories,
     overviewStats,
+    pointLedgerEntries,
     meditationSettings,
     awarenessTagSettings,
     awarenessDisplaySettings,
@@ -783,6 +1006,9 @@ export const useDatabase = () => {
     clientDistributionSettings,
     pageMastheadSettings,
     shopHomeLivingSettings,
+    platformServiceFeeSettings,
+    shopRewardSettings,
+    systemFortuneSettings,
     shopPartnerPricingSettings,
     studentMembershipSettings,
     awarenessTagOverview,
@@ -793,6 +1019,10 @@ export const useDatabase = () => {
     shopOrderItems,
     partnerOrders,
     partnerSubOrders,
+    partnerUsers,
+    partnerBrands,
+    partnerBrandMembers,
+    partnerBrandInvites,
     meditationAudioLibrary,
     meditationCompositionSettings,
     meditationCalendar,
@@ -808,6 +1038,9 @@ export const useDatabase = () => {
     savingClientDistributionSettings,
     savingPageMastheadSettings,
     savingShopHomeLivingSettings,
+    savingPlatformServiceFeeSettings,
+    savingShopRewardSettings,
+    savingSystemFortuneSettings,
     savingShopPartnerPricingSettings,
     savingStudentMembershipSettings,
     savingMeditationAudioLibrary,
@@ -831,12 +1064,19 @@ export const useDatabase = () => {
     updateAwarenessDisplaySettings,
     updateBadgeSettings,
     updateThemeSettings,
+    updateShopRewardSettings,
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
     updateClientDistributionSettings,
     updatePageMastheadSettings,
     updateShopHomeLivingSettings,
+    updatePlatformServiceFeeSettings,
+    updateSystemFortuneSettings,
     updateShopPartnerPricingSettings,
+    updatePartnerBrandCommunityBeansBalance,
+    adjustUserBalanceWithSystemPool,
+    adjustPartnerBrandCommunityBeansBalance,
+    adjustSystemFortuneBalance,
     updateStudentMembershipSettings,
     updatePartnerSubOrderStatus,
     saveShopProduct,
@@ -845,6 +1085,7 @@ export const useDatabase = () => {
     updateMeditationCompositionSettings,
     updateMeditationCalendar,
     updateMeditationLibrary,
+    loadAdminSection,
     initializeDatabase,
 
     // Utility

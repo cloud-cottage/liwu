@@ -284,7 +284,7 @@ const Home = () => {
     <div className="page-container" style={{ padding: '18px' }}>
       <PageMasthead
         eyebrow={APP_TAGLINES[taglineIndex]}
-        title="理悟"
+        title="理悟™"
         slogan={homeSlogan}
       />
 

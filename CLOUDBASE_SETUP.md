@@ -122,3 +122,47 @@ npm run dev
 2. **数据统计**: 可以在云函数中做更复杂的数据聚合
 3. **实时更新**: 可以使用 CloudBase 的实时数据库功能
 4. **缓存策略**: 可以添加本地缓存减少网络请求
+
+## `fortuneDailySettlement` 最短部署说明
+
+### 前提
+本地已安装并登录 CloudBase CLI。
+
+如果未安装:
+```bash
+npm install -g @cloudbase/cli
+```
+
+如果未登录:
+```bash
+cloudbase login
+```
+
+### 部署云函数
+在仓库根目录执行:
+```bash
+cloudbase functions:deploy fortuneDailySettlement -e liwu-0gtd91eebd863ccf
+```
+
+如果你希望按 `cloudbaserc.json` 一起带上 timer trigger 配置，直接执行:
+```bash
+cloudbase deploy
+```
+
+### 手动触发一次验证
+在仓库根目录执行:
+```bash
+cloudbase functions:invoke fortuneDailySettlement -e liwu-0gtd91eebd863ccf
+```
+
+### 成功标志
+返回结果中应包含类似字段:
+- `ok: true`
+- `brandSettlements`
+- `agentSettlements`
+- `platformYesterdayTotalSales`
+
+### 相关文件
+- `cloudbaserc.json`
+- `cloudfunctions/fortuneDailySettlement/index.js`
+- `packages/shared-utils/fortune-daily-settlement-core.js`

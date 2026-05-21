@@ -51,7 +51,29 @@ import {
   SHOP_PARTNER_PRICING_SETTINGS_KEY,
   toShopPartnerPricingSettingsPayload
 } from '@liwu/shared-utils/shop-partner-pricing-settings.js';
+import {
+  DEFAULT_PLATFORM_SERVICE_FEE_SETTINGS,
+  normalizePlatformServiceFeeSettings,
+  PLATFORM_SERVICE_FEE_SETTINGS_KEY,
+  toPlatformServiceFeeSettingsPayload
+} from '@liwu/shared-utils/platform-service-fee-settings.js';
+import {
+  DEFAULT_SYSTEM_FORTUNE_SETTINGS,
+  normalizeSystemFortuneSettings,
+  SYSTEM_FORTUNE_SETTINGS_KEY,
+  toSystemFortuneSettingsPayload
+} from '@liwu/shared-utils/system-fortune-settings.js';
+import {
+  DEFAULT_SHOP_REWARD_SETTINGS,
+  normalizeShopRewardSettings,
+  SHOP_REWARD_SETTINGS_KEY,
+  toShopRewardSettingsPayload
+} from '@liwu/shared-utils/shop-reward-settings.js';
 import { BRAND_SCOPE_DEFINITIONS, resolveProductTypeByCategoryName } from '@liwu/shared-utils/brand-scope-mapping.js';
+import {
+  COURSE_BRAND_SCOPE_TAG_NAME,
+  resolveDailyBeansConsumption
+} from '@liwu/shared-utils/fortune-daily-settlement-core.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -164,6 +186,17 @@ export const DEFAULT_STUDENT_MEMBERSHIP_SETTINGS = {
 
 export const DEFAULT_SHOP_PARTNER_PRICING = {
   ...DEFAULT_SHOP_PARTNER_PRICING_SETTINGS
+};
+
+export const DEFAULT_PLATFORM_SERVICE_FEE = {
+  ...DEFAULT_PLATFORM_SERVICE_FEE_SETTINGS
+};
+
+export const DEFAULT_SYSTEM_FORTUNE = {
+  ...DEFAULT_SYSTEM_FORTUNE_SETTINGS
+};
+export const DEFAULT_SHOP_REWARD = {
+  ...DEFAULT_SHOP_REWARD_SETTINGS
 };
 
 export const MEDITATION_AUDIO_LIBRARY_TYPES = ['bowl', 'greeting', 'nature', 'breath', 'quote', 'goodbye'];
@@ -293,6 +326,8 @@ const normalizeShopProduct = (product = {}) => ({
   description: product.description || '',
   status: product.status || 'draft',
   skuMode: product.sku_mode || product.skuMode || 'single',
+  priceCash: Number(product.price_cash ?? product.priceCash ?? product.price_cash_from ?? product.priceCashFrom ?? 0),
+  beansDeductionRatio: Number(product.beans_deduction_ratio ?? product.beansDeductionRatio ?? 0.1),
   pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
   priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
   rewardPointsReturnFrom: Number(product.reward_points_return_from ?? product.rewardPointsReturnFrom ?? 0),
@@ -312,9 +347,6 @@ const normalizeShopSku = (sku = {}) => ({
   productId: sku.product_id || sku.productId || '',
   skuName: sku.sku_name || sku.skuName || '',
   skuCode: sku.sku_code || sku.skuCode || '',
-  pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
-  priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
-  rewardPointsReturn: Number(sku.reward_points_return ?? sku.rewardPointsReturn ?? 0),
   stock: Number(sku.stock ?? 0),
   status: sku.status || 'active'
 });
@@ -401,6 +433,8 @@ const toShopProductPayload = (productData = {}) => ({
   detail_blocks: productData.detailBlocks || [],
   status: productData.status || 'draft',
   sku_mode: productData.skuMode || 'single',
+  price_cash: Number(productData.priceCash || 0),
+  beans_deduction_ratio: Number(productData.beansDeductionRatio || 0.1),
   price_points_from: Number(productData.pricePointsFrom || 0),
   price_cash_from: Number(productData.priceCashFrom || 0),
   reward_points_return_from: Number(productData.rewardPointsReturnFrom || 0),
@@ -420,9 +454,6 @@ const toShopSkuPayload = (skuData = {}, productId) => ({
   sku_name: skuData.skuName || '',
   sku_code: skuData.skuCode || '',
   attrs: skuData.attrs || {},
-  price_points: Number(skuData.pricePoints || 0),
-  price_cash: Number(skuData.priceCash || 0),
-  reward_points_return: Number(skuData.rewardPointsReturn || 0),
   stock: Number(skuData.stock || 0),
   lock_stock: Number(skuData.lockStock || 0),
   status: skuData.status || 'active',
@@ -451,6 +482,56 @@ const buildDefaultStoreName = (user = {}) => {
   return normalizedName ? `${normalizedName}店铺` : '品牌方店铺';
 };
 
+const DAILY_BEANS_BASE_AMOUNT = 100;
+
+const getShanghaiDateKey = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value || '';
+  const month = parts.find((part) => part.type === 'month')?.value || '';
+  const day = parts.find((part) => part.type === 'day')?.value || '';
+  return year && month && day ? `${year}-${month}-${day}` : '';
+};
+
+const getDaysDiffByShanghaiDateKey = (fromDateKey = '', toDateKey = getShanghaiDateKey()) => {
+  if (!fromDateKey || !toDateKey) {
+    return 0;
+  }
+
+  const parseDateKey = (dateKey) => {
+    const normalized = String(dateKey || '').trim();
+    if (!normalized) {
+      return new Date(NaN);
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return new Date(`${normalized}T00:00:00+08:00`);
+    }
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(normalized)) {
+      const [month, day, year] = normalized.split('/');
+      return new Date(`${year}-${month}-${day}T00:00:00+08:00`);
+    }
+    return new Date(NaN);
+  };
+
+  const fromDate = parseDateKey(fromDateKey);
+  const toDate = parseDateKey(toDateKey);
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)));
+};
+
 const isBrandScopeTagName = (value = '') => (
   BRAND_SCOPE_DEFINITIONS.some((definition) => definition.tagName === String(value || '').trim())
 );
@@ -458,10 +539,14 @@ const isBrandScopeTagName = (value = '') => (
 const normalizePartnerOrder = (order = {}) => ({
   id: getDocumentId(order),
   orderNo: order.order_no || order.orderNo || '',
+  userId: order.user_id || order.userId || '',
   roleType: order.role_type || order.roleType || 'agent',
   status: order.status || 'pending_payment',
   listAmount: Number(order.list_amount ?? order.listAmount ?? 0),
   payableAmount: Number(order.payable_amount ?? order.payableAmount ?? 0),
+  platformServiceFeeRate: Number(order.platform_service_fee_rate ?? order.platformServiceFeeRate ?? 0),
+  platformServiceFeeAmount: Number(order.platform_service_fee_amount ?? order.platformServiceFeeAmount ?? 0),
+  merchantSettleAmount: Number(order.merchant_settle_amount ?? order.merchantSettleAmount ?? 0),
   discountRate: Number(order.discount_rate ?? order.discountRate ?? 1),
   submittedAt: order.submitted_at || order.submittedAt || order.created_at || order.createdAt || '',
   note: order.note || ''
@@ -478,7 +563,13 @@ const normalizePartnerSubOrder = (order = {}) => ({
   status: order.status || 'pending_payment',
   itemCount: Number(order.item_count ?? order.itemCount ?? 0),
   payableAmount: Number(order.payable_amount ?? order.payableAmount ?? 0),
-  discountRate: Number(order.discount_rate ?? order.discountRate ?? 1)
+  platformServiceFeeRate: Number(order.platform_service_fee_rate ?? order.platformServiceFeeRate ?? 0),
+  platformServiceFeeAmount: Number(order.platform_service_fee_amount ?? order.platformServiceFeeAmount ?? 0),
+  merchantSettleAmount: Number(order.merchant_settle_amount ?? order.merchantSettleAmount ?? 0),
+  discountRate: Number(order.discount_rate ?? order.discountRate ?? 1),
+  createdAt: order.created_at || order.createdAt || '',
+  updatedAt: order.updated_at || order.updatedAt || '',
+  productType: order.product_type || order.productType || 'physical'
 });
 
 const normalizePartnerBrand = (brand = {}) => ({
@@ -495,6 +586,11 @@ const normalizePartnerBrand = (brand = {}) => ({
   returnAddress: brand.return_address || brand.returnAddress || {},
   brandScopeTags: Array.isArray(brand.brand_scope_tags || brand.brandScopeTags) ? (brand.brand_scope_tags || brand.brandScopeTags) : [],
   allowedCategoryNames: Array.isArray(brand.allowed_category_names || brand.allowedCategoryNames) ? (brand.allowed_category_names || brand.allowedCategoryNames) : [],
+  communityBeansBalance: Math.max(0, Number(brand.community_beans_balance ?? brand.communityBeansBalance ?? 0)),
+  heartLampStatus: brand.heart_lamp_status || brand.heartLampStatus || 'active',
+  heartLampLastExtinguishedAt: brand.heart_lamp_last_extinguished_at || brand.heartLampLastExtinguishedAt || '',
+  heartLampLastIgnitedAt: brand.heart_lamp_last_ignited_at || brand.heartLampLastIgnitedAt || '',
+  heartLampDailySettledAt: brand.heart_lamp_daily_settled_at || brand.heartLampDailySettledAt || '',
   createdAt: brand.created_at || brand.createdAt || '',
   updatedAt: brand.updated_at || brand.updatedAt || ''
 });
@@ -526,10 +622,14 @@ const normalizePartnerBrandInvite = (invite = {}) => ({
 
 const toPartnerOrderPayload = (orderData = {}) => ({
   order_no: orderData.orderNo || '',
+  user_id: orderData.userId || '',
   role_type: orderData.roleType || 'agent',
   status: orderData.status || 'pending_payment',
   list_amount: Number(orderData.listAmount || 0),
   payable_amount: Number(orderData.payableAmount || 0),
+  platform_service_fee_rate: Number(orderData.platformServiceFeeRate || 0),
+  platform_service_fee_amount: Number(orderData.platformServiceFeeAmount || 0),
+  merchant_settle_amount: Number(orderData.merchantSettleAmount || 0),
   discount_rate: Number(orderData.discountRate || 1),
   submitted_at: orderData.submittedAt || new Date().toISOString(),
   note: orderData.note || ''
@@ -545,6 +645,9 @@ const toPartnerSubOrderPayload = (subOrderData = {}, partnerOrderId = '') => ({
   status: subOrderData.status || 'pending_payment',
   item_count: Number(subOrderData.itemCount || 0),
   payable_amount: Number(subOrderData.payableAmount || 0),
+  platform_service_fee_rate: Number(subOrderData.platformServiceFeeRate || 0),
+  platform_service_fee_amount: Number(subOrderData.platformServiceFeeAmount || 0),
+  merchant_settle_amount: Number(subOrderData.merchantSettleAmount || 0),
   discount_rate: Number(subOrderData.discountRate || 1)
 });
 
@@ -557,6 +660,39 @@ const createWealthHistoryEntry = ({ amount, description, source, relatedUserId =
   source,
   relatedUserId
 });
+
+const addToSystemFortunePool = async (delta = 0) => {
+  const normalizedDelta = Math.max(0, Number(delta || 0));
+  if (!normalizedDelta) {
+    return null;
+  }
+
+  const existingResult = await db
+    .collection(collections.appSettings)
+    .where({ key: SYSTEM_FORTUNE_SETTINGS_KEY })
+    .limit(1)
+    .get();
+
+  const existingDocument = getFirstDocument(existingResult, collections.appSettings);
+  const currentBalance = Math.max(0, Number(existingDocument?.system_beans_balance ?? existingDocument?.systemBeansBalance ?? 0));
+  const nextBalance = currentBalance + normalizedDelta;
+  const payload = {
+    ...toSystemFortuneSettingsPayload({ systemBeansBalance: nextBalance }),
+    updated_at: new Date()
+  };
+
+  if (existingDocument) {
+    await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+    return nextBalance;
+  }
+
+  const createResult = await db.collection(collections.appSettings).add({
+    ...payload,
+    created_at: new Date()
+  });
+
+  return createResult.id ? nextBalance : nextBalance;
+};
 
 const getEquippedBadgeBonusForActivity = async ({ userId, activityType, baseAmount = 0 }) => {
   if (!userId || !activityType) {
@@ -621,6 +757,9 @@ const normalizeUser = (user) => ({
   storeOwnerUserId: user.store_owner_user_id || user.storeOwnerUserId || '',
   storeDescription: user.store_description || user.storeDescription || '',
   storeContact: user.store_contact || user.storeContact || '',
+  beansDailySettledAt: user.beans_daily_settled_at || user.beansDailySettledAt || '',
+  beansLastExtinguishedAt: user.beans_last_extinguished_at || user.beansLastExtinguishedAt || '',
+  beansLastIgnitedAt: user.beans_last_ignited_at || user.beansLastIgnitedAt || '',
   tags: []
 });
 
@@ -1168,9 +1307,201 @@ const toMeditationLibraryPayload = (data = {}) => ({
 });
 
 class DatabaseService {
+  static async ensureAllProductsAssignedToStore102() {
+    try {
+      await ensureAnonymousLogin();
+
+      const [usersResult, brandsResult, productsResult] = await Promise.all([
+        db.collection(collections.users).limit(2000).get(),
+        db.collection(collections.partnerBrands).limit(500).get().catch(() => ({ data: [] })),
+        db.collection(collections.shopProducts).limit(2000).get()
+      ]);
+
+      const users = getDocuments(usersResult, collections.users);
+      const brands = getDocuments(brandsResult, collections.partnerBrands);
+      const products = getDocuments(productsResult, collections.shopProducts);
+
+      const owner102 = users.find((user) => Number(user.uid || 0) === 102) || null;
+      if (!owner102) {
+        return;
+      }
+
+      const ownerUserId = getDocumentId(owner102);
+      const storeId = String(owner102.store_id || owner102.storeId || buildDefaultStoreId(owner102)).trim() || 'store_102';
+      const storeName = String(owner102.store_name || owner102.storeName || buildDefaultStoreName(owner102)).trim() || '102店铺';
+      const boundBrand = brands.find((brand) => String(brand.owner_user_id || brand.ownerUserId || '').trim() === ownerUserId) || null;
+      const brandId = getDocumentId(boundBrand);
+
+      for (const product of products) {
+        const productId = getDocumentId(product);
+        if (!productId) {
+          continue;
+        }
+
+        const currentStoreId = String(product.store_id || product.storeId || '').trim();
+        const currentStoreOwnerUserId = String(product.store_owner_user_id || product.storeOwnerUserId || '').trim();
+        const currentBrandId = String(product.brand_id || product.brandId || '').trim();
+
+        if (currentStoreId === storeId && currentStoreOwnerUserId === ownerUserId && (!brandId || currentBrandId === brandId)) {
+          continue;
+        }
+
+        await db.collection(collections.shopProducts).doc(productId).update({
+          store_id: storeId,
+          store_name: storeName,
+          store_owner_user_id: ownerUserId,
+          ...(brandId ? { brand_id: brandId } : {}),
+          updated_at: new Date()
+        }).catch(() => {});
+      }
+    } catch (error) {
+      console.error('Error assigning all products to store_102:', error);
+      throw error;
+    }
+  }
+
+  static async dedupeStore102Brands() {
+    try {
+      await ensureAnonymousLogin();
+
+      const [usersResult, brandsResult, membersResult, invitesResult, productsResult, subOrdersResult, pointLedgerResult] = await Promise.all([
+        db.collection(collections.users).limit(2000).get(),
+        db.collection(collections.partnerBrands).limit(500).get().catch(() => ({ data: [] })),
+        db.collection(collections.partnerBrandMembers).limit(5000).get().catch(() => ({ data: [] })),
+        db.collection(collections.partnerBrandInvites).limit(5000).get().catch(() => ({ data: [] })),
+        db.collection(collections.shopProducts).limit(2000).get(),
+        db.collection(collections.partnerSubOrders).limit(5000).get().catch(() => ({ data: [] })),
+        db.collection(collections.pointLedger).limit(5000).get().catch(() => ({ data: [] }))
+      ]);
+
+      const users = getDocuments(usersResult, collections.users);
+      const brands = getDocuments(brandsResult, collections.partnerBrands);
+      const members = getDocuments(membersResult, collections.partnerBrandMembers);
+      const invites = getDocuments(invitesResult, collections.partnerBrandInvites);
+      const products = getDocuments(productsResult, collections.shopProducts);
+      const subOrders = getDocuments(subOrdersResult, collections.partnerSubOrders);
+      const pointLedgerEntries = getDocuments(pointLedgerResult, collections.pointLedger);
+
+      const owner102 = users.find((user) => Number(user.uid || 0) === 102) || null;
+      if (!owner102) {
+        return;
+      }
+
+      const ownerUserId = getDocumentId(owner102);
+      const targetStoreId = String(owner102.store_id || owner102.storeId || buildDefaultStoreId(owner102)).trim() || 'store_102';
+
+      const duplicateBrands = brands.filter((brand) => (
+        String(brand.slug || '').trim() === targetStoreId
+        || String(brand.owner_user_id || brand.ownerUserId || '').trim() === ownerUserId
+      ));
+
+      if (duplicateBrands.length <= 1) {
+        return;
+      }
+
+      const duplicateBrandIds = new Set(duplicateBrands.map((brand) => getDocumentId(brand)).filter(Boolean));
+      const membersCountByBrandId = new Map();
+      members.forEach((member) => {
+        const brandId = String(member.brand_id || member.brandId || '').trim();
+        if (!duplicateBrandIds.has(brandId)) {
+          return;
+        }
+        membersCountByBrandId.set(brandId, (membersCountByBrandId.get(brandId) || 0) + 1);
+      });
+
+      const primaryBrand = [...duplicateBrands].sort((left, right) => {
+        const leftId = getDocumentId(left);
+        const rightId = getDocumentId(right);
+        const leftScore = (membersCountByBrandId.get(leftId) || 0) + (String(left.owner_user_id || left.ownerUserId || '').trim() === ownerUserId ? 10 : 0);
+        const rightScore = (membersCountByBrandId.get(rightId) || 0) + (String(right.owner_user_id || right.ownerUserId || '').trim() === ownerUserId ? 10 : 0);
+        return rightScore - leftScore;
+      })[0];
+
+      const primaryBrandId = getDocumentId(primaryBrand);
+      const redundantBrands = duplicateBrands.filter((brand) => getDocumentId(brand) !== primaryBrandId);
+
+      for (const redundantBrand of redundantBrands) {
+        const redundantBrandId = getDocumentId(redundantBrand);
+        if (!redundantBrandId) {
+          continue;
+        }
+
+        for (const product of products.filter((item) => String(item.brand_id || item.brandId || '').trim() === redundantBrandId)) {
+          const productId = getDocumentId(product);
+          if (!productId) {
+            continue;
+          }
+          await db.collection(collections.shopProducts).doc(productId).update({
+            brand_id: primaryBrandId,
+            updated_at: new Date()
+          }).catch(() => {});
+        }
+
+        for (const subOrder of subOrders.filter((item) => String(item.brand_id || item.brandId || '').trim() === redundantBrandId)) {
+          const subOrderId = getDocumentId(subOrder);
+          if (!subOrderId) {
+            continue;
+          }
+          await db.collection(collections.partnerSubOrders).doc(subOrderId).update({
+            brand_id: primaryBrandId,
+            updated_at: new Date()
+          }).catch(() => {});
+        }
+
+        for (const entry of pointLedgerEntries.filter((item) => String(item.biz_id || item.bizId || '').trim() === redundantBrandId)) {
+          const entryId = getDocumentId(entry);
+          if (!entryId) {
+            continue;
+          }
+          await db.collection(collections.pointLedger).doc(entryId).update({
+            biz_id: primaryBrandId
+          }).catch(() => {});
+        }
+
+        for (const member of members.filter((item) => String(item.brand_id || item.brandId || '').trim() === redundantBrandId)) {
+          const memberId = getDocumentId(member);
+          if (!memberId) {
+            continue;
+          }
+
+          const memberUserId = String(member.user_id || member.userId || '').trim();
+          const existingPrimaryMember = members.find((item) => (
+            String(item.brand_id || item.brandId || '').trim() === primaryBrandId
+            && String(item.user_id || item.userId || '').trim() === memberUserId
+          ));
+
+          if (existingPrimaryMember) {
+            await db.collection(collections.partnerBrandMembers).doc(memberId).remove().catch(() => {});
+          } else {
+            await db.collection(collections.partnerBrandMembers).doc(memberId).update({
+              brand_id: primaryBrandId
+            }).catch(() => {});
+          }
+        }
+
+        for (const invite of invites.filter((item) => String(item.brand_id || item.brandId || '').trim() === redundantBrandId)) {
+          const inviteId = getDocumentId(invite);
+          if (!inviteId) {
+            continue;
+          }
+          await db.collection(collections.partnerBrandInvites).doc(inviteId).update({
+            brand_id: primaryBrandId
+          }).catch(() => {});
+        }
+
+        await db.collection(collections.partnerBrands).doc(redundantBrandId).remove().catch(() => {});
+      }
+    } catch (error) {
+      console.error('Error deduping store_102 brands:', error);
+      throw error;
+    }
+  }
+
   static async getShopManagementData() {
     try {
       await ensureAnonymousLogin();
+      await this.dedupeStore102Brands();
+      await this.ensureAllProductsAssignedToStore102();
       const [categoriesResult, productsResult, skusResult, ordersResult, orderItemsResult] = await Promise.all([
         db.collection(collections.shopCategories).limit(200).get(),
         db.collection(collections.shopProducts).limit(500).get(),
@@ -1298,11 +1629,87 @@ class DatabaseService {
       }
 
       const resolvedSubOrderId = getDocumentId(subOrderDocument);
+      const partnerOrderId = subOrderDocument.partner_order_id || subOrderDocument.partnerOrderId || '';
 
       await db.collection(collections.partnerSubOrders).doc(resolvedSubOrderId).update({
         status: nextStatus,
         updated_at: new Date()
       });
+
+      if (partnerOrderId && ['shipped', 'completed', '已发货', '已完成'].includes(nextStatus)) {
+        const [partnerOrderResult, siblingSubOrdersResult] = await Promise.all([
+          db.collection(collections.partnerOrders).doc(partnerOrderId).get().catch(() => ({ data: [] })),
+          db.collection(collections.partnerSubOrders).where({ partner_order_id: partnerOrderId }).limit(100).get().catch(() => ({ data: [] }))
+        ]);
+
+        const partnerOrderDocument = getFirstDocument(partnerOrderResult, collections.partnerOrders);
+        const siblingSubOrders = getDocuments(siblingSubOrdersResult, collections.partnerSubOrders).map((item) => ({
+          ...item,
+          status: getDocumentId(item) === resolvedSubOrderId ? nextStatus : (item.status || '')
+        }));
+
+        const allCompleted = siblingSubOrders.length > 0 && siblingSubOrders.every((item) => ['shipped', 'completed', '已发货', '已完成'].includes(item.status || ''));
+        const userId = partnerOrderDocument?.user_id || partnerOrderDocument?.userId || '';
+        const rewardAlreadyGranted = Boolean(partnerOrderDocument?.agent_reward_granted || partnerOrderDocument?.agentRewardGranted);
+
+        if (allCompleted && userId && !rewardAlreadyGranted) {
+          const userDocument = getFirstDocument(await db.collection(collections.users).doc(userId).get(), collections.users);
+          if (userDocument) {
+            const shopRewardSettings = await DatabaseService.getShopRewardSettings();
+            const rewardAmount = Math.max(0, Number((Number(partnerOrderDocument?.payable_amount ?? partnerOrderDocument?.payableAmount ?? 0) * Number(shopRewardSettings.rewardBeansPerYuan || 0)).toFixed(0)));
+            if (rewardAmount > 0) {
+              const systemFortuneSettings = await DatabaseService.getSystemFortuneSettings();
+              const currentSystemBalance = Math.max(0, Number(systemFortuneSettings.systemBeansBalance || 0));
+              if (currentSystemBalance < rewardAmount) {
+                throw new Error('系统福豆余额不足，无法发放代理商成交返豆');
+              }
+
+              const nextBalance = Number(userDocument.balance || 0) + rewardAmount;
+              const nowIso = new Date().toISOString();
+              const wealthHistoryEntry = createWealthHistoryEntry({
+                amount: rewardAmount,
+                description: `代理商对账完成奖励：${partnerOrderDocument.order_no || partnerOrderDocument.orderNo || partnerOrderId}`,
+                source: 'partner_order_retail_reward',
+                relatedUserId: userId
+              });
+
+              await db.collection(collections.pointLedger).add({
+                user_id: userId,
+                delta: rewardAmount,
+                balance_after: nextBalance,
+                biz_type: 'partner_order_retail_reward',
+                biz_id: partnerOrderId,
+                description: `代理商对账完成奖励：${partnerOrderDocument.order_no || partnerOrderDocument.orderNo || partnerOrderId}`,
+                operator_id: 'admin',
+                created_at: nowIso
+              });
+
+              await db.collection(collections.users).doc(userId).update({
+                balance: nextBalance,
+                wealth_history: [wealthHistoryEntry].concat(userDocument.wealth_history || []),
+                updated_at: nowIso
+              });
+
+              await db.collection(collections.appSettings).where({ key: SYSTEM_FORTUNE_SETTINGS_KEY }).limit(1).get().then((result) => {
+                const existingDocument = getDocuments(result, collections.appSettings)[0] || null;
+                if (!existingDocument) {
+                  throw new Error('系统福豆设置缺失，无法扣减代理商返豆');
+                }
+                return db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update({
+                  system_beans_balance: Math.max(0, currentSystemBalance - rewardAmount),
+                  updated_at: new Date()
+                });
+              });
+
+              await db.collection(collections.partnerOrders).doc(partnerOrderId).update({
+                agent_reward_granted: true,
+                agent_reward_granted_at: nowIso,
+                updated_at: new Date()
+              }).catch(() => {});
+            }
+          }
+        }
+      }
 
       return normalizePartnerSubOrder({
         ...subOrderDocument,
@@ -1324,8 +1731,9 @@ class DatabaseService {
         db.collection(collections.partnerBrandInvites).limit(2000).get().catch(() => ({ data: [] }))
       ]);
 
+      const normalizedBrands = getDocuments(brandsResult, collections.partnerBrands).map(normalizePartnerBrand);
       return {
-        brands: getDocuments(brandsResult, collections.partnerBrands).map(normalizePartnerBrand),
+        brands: normalizedBrands,
         members: getDocuments(membersResult, collections.partnerBrandMembers).map(normalizePartnerBrandMember),
         invites: getDocuments(invitesResult, collections.partnerBrandInvites).map(normalizePartnerBrandInvite)
       };
@@ -1351,12 +1759,36 @@ class DatabaseService {
         return_address: brandData.returnAddress || {},
         brand_scope_tags: brandData.brandScopeTags || [],
         allowed_category_names: brandData.allowedCategoryNames || [],
+        community_beans_balance: Math.max(0, Number(brandData.communityBeansBalance ?? 0)),
+        heart_lamp_status: String(brandData.heartLampStatus || 'active').trim() || 'active',
+        heart_lamp_last_extinguished_at: brandData.heartLampLastExtinguishedAt || '',
+        heart_lamp_last_ignited_at: brandData.heartLampLastIgnitedAt || '',
         updated_at: new Date()
       };
 
       if (brandData.id) {
         await db.collection(collections.partnerBrands).doc(brandData.id).update(payload);
         return normalizePartnerBrand({ ...brandData, ...payload });
+      }
+
+      const ownerUserId = String(payload.owner_user_id || '').trim();
+      const slug = String(payload.slug || '').trim();
+      const [existingByOwnerResult, existingBySlugResult] = await Promise.all([
+        ownerUserId
+          ? db.collection(collections.partnerBrands).where({ owner_user_id: ownerUserId }).limit(1).get().catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
+        slug
+          ? db.collection(collections.partnerBrands).where({ slug }).limit(1).get().catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] })
+      ]);
+
+      const existingBrand = getFirstDocument(existingByOwnerResult, collections.partnerBrands)
+        || getFirstDocument(existingBySlugResult, collections.partnerBrands);
+
+      if (existingBrand) {
+        const existingBrandId = getDocumentId(existingBrand);
+        await db.collection(collections.partnerBrands).doc(existingBrandId).update(payload);
+        return normalizePartnerBrand({ ...existingBrand, ...payload, _id: existingBrandId });
       }
 
       const result = await db.collection(collections.partnerBrands).add({
@@ -1366,6 +1798,139 @@ class DatabaseService {
       return normalizePartnerBrand({ ...brandData, ...payload, _id: result.id });
     } catch (error) {
       console.error('Error saving partner brand:', error);
+      throw error;
+    }
+  }
+
+  static async applyBrandDailyBeanBurn(brandId, metrics = {}) {
+    try {
+      await ensureAnonymousLogin();
+      if (!brandId) {
+        return null;
+      }
+
+      const brandDocument = getFirstDocument(await db.collection(collections.partnerBrands).doc(brandId).get(), collections.partnerBrands);
+      if (!brandDocument) {
+        return null;
+      }
+
+      const todayDateKey = getShanghaiDateKey();
+      const settledAt = brandDocument.heart_lamp_daily_settled_at || brandDocument.heartLampDailySettledAt || '';
+      const daysToSettle = getDaysDiffByShanghaiDateKey(settledAt, todayDateKey);
+      if (daysToSettle <= 0) {
+        return normalizePartnerBrand(brandDocument);
+      }
+
+      const dailyConsumption = Math.max(0, Number(metrics.dailyBeansConsumption || 0));
+      const currentBalance = Math.max(0, Number(brandDocument.community_beans_balance ?? brandDocument.communityBeansBalance ?? 0));
+      const burnAmount = Math.min(currentBalance, Number((dailyConsumption * daysToSettle).toFixed(2)));
+      const nextBalance = Math.max(0, Number((currentBalance - burnAmount).toFixed(2)));
+      const nowIso = new Date().toISOString();
+      const updatePayload = {
+        community_beans_balance: nextBalance,
+        heart_lamp_daily_settled_at: todayDateKey,
+        heart_lamp_status: nextBalance <= 0 ? 'extinguished' : 'active',
+        updated_at: new Date()
+      };
+
+      if (nextBalance <= 0 && currentBalance > 0) {
+        updatePayload.heart_lamp_last_extinguished_at = nowIso;
+      } else if (currentBalance <= 0 && nextBalance > 0) {
+        updatePayload.heart_lamp_last_ignited_at = nowIso;
+      }
+
+      await db.collection(collections.partnerBrands).doc(brandId).update(updatePayload);
+
+      if (burnAmount > 0) {
+        await addToSystemFortunePool(burnAmount).catch(() => null);
+        await db.collection(collections.pointLedger).add({
+          user_id: '',
+          delta: -burnAmount,
+          balance_after: nextBalance,
+          biz_type: 'brand_daily_burn',
+          biz_id: brandId,
+          description: `品牌方每日燃烧扣减 ${daysToSettle} 天`,
+          operator_id: 'system',
+          created_at: nowIso
+        }).catch(() => {});
+      }
+
+      return normalizePartnerBrand({
+        ...brandDocument,
+        ...updatePayload,
+        _id: brandId
+      });
+    } catch (error) {
+      console.error('Error applying brand daily bean burn:', error);
+      throw error;
+    }
+  }
+
+  static async applyUserDailyBeanBurn(userId, metrics = {}) {
+    try {
+      await ensureAnonymousLogin();
+      if (!userId) {
+        return null;
+      }
+
+      const userDocument = getFirstDocument(await db.collection(collections.users).doc(userId).get(), collections.users);
+      if (!userDocument) {
+        return null;
+      }
+
+      const todayDateKey = getShanghaiDateKey();
+      const settledAt = userDocument.beans_daily_settled_at || userDocument.beansDailySettledAt || '';
+      const daysToSettle = getDaysDiffByShanghaiDateKey(settledAt, todayDateKey);
+      if (daysToSettle <= 0) {
+        return normalizeUser(userDocument);
+      }
+
+      const dailyConsumption = Math.max(0, Number(metrics.dailyBeansConsumption || 0));
+      const currentBalance = Math.max(0, Number(userDocument.balance || 0));
+      const burnAmount = Math.min(currentBalance, Number((dailyConsumption * daysToSettle).toFixed(2)));
+      const nextBalance = Math.max(0, Number((currentBalance - burnAmount).toFixed(2)));
+      const nowIso = new Date().toISOString();
+      const wealthHistoryEntry = burnAmount > 0
+        ? createWealthHistoryEntry({
+            amount: -burnAmount,
+            description: `代理商每日燃烧扣减 ${daysToSettle} 天`,
+            source: 'agent_daily_burn',
+            relatedUserId: userId
+          })
+        : null;
+
+      await db.collection(collections.users).doc(userId).update({
+        balance: nextBalance,
+        beans_daily_settled_at: todayDateKey,
+        beans_last_extinguished_at: nextBalance <= 0 && currentBalance > 0 ? nowIso : (userDocument.beans_last_extinguished_at || userDocument.beansLastExtinguishedAt || ''),
+        beans_last_ignited_at: currentBalance <= 0 && nextBalance > 0 ? nowIso : (userDocument.beans_last_ignited_at || userDocument.beansLastIgnitedAt || ''),
+        wealth_history: wealthHistoryEntry ? [wealthHistoryEntry].concat(userDocument.wealth_history || []) : (userDocument.wealth_history || []),
+        updated_at: nowIso
+      });
+
+      if (burnAmount > 0) {
+        await addToSystemFortunePool(burnAmount).catch(() => null);
+        await db.collection(collections.pointLedger).add({
+          user_id: userId,
+          delta: -burnAmount,
+          balance_after: nextBalance,
+          biz_type: 'agent_daily_burn',
+          biz_id: userId,
+          description: `代理商每日燃烧扣减 ${daysToSettle} 天`,
+          operator_id: 'system',
+          created_at: nowIso
+        }).catch(() => {});
+      }
+
+      return normalizeUser({
+        ...userDocument,
+        balance: nextBalance,
+        beans_daily_settled_at: todayDateKey,
+        beans_last_extinguished_at: nextBalance <= 0 && currentBalance > 0 ? nowIso : (userDocument.beans_last_extinguished_at || userDocument.beansLastExtinguishedAt || ''),
+        beans_last_ignited_at: currentBalance <= 0 && nextBalance > 0 ? nowIso : (userDocument.beans_last_ignited_at || userDocument.beansLastIgnitedAt || '')
+      });
+    } catch (error) {
+      console.error('Error applying user daily bean burn:', error);
       throw error;
     }
   }
@@ -1419,9 +1984,6 @@ class DatabaseService {
       await ensureAnonymousLogin();
       const actorUser = options.actorUser || null;
       const skus = Array.isArray(productData.skus) ? productData.skus : [];
-      const derivedRewardPointsReturnFrom = skus.length > 0
-        ? Math.min(...skus.map((sku) => Math.max(0, Number(sku.rewardPointsReturn || 0))))
-        : Math.max(0, Number(productData.rewardPointsReturnFrom || 0));
       const categoryDocument = productData.categoryId
         ? getFirstDocument(await db.collection(collections.shopCategories).doc(productData.categoryId).get().catch(() => ({ data: [] })), collections.shopCategories)
         : null;
@@ -1447,7 +2009,6 @@ class DatabaseService {
       const productPayload = {
         ...toShopProductPayload({
           ...productData,
-          rewardPointsReturnFrom: derivedRewardPointsReturnFrom,
           productType: resolvedProductType,
           storeId: resolvedStoreId,
           storeName: resolvedStoreName,
@@ -1521,14 +2082,15 @@ class DatabaseService {
         updatePayload.completed_at = nowIso;
       }
 
-      if (nextStatus === 'paid' && order.status !== 'paid' && order.totalCash > 0 && (order.rewardPointsAwarded + order.badgeBonusPointsAwarded) === 0) {
+      if (nextStatus === 'completed' && order.status !== 'completed' && order.totalCash > 0 && (order.rewardPointsAwarded + order.badgeBonusPointsAwarded) === 0) {
         const userDocument = getFirstDocument(await db.collection(collections.users).doc(order.userId).get(), collections.users);
         const orderItemsResult = await db.collection(collections.shopOrderItems).where({ order_id: resolvedOrderId }).limit(20).get().catch(() => ({ data: [] }));
         const orderItems = getDocuments(orderItemsResult, collections.shopOrderItems);
         const membershipPlanKey = resolveStudentMembershipPlanKeyFromOrder(orderDocument, orderItems);
 
         if (userDocument) {
-          const configuredRewardPoints = Math.max(0, Number(order.rewardPointsReturnTotal || 0));
+          const shopRewardSettings = await DatabaseService.getShopRewardSettings();
+          const configuredRewardPoints = Math.max(0, Number((Number(order.totalCash || 0) * Number(shopRewardSettings.rewardBeansPerYuan || 0)).toFixed(0)));
           const badgeBonus = await getEquippedBadgeBonusForActivity({
             userId: order.userId,
             activityType: BADGE_ACTIVITY_TYPES.shopSpend,
@@ -1537,6 +2099,12 @@ class DatabaseService {
           const totalRewardPoints = configuredRewardPoints + Math.max(0, Number(badgeBonus.rewardAmount || 0));
 
           if (totalRewardPoints > 0) {
+            const systemFortuneSettings = await DatabaseService.getSystemFortuneSettings();
+            const currentSystemBalance = Math.max(0, Number(systemFortuneSettings.systemBeansBalance || 0));
+            if (currentSystemBalance < totalRewardPoints) {
+              throw new Error('系统福豆余额不足，无法发放工坊返豆');
+            }
+
             const nextBalance = Number(userDocument.balance || 0) + totalRewardPoints;
             const wealthHistoryEntry = createWealthHistoryEntry({
               amount: totalRewardPoints,
@@ -1560,6 +2128,17 @@ class DatabaseService {
               balance: nextBalance,
               wealth_history: [wealthHistoryEntry].concat(userDocument.wealth_history || []),
               updated_at: nowIso
+            });
+
+            await db.collection(collections.appSettings).where({ key: SYSTEM_FORTUNE_SETTINGS_KEY }).limit(1).get().then((result) => {
+              const existingDocument = getDocuments(result, collections.appSettings)[0] || null;
+              if (!existingDocument) {
+                throw new Error('系统福豆设置缺失，无法扣减返豆');
+              }
+              return db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update({
+                system_beans_balance: Math.max(0, currentSystemBalance - totalRewardPoints),
+                updated_at: new Date()
+              });
             });
 
             updatePayload.reward_points_awarded = configuredRewardPoints;
@@ -2342,6 +2921,117 @@ class DatabaseService {
     }
   }
 
+  static async getPlatformServiceFeeSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: PLATFORM_SERVICE_FEE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_PLATFORM_SERVICE_FEE,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_PLATFORM_SERVICE_FEE };
+      }
+
+      return normalizePlatformServiceFeeSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_PLATFORM_SERVICE_FEE,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching platform service fee settings:', error);
+      throw error;
+    }
+  }
+
+  static async getSystemFortuneSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: SYSTEM_FORTUNE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_SYSTEM_FORTUNE,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_SYSTEM_FORTUNE };
+      }
+
+      return normalizeSystemFortuneSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_SYSTEM_FORTUNE,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching system fortune settings:', error);
+      throw error;
+    }
+  }
+
+  static async getShopRewardSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: SHOP_REWARD_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(result)) {
+        return {
+          ...DEFAULT_SHOP_REWARD,
+          missingCollection: true
+        };
+      }
+
+      const documents = getDocuments(result, collections.appSettings);
+      const document = documents[0];
+
+      if (!document) {
+        return { ...DEFAULT_SHOP_REWARD };
+      }
+
+      return normalizeShopRewardSettings(document);
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return {
+          ...DEFAULT_SHOP_REWARD,
+          missingCollection: true
+        };
+      }
+
+      console.error('Error fetching shop reward settings:', error);
+      throw error;
+    }
+  }
+
   static async saveStudentMembershipSettings(settingsData) {
     try {
       await ensureAnonymousLogin();
@@ -2428,6 +3118,141 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error saving shop partner pricing settings:', error);
+      throw error;
+    }
+  }
+
+  static async savePlatformServiceFeeSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: PLATFORM_SERVICE_FEE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toPlatformServiceFeeSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizePlatformServiceFeeSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizePlatformServiceFeeSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving platform service fee settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveSystemFortuneSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: SYSTEM_FORTUNE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toSystemFortuneSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeSystemFortuneSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeSystemFortuneSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving system fortune settings:', error);
+      throw error;
+    }
+  }
+
+  static async saveShopRewardSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: SHOP_REWARD_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error(
+          `CloudBase 已连接，但缺少集合 ${collections.appSettings}。请先创建该集合并配置前端可读写权限。`
+        );
+      }
+
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = {
+        ...toShopRewardSettingsPayload(settingsData),
+        updated_at: new Date()
+      };
+
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeShopRewardSettings({
+          ...existingDocument,
+          ...payload
+        });
+      }
+
+      const createResult = await db.collection(collections.appSettings).add({
+        ...payload,
+        created_at: new Date()
+      });
+
+      return normalizeShopRewardSettings({
+        ...payload,
+        _id: createResult.id
+      });
+    } catch (error) {
+      console.error('Error saving shop reward settings:', error);
       throw error;
     }
   }
@@ -3288,6 +4113,10 @@ class DatabaseService {
             return_address: {},
             brand_scope_tags: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.tagName),
             allowed_category_names: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.categoryName),
+            community_beans_balance: 0,
+            heart_lamp_status: 'active',
+            heart_lamp_last_extinguished_at: '',
+            heart_lamp_last_ignited_at: new Date().toISOString(),
             created_at: new Date(),
             updated_at: new Date()
           });
@@ -3534,7 +4363,6 @@ class DatabaseService {
         db.collection(collections.tagCategories).limit(1000).get(),
         db.collection(collections.userTags).limit(10000).get()
       ]);
-
       return attachTagsToUsers(
         getDocuments(usersResult, collections.users),
         getDocuments(tagsResult, collections.tags),
@@ -3571,6 +4399,175 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Error assigning user to store:', error);
+      throw error;
+    }
+  }
+
+  static async adjustUserBalanceWithSystemPool(userId, delta, options = {}) {
+    try {
+      await ensureAnonymousLogin();
+
+      const normalizedDelta = Number(delta || 0);
+      if (!normalizedDelta) {
+        throw new Error('调整数量不能为空');
+      }
+
+      const [userResult, systemFortuneSettings] = await Promise.all([
+        db.collection(collections.users).doc(userId).get(),
+        this.getSystemFortuneSettings()
+      ]);
+      const userDocument = getFirstDocument(userResult, collections.users);
+
+      if (!userDocument) {
+        throw new Error('未找到目标用户');
+      }
+
+      const currentUserBalance = Number(userDocument.balance || 0);
+      const nextUserBalance = currentUserBalance + normalizedDelta;
+      if (nextUserBalance < 0) {
+        throw new Error('用户福豆余额不足');
+      }
+
+      const currentSystemBalance = Number(systemFortuneSettings.systemBeansBalance || 0);
+      const nextSystemBalance = currentSystemBalance - normalizedDelta;
+      if (nextSystemBalance < 0) {
+        throw new Error('系统福豆余额不足');
+      }
+
+      await db.collection(collections.users).doc(userId).update({
+        balance: nextUserBalance,
+        updated_at: new Date()
+      });
+
+      await this.saveSystemFortuneSettings({
+        ...systemFortuneSettings,
+        systemBeansBalance: nextSystemBalance
+      });
+
+      await db.collection(collections.pointLedger).add({
+        user_id: userId,
+        delta: normalizedDelta,
+        balance_after: nextUserBalance,
+        biz_type: normalizedDelta > 0 ? 'admin_grant' : 'admin_reclaim',
+        biz_id: options.bizId || '',
+        description: options.description || (normalizedDelta > 0 ? '管理员发放福豆' : '管理员回收福豆'),
+        activity_date_key: new Date().toISOString().split('T')[0],
+        operator_id: String(options.operatorUserId || '').trim(),
+        created_at: new Date().toISOString()
+      });
+
+      return {
+        userBalance: nextUserBalance,
+        systemBeansBalance: nextSystemBalance
+      };
+    } catch (error) {
+      console.error('Error adjusting user balance with system pool:', error);
+      throw error;
+    }
+  }
+
+  static async adjustPartnerBrandCommunityBeansBalance(brandId, delta, options = {}) {
+    try {
+      await ensureAnonymousLogin();
+
+      const normalizedDelta = Number(delta || 0);
+      if (!normalizedDelta) {
+        throw new Error('调整数量不能为空');
+      }
+
+      const [brandResult, systemFortuneSettings] = await Promise.all([
+        db.collection(collections.partnerBrands).doc(brandId).get(),
+        this.getSystemFortuneSettings()
+      ]);
+      const brandDocument = getFirstDocument(brandResult, collections.partnerBrands);
+
+      if (!brandDocument) {
+        throw new Error('未找到目标品牌店铺');
+      }
+
+      const currentBrandBalance = Number(brandDocument.community_beans_balance ?? brandDocument.communityBeansBalance ?? 0);
+      const nextBrandBalance = currentBrandBalance + normalizedDelta;
+      if (nextBrandBalance < 0) {
+        throw new Error('品牌方福豆余额不足');
+      }
+
+      const currentSystemBalance = Number(systemFortuneSettings.systemBeansBalance || 0);
+      const nextSystemBalance = currentSystemBalance - normalizedDelta;
+      if (nextSystemBalance < 0) {
+        throw new Error('系统福豆余额不足');
+      }
+
+      await db.collection(collections.partnerBrands).doc(brandId).update({
+        community_beans_balance: nextBrandBalance,
+        updated_at: new Date()
+      });
+
+      await this.saveSystemFortuneSettings({
+        ...systemFortuneSettings,
+        systemBeansBalance: nextSystemBalance
+      });
+
+      await db.collection(collections.pointLedger).add({
+        user_id: '',
+        delta: normalizedDelta,
+        balance_after: nextBrandBalance,
+        biz_type: normalizedDelta > 0 ? 'admin_grant' : 'admin_reclaim',
+        biz_id: options.bizId || brandId,
+        description: options.description || (normalizedDelta > 0 ? '管理员发放品牌方福豆' : '管理员回收品牌方福豆'),
+        activity_date_key: new Date().toISOString().split('T')[0],
+        operator_id: String(options.operatorUserId || '').trim(),
+        created_at: new Date().toISOString()
+      });
+
+      return {
+        brandBalance: nextBrandBalance,
+        systemBeansBalance: nextSystemBalance
+      };
+    } catch (error) {
+      console.error('Error adjusting partner brand community beans balance:', error);
+      throw error;
+    }
+  }
+
+  static async adjustSystemFortuneBalance(delta, options = {}) {
+    try {
+      await ensureAnonymousLogin();
+
+      const normalizedDelta = Number(delta || 0);
+      if (!normalizedDelta) {
+        throw new Error('调整数量不能为空');
+      }
+
+      const currentSettings = await this.getSystemFortuneSettings();
+      const currentSystemBalance = Number(currentSettings.systemBeansBalance || 0);
+      const nextSystemBalance = currentSystemBalance + normalizedDelta;
+
+      if (nextSystemBalance < 0) {
+        throw new Error('系统福豆余额不足');
+      }
+
+      await this.saveSystemFortuneSettings({
+        ...currentSettings,
+        systemBeansBalance: nextSystemBalance
+      });
+
+      await db.collection(collections.pointLedger).add({
+        user_id: '',
+        delta: normalizedDelta,
+        balance_after: nextSystemBalance,
+        biz_type: 'admin_system_adjust',
+        biz_id: options.bizId || '',
+        description: options.description || '管理员调整系统福豆池',
+        activity_date_key: new Date().toISOString().split('T')[0],
+        operator_id: String(options.operatorUserId || '').trim(),
+        created_at: new Date().toISOString()
+      });
+
+      return {
+        systemBeansBalance: nextSystemBalance
+      };
+    } catch (error) {
+      console.error('Error adjusting system fortune balance:', error);
       throw error;
     }
   }
@@ -3859,6 +4856,7 @@ class DatabaseService {
       return {
         ...dashboardData,
         overviewStats,
+        pointLedgerEntries,
         users: dashboardData.users.map((user) => ({
           ...user,
           avatar: avatarUrlByIndex.get(user.avatarIndex) || user.avatar || ''

@@ -66,6 +66,19 @@ const hashValue = (value = '') => (
 
 const getShopTone = (seed = '') => SHOP_TONES[hashValue(seed) % SHOP_TONES.length];
 
+const inlineCloseButtonStyle = {
+  border: 'none',
+  width: '36px',
+  height: '36px',
+  borderRadius: '50%',
+  background: 'rgba(255, 255, 255, 0.82)',
+  color: '#475569',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer'
+};
+
 const formatCash = (value) => {
   if (!value) {
     return '';
@@ -82,6 +95,10 @@ const formatRewardReturnLabel = (value) => (
   Number(value || 0) > 0 ? `返 ${Number(value || 0)} 福豆` : '默认不返豆'
 );
 
+const formatProductPricingLabel = (priceCash, beansDeductionRatio = 0.1) => (
+  `${formatCash(priceCash || 0)} · 福豆最多抵 ${Math.round(Number(beansDeductionRatio || 0) * 100)}%`
+);
+
 const getProductSynopsis = (product = {}) => (
   product.subtitle || product.description || '等待补充商品描述'
 );
@@ -91,7 +108,7 @@ const RelatedProductCard = ({ product, onOpen }) => {
     return null;
   }
 
-  const priceLabel = `${Number(product.pricePointsFrom || 0)} 福豆${product.priceCashFrom ? ` + ${formatCash(product.priceCashFrom)}` : ''}`;
+  const priceLabel = formatProductPricingLabel(product.priceCash || product.priceCashFrom || 0, product.beansDeductionRatio ?? 0.1);
 
   return (
     <button
@@ -176,6 +193,118 @@ const RelatedProductCard = ({ product, onOpen }) => {
   );
 };
 
+const AddressManagerModal = ({
+  open,
+  addresses,
+  onClose,
+  onSaveAddress
+}) => {
+  const [draft, setDraft] = useState(EMPTY_ADDRESS);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setDraft(addresses.find((item) => item.isDefault) || addresses[0] || EMPTY_ADDRESS);
+    setSaving(false);
+    setError('');
+  }, [addresses, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="shop-modal-backdrop" onClick={onClose}>
+      <div className="shop-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+        <div className="shop-modal__content">
+          <div className="shop-modal__eyebrow">address_book</div>
+          <div className="shop-modal__title-row">
+            <div>
+              <h2 className="shop-modal__title">管理收货地址</h2>
+              <p className="shop-modal__intro">选择已有地址，或直接在这里新增/编辑默认收货地址。</p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="关闭地址管理" style={inlineCloseButtonStyle}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="shop-modal__section">
+            <div className="shop-modal__section-head">
+              <MapPin size={16} />
+              <span>已保存地址</span>
+            </div>
+            <div className="shop-sku-list">
+              {addresses.length === 0 ? (
+                <div className="shop-modal__intro">暂无收货地址，请新增一条。</div>
+              ) : (
+                addresses.map((address) => (
+                  <button
+                    key={address.id}
+                    type="button"
+                    onClick={() => {
+                      setDraft(address);
+                      setError('');
+                    }}
+                    className={`shop-sku-card ${draft.id === address.id ? 'shop-sku-card--active' : ''}`}
+                  >
+                    <div className="shop-sku-card__title">{address.label || '地址'} · {address.receiverName}</div>
+                    <div className="shop-sku-card__subtitle">
+                      {address.phone} · {address.province}{address.city}{address.district}{address.detailAddress}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <section className="shop-modal__section">
+            <div className="shop-modal__section-head">
+              <Sparkles size={16} />
+              <span>编辑地址</span>
+            </div>
+            <div className="shop-address-grid">
+              <input value={draft.receiverName || ''} onChange={(event) => setDraft((current) => ({ ...current, receiverName: event.target.value }))} placeholder="收件人" style={inputStyle} />
+              <input value={draft.phone || ''} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="手机号" style={inputStyle} />
+              <input value={draft.province || ''} onChange={(event) => setDraft((current) => ({ ...current, province: event.target.value }))} placeholder="省份" style={inputStyle} />
+              <input value={draft.city || ''} onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} placeholder="城市" style={inputStyle} />
+              <input value={draft.district || ''} onChange={(event) => setDraft((current) => ({ ...current, district: event.target.value }))} placeholder="区县" style={inputStyle} />
+              <input value={draft.detailAddress || ''} onChange={(event) => setDraft((current) => ({ ...current, detailAddress: event.target.value }))} placeholder="详细地址" style={inputStyle} />
+              <input value={draft.postalCode || ''} onChange={(event) => setDraft((current) => ({ ...current, postalCode: event.target.value }))} placeholder="邮编（可选）" style={inputStyle} />
+              <input value={draft.label || ''} onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))} placeholder="标签（家/公司）" style={inputStyle} />
+            </div>
+            {error && <div className="shop-modal__feedback shop-modal__feedback--error">{error}</div>}
+          </section>
+
+          <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+            <button
+              type="button"
+              onClick={async () => {
+                setSaving(true);
+                setError('');
+                try {
+                  await onSaveAddress({ ...draft, isDefault: true });
+                  onClose();
+                } catch (nextError) {
+                  setError(nextError.message || '收货地址保存失败');
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              disabled={saving}
+              className="shop-modal__primary-action"
+            >
+              {saving ? '保存中...' : '保存地址'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const getProductVisualStyle = (product = {}, tone) => (
   product.coverImage
     ? {
@@ -196,7 +325,7 @@ const ProductModal = ({
   onShare,
   onOpenRelatedProduct,
   onClose,
-  onSaveAddress,
+  onManageAddresses,
   onCreateOrder
 }) => {
   const fallbackProduct = product || {
@@ -209,8 +338,7 @@ const ProductModal = ({
     [addresses]
   );
   const [selectedSkuId, setSelectedSkuId] = useState(defaultSkuId);
-  const [addressDraft, setAddressDraft] = useState(defaultAddress);
-  const [savingAddress, setSavingAddress] = useState(false);
+  const [selectedAddressId, setSelectedAddressId] = useState(defaultAddress?.id || '');
   const [addressError, setAddressError] = useState('');
   const tone = useMemo(
     () => getShopTone(product?.categoryId || product?.category?.slug || product?.name || ''),
@@ -219,8 +347,7 @@ const ProductModal = ({
 
   useEffect(() => {
     setSelectedSkuId(defaultSkuId);
-    setAddressDraft(defaultAddress);
-    setSavingAddress(false);
+    setSelectedAddressId(defaultAddress?.id || '');
     setAddressError('');
   }, [defaultAddress, defaultSkuId, product?.id]);
 
@@ -229,27 +356,6 @@ const ProductModal = ({
   }
 
   const selectedSku = fallbackProduct.skus.find((item) => item.id === selectedSkuId) || fallbackProduct.skus[0] || null;
-
-  const handleAddressChange = (field, value) => {
-    setAddressDraft((current) => ({
-      ...current,
-      [field]: value
-    }));
-  };
-
-  const handleSaveAddress = async () => {
-    setSavingAddress(true);
-    setAddressError('');
-
-    try {
-      const nextAddress = await onSaveAddress(addressDraft);
-      setAddressDraft(nextAddress);
-    } catch (error) {
-      setAddressError(error.message || '收货地址保存失败');
-    } finally {
-      setSavingAddress(false);
-    }
-  };
 
   return (
     <div className="shop-modal-backdrop" onClick={onClose}>
@@ -316,22 +422,17 @@ const ProductModal = ({
           <div className="shop-modal__title-row">
             <div>
               <h2 className="shop-modal__title">{product.name}</h2>
+              <div className="shop-modal__price-hero">
+                {formatProductPricingLabel(product.priceCash || product.priceCashFrom || 0, product.beansDeductionRatio ?? 0.1)}
+              </div>
               <p className="shop-modal__intro">{product.description || product.subtitle || '商品详情待补充'}</p>
             </div>
             {selectedSku && (
-              <div className="shop-modal__price-tag">{formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash)}</div>
+              <div className="shop-modal__price-tag">可选规格</div>
             )}
           </div>
 
           <div className="shop-modal__metrics">
-            <div className="shop-modal__metric">
-              <span>销量</span>
-              <strong>{product.salesCount}</strong>
-            </div>
-            <div className="shop-modal__metric">
-              <span>库存</span>
-              <strong>{product.stockTotal}</strong>
-            </div>
             <div className="shop-modal__metric">
               <span>限购</span>
               <strong>{product.limitPerUser || '不限'}</strong>
@@ -350,12 +451,6 @@ const ProductModal = ({
             <div className="shop-modal__intro">{PRODUCT_TYPE_LABELS[product.productType] || PRODUCT_TYPE_LABELS.physical}</div>
           </section>
 
-          {product.relatedProduct && (
-            <section className="shop-modal__section">
-              <RelatedProductCard product={product.relatedProduct} onOpen={onOpenRelatedProduct} />
-            </section>
-          )}
-
           {product.skus.length > 0 && (
             <section className="shop-modal__section">
               <div className="shop-modal__section-head">
@@ -372,7 +467,7 @@ const ProductModal = ({
                   >
                     <div className="shop-sku-card__title">{sku.skuName || '默认规格'}</div>
                     <div className="shop-sku-card__subtitle">
-                      {formatPriceLabel(sku.pricePoints, sku.priceCash)} · {formatRewardReturnLabel(sku.rewardPointsReturn)} · 库存 {sku.stock}
+                      {formatProductPricingLabel(product.priceCash || product.priceCashFrom || 0, product.beansDeductionRatio ?? 0.1)} · 库存 {sku.stock}
                     </div>
                   </button>
                 ))}
@@ -386,24 +481,36 @@ const ProductModal = ({
                 <MapPin size={16} />
                 <span>收货地址</span>
               </div>
-              <div className="shop-address-grid">
-                <input value={addressDraft.receiverName || ''} onChange={(event) => handleAddressChange('receiverName', event.target.value)} placeholder="收件人" style={inputStyle} />
-                <input value={addressDraft.phone || ''} onChange={(event) => handleAddressChange('phone', event.target.value)} placeholder="手机号" style={inputStyle} />
-                <input value={addressDraft.province || ''} onChange={(event) => handleAddressChange('province', event.target.value)} placeholder="省份" style={inputStyle} />
-                <input value={addressDraft.city || ''} onChange={(event) => handleAddressChange('city', event.target.value)} placeholder="城市" style={inputStyle} />
-                <input value={addressDraft.district || ''} onChange={(event) => handleAddressChange('district', event.target.value)} placeholder="区县" style={inputStyle} />
-                <input value={addressDraft.detailAddress || ''} onChange={(event) => handleAddressChange('detailAddress', event.target.value)} placeholder="详细地址" style={inputStyle} />
-                <input value={addressDraft.postalCode || ''} onChange={(event) => handleAddressChange('postalCode', event.target.value)} placeholder="邮编（可选）" style={inputStyle} />
-                <input value={addressDraft.label || ''} onChange={(event) => handleAddressChange('label', event.target.value)} placeholder="标签（家/公司）" style={inputStyle} />
-              </div>
+              <select
+                value={selectedAddressId}
+                onChange={(event) => {
+                  const nextAddress = addresses.find((item) => item.id === event.target.value) || null;
+                  if (!nextAddress) {
+                    setAddressError('请选择有效收货地址');
+                    return;
+                  }
+                  setAddressError('');
+                  setSelectedAddressId(nextAddress.id);
+                }}
+                style={inputStyle}
+              >
+                {addresses.length === 0 ? (
+                  <option value="">暂无收货地址</option>
+                ) : (
+                  addresses.map((address) => (
+                    <option key={address.id} value={address.id}>
+                      {address.label || '地址'} · {address.receiverName} · {address.phone} · {address.city || address.province}
+                    </option>
+                  ))
+                )}
+              </select>
               {addressError && <div className="shop-modal__feedback shop-modal__feedback--error">{addressError}</div>}
               <button
                 type="button"
-                onClick={handleSaveAddress}
-                disabled={savingAddress}
+                onClick={onManageAddresses}
                 className="shop-modal__secondary-action"
               >
-                {savingAddress ? '保存中...' : '保存收货地址'}
+                管理收货地址
               </button>
             </section>
           )}
@@ -413,15 +520,21 @@ const ProductModal = ({
             onClick={() => onCreateOrder({
               productId: product.id,
               skuId: selectedSkuId,
-              addressId: addressDraft.id || ''
+              addressId: selectedAddressId || ''
             })}
             disabled={orderSubmitting}
             className="shop-modal__primary-action"
           >
             {orderSubmitting
               ? '提交中...'
-              : `${selectedSku?.priceCash > 0 ? '立即下单' : '立即兑换'}${selectedSku ? ` · ${formatPriceLabel(selectedSku.pricePoints, selectedSku.priceCash)}` : ''}`}
+              : `立即下单${selectedSku ? ` · ${formatProductPricingLabel(product.priceCash || product.priceCashFrom || 0, product.beansDeductionRatio ?? 0.1)}` : ''}`}
           </button>
+
+          {product.relatedProduct && (
+            <section className="shop-modal__section">
+              <RelatedProductCard product={product.relatedProduct} onOpen={onOpenRelatedProduct} />
+            </section>
+          )}
         </div>
       </div>
     </div>
@@ -437,6 +550,7 @@ const ShopScreen = () => {
   const [addresses, setAddresses] = useState([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [activeProduct, setActiveProduct] = useState(null);
+  const [isAddressManagerOpen, setIsAddressManagerOpen] = useState(false);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -768,6 +882,9 @@ const ShopScreen = () => {
                     <div className="shop-product-card__header">
                       <div>
                         <div className="shop-product-card__title">{product.name}</div>
+                        <div className="shop-product-card__price shop-product-card__price--hero">
+                          {formatProductPricingLabel(product.priceCash || product.priceCashFrom || 0, product.beansDeductionRatio ?? 0.1)}
+                        </div>
                         <div className="shop-product-card__subtitle">{getProductSynopsis(product)}</div>
                       </div>
                       <div className="shop-product-card__link">
@@ -778,14 +895,10 @@ const ShopScreen = () => {
                     <div className="shop-product-card__meta">
                       <span>库存 {product.stockTotal}</span>
                       <span>已兑 {product.salesCount}</span>
-                      <span>{formatRewardReturnLabel(product.rewardPointsReturnFrom)}</span>
+                      <span>最高抵扣 {Math.round(Number(product.beansDeductionRatio ?? 0.1) * 100)}%</span>
                       <span>{PRODUCT_STATUS_LABELS[product.status] || PRODUCT_STATUS_LABELS.active}</span>
                     </div>
-
                     <div className="shop-product-card__footer">
-                      <div className="shop-product-card__price">
-                        {formatPriceLabel(product.pricePointsFrom, product.priceCashFrom)}
-                      </div>
                       <div className="shop-product-card__action">查看详情</div>
                     </div>
                   </div>
@@ -804,8 +917,15 @@ const ShopScreen = () => {
         onShare={handleShareProduct}
         onOpenRelatedProduct={handleOpenProduct}
         onClose={() => setActiveProduct(null)}
-        onSaveAddress={handleSaveAddress}
+        onManageAddresses={() => setIsAddressManagerOpen(true)}
         onCreateOrder={handleCreateOrder}
+      />
+
+      <AddressManagerModal
+        open={isAddressManagerOpen}
+        addresses={addresses}
+        onClose={() => setIsAddressManagerOpen(false)}
+        onSaveAddress={handleSaveAddress}
       />
 
       <ShareDialog

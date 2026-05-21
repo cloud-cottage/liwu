@@ -16,7 +16,7 @@ import { ThemeProvider } from '@app/context/ThemeContext.jsx'
 import { WealthProvider } from '@app/context/WealthContext.jsx'
 import WebExperienceBanner from './components/WebExperienceBanner.jsx'
 import DownloadPage from './pages/DownloadPage.jsx'
-import PartnerPortalPage from './pages/PartnerPortalPage.jsx'
+import Partner from './pages/Partner.jsx'
 import '@app/App.css'
 
 const Layout = () => (
@@ -45,7 +45,7 @@ const App = () => (
           <Routes>
             <Route path="/admin" element={<Navigate to="/partner" replace />} />
             <Route path="/admin/*" element={<Navigate to="/partner" replace />} />
-            <Route path="/partner" element={<PartnerPortalPage />} />
+            <Route path="/partner" element={<Partner />} />
             <Route path="/" element={<Layout />}>
             <Route index element={<WebPrimaryPage><Home /></WebPrimaryPage>} />
             <Route path="m" element={<MeditationHome />} />

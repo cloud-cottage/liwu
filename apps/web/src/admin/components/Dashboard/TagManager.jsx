@@ -5,8 +5,6 @@ const BRAND_LEAD_ROLE_TAG_NAME = '品牌方主理人';
 const BRAND_MEMBER_ROLE_TAG_NAME = '品牌方';
 const SYSTEM_ROLE_TAG_NAMES = ['超级管理员', '管理员', '代理商', BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME];
 const BRAND_SCOPE_TAG_NAMES = ['禅品', '文品', '香品', '茶品', '理悟课程'];
-const SUPER_ADMIN_PHONE = '16601061656';
-const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '').slice(-11);
 
 const TagManager = ({ user, isOpen, onClose, allTags, tagCategories, onUpdateUserTags }) => {
   const [userTags, setUserTags] = useState(() => user?.tags || []);
@@ -45,7 +43,7 @@ const TagManager = ({ user, isOpen, onClose, allTags, tagCategories, onUpdateUse
     [userTags]
   );
 
-  const isSuperAdminUser = normalizePhone(user?.phone || '') === SUPER_ADMIN_PHONE;
+  const isSuperAdminUser = userTags.some((tag) => String(tag?.name || '').trim() === '超级管理员');
 
   const toggleTag = (tag) => {
     if (!tag?.id) {
@@ -219,8 +217,8 @@ const TagManager = ({ user, isOpen, onClose, allTags, tagCategories, onUpdateUse
               );
             })}
           </div>
-          <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
-            这里用于分配合作伙伴与后台权限标签。手机号 16601061656 对应用户会固定保留【超级管理员】。品牌方主理人必须绑定至少一个品牌品类二级标签。
+        <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+            这里用于分配合作伙伴与后台权限标签。已拥有【超级管理员】标签的用户会保留该标签。品牌方主理人必须绑定至少一个品牌品类二级标签。
           </div>
         </div>
 

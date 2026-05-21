@@ -95,11 +95,8 @@ const SortHeader = ({ label, active, direction, onClick, align = 'left' }) => (
   </th>
 );
 
-const ADMIN_PHONE = '16601061656';
 const BRAND_LEAD_ROLE_TAG_NAME = '品牌方主理人';
 const BRAND_MEMBER_ROLE_TAG_NAME = '品牌方';
-
-const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '').slice(-11);
 
 const hasRoleTag = (user, labels = []) => {
   const normalizedLabels = labels.map((label) => String(label || '').trim());
@@ -108,7 +105,7 @@ const hasRoleTag = (user, labels = []) => {
 
 const getRoleLabels = (user) => {
   const labels = [];
-  if (normalizePhone(user.phone || '') === ADMIN_PHONE || hasRoleTag(user, ['超级管理员'])) {
+  if (hasRoleTag(user, ['超级管理员'])) {
     labels.push('超级管理员');
   }
   if (hasRoleTag(user, ['管理员'])) {
@@ -182,11 +179,9 @@ const UserList = ({ users, roleView = 'all', onEditUser, onManageTags }) => {
   const filteredUsers = useMemo(() => {
     const normalizedQuery = searchTerm.trim().toLowerCase();
     return users.filter((user) => {
-      const normalizedPhone = normalizePhone(user.phone || '');
-      const isSuperAdmin = normalizedPhone === ADMIN_PHONE;
       const matchesRole =
         roleView === 'all' ||
-        (roleView === 'admin' && (isSuperAdmin || hasRoleTag(user, ['超级管理员', '管理员']))) ||
+        (roleView === 'admin' && hasRoleTag(user, ['超级管理员', '管理员'])) ||
         (roleView === 'agent' && hasRoleTag(user, ['代理商'])) ||
         (roleView === 'brand' && hasRoleTag(user, [BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME]));
 
@@ -239,7 +234,7 @@ const UserList = ({ users, roleView = 'all', onEditUser, onManageTags }) => {
 
   const roleCounts = useMemo(() => ({
     all: users.length,
-    admin: users.filter((user) => normalizePhone(user.phone || '') === ADMIN_PHONE || hasRoleTag(user, ['超级管理员', '管理员'])).length,
+    admin: users.filter((user) => hasRoleTag(user, ['超级管理员', '管理员'])).length,
     agent: users.filter((user) => hasRoleTag(user, ['代理商'])).length,
     brand: users.filter((user) => hasRoleTag(user, [BRAND_LEAD_ROLE_TAG_NAME, BRAND_MEMBER_ROLE_TAG_NAME])).length
   }), [users]);

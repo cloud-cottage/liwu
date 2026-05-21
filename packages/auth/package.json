@@ -1,0 +1,11 @@
+{
+  "name": "@liwu/auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./miniprogram": "./src/miniprogram-adapter.js"
+  }
+}

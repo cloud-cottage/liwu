@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { DEFAULT_AWARENESS_POPULAR_TAG_COUNT } from '@liwu/shared-utils/awareness-display-settings.js';
 import { useWealth } from './WealthContext.jsx';
 import { awarenessDisplaySettingsService, awarenessService, authService, badgeService, userProfileService } from '../services/cloudbase';
+import { readSession, buildAuthUid } from '@liwu/auth';
 
 const CloudAwarenessContext = createContext();
 const PUBLIC_CACHE_KEY = 'liwu_awareness_public_cache_v1';
@@ -87,16 +88,32 @@ export const useCloudAwareness = () => useContext(CloudAwarenessContext);
 
 export const CloudAwarenessProvider = ({ children }) => {
   const { pushRewardToast, syncWalletFromCloud } = useWealth();
-  const [authStatus, setAuthStatus] = useState({
-    hasSession: false,
-    authUid: '',
-    phoneNumber: '',
-    email: '',
-    displayName: '',
-    provider: '',
-    loginMethod: 'anonymous',
-    isAnonymous: true,
-    isAuthenticated: false
+  const [authStatus, setAuthStatus] = useState(() => {
+    const session = readSession();
+    if (session?.phone && session?.userId) {
+      return {
+        hasSession: true,
+        authUid: session.authUid || buildAuthUid(session.phone),
+        phoneNumber: session.phone,
+        email: '',
+        displayName: session.displayName || '',
+        provider: 'phone',
+        loginMethod: session.loginMethod || 'phone',
+        isAnonymous: false,
+        isAuthenticated: true
+      };
+    }
+    return {
+      hasSession: false,
+      authUid: '',
+      phoneNumber: '',
+      email: '',
+      displayName: '',
+      provider: '',
+      loginMethod: 'anonymous',
+      isAnonymous: true,
+      isAuthenticated: false
+    };
   });
   const [currentUser, setCurrentUser] = useState(null);
   const [userTags, setUserTags] = useState([]);
@@ -155,11 +172,11 @@ export const CloudAwarenessProvider = ({ children }) => {
     });
   }, []);
 
-  const syncAuthState = useCallback(async ({ allowAnonymous = false } = {}) => {
-    const nextAuthStatus = await authService.getAuthStatus({ allowAnonymous });
+  const syncAuthState = useCallback(async () => {
+    const nextAuthStatus = await authService.getAuthStatus();
     setAuthStatus(nextAuthStatus);
 
-    if (!nextAuthStatus.hasSession && !allowAnonymous) {
+    if (!nextAuthStatus.isAuthenticated) {
       setCurrentUser(null);
       setUserTags([]);
     }
@@ -189,7 +206,7 @@ export const CloudAwarenessProvider = ({ children }) => {
       const nextPopularTagDisplayCount = Number(nextAwarenessDisplaySettings.popularTagCount || DEFAULT_AWARENESS_POPULAR_TAG_COUNT);
       setPopularTagDisplayCount(nextPopularTagDisplayCount);
 
-      const nextAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
+      const nextAuthStatus = await authService.getAuthStatus();
       setAuthStatus(nextAuthStatus);
       setCurrentUser(nextCurrentUser);
 
@@ -259,7 +276,7 @@ export const CloudAwarenessProvider = ({ children }) => {
           return;
         }
 
-        const currentAuthStatus = await authService.getAuthStatus({ allowAnonymous: false });
+        const currentAuthStatus = await authService.getAuthStatus();
         if (currentAuthStatus.authUid) {
           cacheSummary = hydrateCaches(currentAuthStatus.authUid, popularTagDisplayCount);
         }
@@ -364,8 +381,8 @@ export const CloudAwarenessProvider = ({ children }) => {
     syncAuthState
   }), [
     addAwarenessRecord,
-    authStatus,
     currentUser,
+    authStatus,
     error,
     lastUpdatedAt,
     loading,

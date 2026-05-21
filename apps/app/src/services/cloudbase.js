@@ -1,5 +1,6 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { Capacitor } from '@capacitor/core';
+import { createAuthService, readSession, normalizePhone as authNormalizePhone, normalizeUserProfile as authNormalizeUserProfile } from '@liwu/auth';
 import { DATABASE_CONFIG } from '../config/database.js';
 import {
   BADGE_ACTIVITY_TYPES,
@@ -50,13 +51,16 @@ import {
   getStudentMembershipPlan,
   normalizeStudentMembershipSettings
 } from '@liwu/shared-utils/student-membership-settings.js';
+import {
+  DEFAULT_PLATFORM_SERVICE_FEE_SETTINGS,
+  PLATFORM_SERVICE_FEE_SETTINGS_KEY,
+  normalizePlatformServiceFeeSettings
+} from '@liwu/shared-utils/platform-service-fee-settings.js';
 import { resolveProductTypeByCategoryName } from '@liwu/shared-utils/brand-scope-mapping.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
 const PENDING_AUTH_PHONE_STORAGE_KEY = 'liwu_pending_auth_phone';
-const MOCK_PHONE_OTP_STORAGE_KEY = 'liwu_mock_phone_otp_session';
-const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
 const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
@@ -65,7 +69,6 @@ const STUDENT_MEMBERSHIP_ORDER_BIZ_TYPE = 'student_membership';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const NAME_UPDATE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
-const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
 const CLOUDBASE_PROXY_REMOTE_ORIGIN = 'https://liwu.yunduojihua.com';
 const SHANGHAI_TIMEZONE = 'Asia/Shanghai';
@@ -313,22 +316,22 @@ const writeLocalStorageJSON = (key, value) => {
   window.localStorage.setItem(key, JSON.stringify(value));
 };
 
-const clearMockPhoneOtpSession = () => {
-  if (typeof window !== 'undefined') {
-    window.sessionStorage.removeItem(MOCK_PHONE_OTP_STORAGE_KEY);
+const removeLocalStorageByPrefix = (prefix = '') => {
+  if (typeof window === 'undefined' || !prefix) {
+    return;
   }
-};
 
-const readMockPhoneAuthSession = () => readLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY);
-
-const writeMockPhoneAuthSession = (value) => {
-  writeLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY, value);
-};
-
-const clearMockPhoneAuthSession = () => {
-  if (typeof window !== 'undefined') {
-    window.localStorage.removeItem(MOCK_PHONE_AUTH_STORAGE_KEY);
+  const keysToRemove = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key && key.startsWith(prefix)) {
+      keysToRemove.push(key);
+    }
   }
+
+  keysToRemove.forEach((key) => {
+    window.localStorage.removeItem(key);
+  });
 };
 
 const clearCurrentProfileCache = () => {
@@ -368,17 +371,6 @@ const parseNaturalNumber = (value = '') => {
 const formatNaturalNumber = (value) => String(Math.max(1, Number(value) || 1));
 
 const buildDefaultUserName = (uid = '') => `${DEFAULT_USER_NAME_PREFIX}${formatNaturalNumber(uid)}`;
-
-const isSystemGeneratedUserName = (value = '') => {
-  const normalizedValue = String(value || '').trim();
-
-  return (
-    !normalizedValue ||
-    /^用户\d*$/.test(normalizedValue) ||
-    /^小悟[\da-z]+$/i.test(normalizedValue) ||
-    /^觉醒伙伴\d+$/.test(normalizedValue)
-  );
-};
 
 const getUserUid = (document = {}) => (
   parseNaturalNumber(document.uid)
@@ -461,45 +453,6 @@ const isAnonymousDisplayName = (value = '') => {
   return !normalizedValue || normalizedValue === 'anonymous' || normalizedValue === 'anon';
 };
 
-const buildMockPhoneSession = ({ phoneNumber, authUid = '', displayName = '' }) => ({
-  authUid: buildPhoneAuthUid(phoneNumber) || authUid || `mock_phone_${normalizePhone(phoneNumber)}`,
-  phoneNumber: normalizePhone(phoneNumber),
-  displayName: displayName || `用户${normalizePhone(phoneNumber).slice(-4)}`,
-  loginMethod: 'phone',
-  signedInAt: new Date().toISOString()
-});
-
-const getDocumentTimestamp = (document = {}) => {
-  const rawTimestamp =
-    document.created_at?.$date ||
-    document.created_at ||
-    document.updated_at?.$date ||
-    document.updated_at ||
-    document.join_date ||
-    0;
-  const parsedTimestamp = new Date(rawTimestamp).getTime();
-  return Number.isNaN(parsedTimestamp) ? 0 : parsedTimestamp;
-};
-
-const selectCanonicalUserDocument = (documents = []) => (
-  [...documents]
-    .filter(Boolean)
-    .sort((left, right) => {
-      const leftUid = getUserUid(left) || Number.MAX_SAFE_INTEGER;
-      const rightUid = getUserUid(right) || Number.MAX_SAFE_INTEGER;
-      if (leftUid !== rightUid) {
-        return leftUid - rightUid;
-      }
-
-      const leftTimestamp = getDocumentTimestamp(left);
-      const rightTimestamp = getDocumentTimestamp(right);
-      if (leftTimestamp !== rightTimestamp) {
-        return leftTimestamp - rightTimestamp;
-      }
-
-      return String(getDocumentId(left)).localeCompare(String(getDocumentId(right)));
-    })[0] || null
-);
 
 const getAwarenessTagLength = (value = '') => (
   Array.from(String(value || '')).reduce((total, character) => (
@@ -537,6 +490,34 @@ const normalizeWealthHistory = (value) => {
     .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())
     .slice(0, MAX_WEALTH_HISTORY_ITEMS);
 };
+
+const PERSONAL_WEALTH_HISTORY_SOURCES = new Set([
+  '',
+  'manual',
+  'awareness_tag',
+  'invite_bonus',
+  'shop_spend',
+  'shop_cash_reward',
+  'shop_refund',
+  'shop_reward_reversal',
+  'dream_purchase'
+]);
+
+const EXCLUDED_PERSONAL_WEALTH_HISTORY_SOURCES = new Set([
+  'agent_daily_burn',
+  'partner_order_retail_reward',
+  'brand_daily_burn'
+]);
+
+const filterPersonalWealthHistory = (entries = []) => (
+  entries.filter((entry) => {
+    const source = String(entry?.source || '').trim();
+    if (EXCLUDED_PERSONAL_WEALTH_HISTORY_SOURCES.has(source)) {
+      return false;
+    }
+    return PERSONAL_WEALTH_HISTORY_SOURCES.has(source);
+  })
+);
 
 const normalizeRewardClaims = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -667,6 +648,8 @@ const normalizeShopProduct = (product = {}) => ({
   detailBlocks: product.detail_blocks || product.detailBlocks || [],
   status: product.status || 'draft',
   skuMode: product.sku_mode || product.skuMode || 'single',
+  priceCash: Number(product.price_cash ?? product.priceCash ?? product.price_cash_from ?? product.priceCashFrom ?? 0),
+  beansDeductionRatio: Number(product.beans_deduction_ratio ?? product.beansDeductionRatio ?? 0.1),
   pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
   priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
   rewardPointsReturnFrom: Number(product.reward_points_return_from ?? product.rewardPointsReturnFrom ?? 0),
@@ -674,6 +657,10 @@ const normalizeShopProduct = (product = {}) => ({
   salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
   limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
   sortOrder: Number(product.sort_order ?? product.sortOrder ?? 0),
+  brandId: product.brand_id || product.brandId || '',
+  storeId: product.store_id || product.storeId || '',
+  storeName: product.store_name || product.storeName || '',
+  storeOwnerUserId: product.store_owner_user_id || product.storeOwnerUserId || '',
   tags: product.tags || []
 });
 
@@ -687,8 +674,8 @@ const normalizeRelatedProductCard = (product = null) => {
     name: product.name || '',
     subtitle: product.subtitle || product.description || '',
     coverImage: product.coverImage || '',
-    pricePointsFrom: Number(product.pricePointsFrom || 0),
-    priceCashFrom: Number(product.priceCashFrom || 0)
+    priceCash: Number(product.priceCash || product.priceCashFrom || 0),
+    beansDeductionRatio: Number(product.beansDeductionRatio ?? 0.1)
   };
 };
 
@@ -697,9 +684,9 @@ const formatRelatedProductPrice = (product = null) => {
     return '';
   }
 
-  const points = Number(product.pricePointsFrom || 0);
-  const cash = Number(product.priceCashFrom || 0);
-  return `${points} 福豆${cash ? ` + ¥${cash.toFixed(2)}` : ''}`;
+  const cash = Number(product.priceCash || product.priceCashFrom || 0);
+  const ratio = Math.max(0, Number(product.beansDeductionRatio ?? 0.1));
+  return `¥${cash.toFixed(2)} · 福豆最多抵 ${Math.round(ratio * 100)}%`;
 };
 
 const normalizeShopSku = (sku = {}) => ({
@@ -708,9 +695,6 @@ const normalizeShopSku = (sku = {}) => ({
   skuName: sku.sku_name || sku.skuName || '',
   skuCode: sku.sku_code || sku.skuCode || '',
   attrs: sku.attrs || {},
-  pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
-  priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
-  rewardPointsReturn: Number(sku.reward_points_return ?? sku.rewardPointsReturn ?? 0),
   stock: Number(sku.stock ?? 0),
   lockStock: Number(sku.lock_stock ?? sku.lockStock ?? 0),
   status: sku.status || 'active',
@@ -739,6 +723,9 @@ const normalizeShopOrder = (order = {}) => ({
   status: order.status || 'pending_payment',
   totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
   totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+  platformServiceFeeRate: Number(order.platform_service_fee_rate ?? order.platformServiceFeeRate ?? 0),
+  platformServiceFeeAmount: Number(order.platform_service_fee_amount ?? order.platformServiceFeeAmount ?? 0),
+  merchantSettleAmount: Number(order.merchant_settle_amount ?? order.merchantSettleAmount ?? 0),
   rewardPointsReturnTotal: Number(order.reward_points_return_total ?? order.rewardPointsReturnTotal ?? 0),
   rewardPointsAwarded: Number(order.reward_points_awarded ?? order.rewardPointsAwarded ?? 0),
   badgeBonusPointsAwarded: Number(order.badge_bonus_points_awarded ?? order.badgeBonusPointsAwarded ?? 0),
@@ -1623,6 +1610,21 @@ const normalizeAuthStatus = ({ session, currentUser } = {}) => {
 };
 
 const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
+  const liwuSession = readSession();
+  if (liwuSession?.phone) {
+    return {
+      hasSession: true,
+      authUid: liwuSession.authUid || buildPhoneAuthUid(liwuSession.phone),
+      phoneNumber: liwuSession.phone,
+      displayName: liwuSession.displayName || '',
+      provider: 'phone',
+      loginMethod: 'phone',
+      isAnonymous: false,
+      isAuthenticated: true,
+      isMockSession: false
+    };
+  }
+
   let currentUser = await resolveCurrentUser().catch(() => null);
   let session = await resolveCurrentSession();
 
@@ -1632,49 +1634,7 @@ const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
     session = await resolveCurrentSession();
   }
 
-  const baseStatus = normalizeAuthStatus({ session, currentUser });
-  const mockPhoneAuthSession = readMockPhoneAuthSession();
-
-  const hasValidMockPhoneSession = Boolean(
-    mockPhoneAuthSession &&
-    normalizePhone(mockPhoneAuthSession.phoneNumber)
-  );
-
-  if (hasValidMockPhoneSession && (!baseStatus.isAuthenticated || baseStatus.isAnonymous || !baseStatus.phoneNumber)) {
-    return {
-      ...baseStatus,
-      hasSession: true,
-      authUid: mockPhoneAuthSession.authUid || baseStatus.authUid,
-      phoneNumber: mockPhoneAuthSession.phoneNumber || baseStatus.phoneNumber,
-      displayName: mockPhoneAuthSession.displayName || baseStatus.displayName,
-      provider: 'mock_phone',
-      loginMethod: 'phone',
-      isAnonymous: false,
-      isAuthenticated: true,
-      isMockSession: true
-    };
-  }
-
-  if (baseStatus.isAuthenticated) {
-    return baseStatus;
-  }
-
-  if (!mockPhoneAuthSession) {
-    return baseStatus;
-  }
-
-  return {
-    ...baseStatus,
-    hasSession: true,
-    authUid: mockPhoneAuthSession.authUid || baseStatus.authUid,
-    phoneNumber: mockPhoneAuthSession.phoneNumber || baseStatus.phoneNumber,
-    displayName: mockPhoneAuthSession.displayName || baseStatus.displayName,
-    provider: 'mock_phone',
-    loginMethod: 'phone',
-    isAnonymous: false,
-    isAuthenticated: true,
-    isMockSession: true
-  };
+  return normalizeAuthStatus({ session, currentUser });
 };
 
 const resolveAwarenessIdentity = async () => {
@@ -1748,8 +1708,34 @@ export const ensureAnonymousLogin = async () => {
 };
 
 export const userProfileService = {
+  async getProfileByUserId(userId = '') {
+    if (!userId) {
+      return null;
+    }
+
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection(collections.users).doc(userId).get();
+      const document = getFirstDocument(result, collections.users);
+      if (!document) {
+        return null;
+      }
+
+      const profile = applyAvatarUrlFromSettings(
+        normalizeCurrentUserProfile(document),
+        await getUserAvatarOptionsSettings().catch(() => DEFAULT_USER_AVATAR_OPTIONS_SETTINGS)
+      );
+
+      clearCurrentProfileCache();
+      return updateCurrentProfileCache(profile);
+    } catch (error) {
+      console.error('按 userId 读取用户档案失败:', error);
+      return null;
+    }
+  },
+
   async ensureCurrentProfile(options = {}) {
-    const { refresh = false, allowAnonymous = true } = options;
+    const { refresh = false } = options;
 
     if (!refresh && currentProfileCache) {
       return currentProfileCache;
@@ -1760,158 +1746,54 @@ export const userProfileService = {
     }
 
     currentProfilePromise = (async () => {
-      rememberPendingInviteCode();
-
-      const authStatus = await resolveAuthStatus({ allowAnonymous });
-      const authUid = authStatus?.authUid || '';
-      const normalizedPhoneNumber = normalizePhone(authStatus.phoneNumber);
-      const nowIso = new Date().toISOString();
-
-      if (!authUid) {
-        const mockPhoneAuthSession = readMockPhoneAuthSession();
-        if (mockPhoneAuthSession?.phoneNumber) {
-          const normalizedMockPhone = normalizePhone(mockPhoneAuthSession.phoneNumber);
-          if (normalizedMockPhone) {
-            const existingResult = await db.collection(collections.users).where({ phone: normalizedMockPhone }).limit(1).get();
-            const existingDocument = getFirstDocument(existingResult, collections.users);
-            if (existingDocument) {
-              const existingProfile = normalizeCurrentUserProfile(existingDocument);
-              clearCurrentProfileCache();
-              return updateCurrentProfileCache(existingProfile);
-            }
-          }
-        }
-
+      const session = readSession();
+      if (!session?.phone) {
         clearCurrentProfileCache();
         return null;
       }
 
-      let authUidDocument = null;
-      let phoneMatchedDocuments = [];
+      await ensureAnonymousLogin();
 
-      if (authUid) {
-        const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
-        authUidDocument = getFirstDocument(existingResult, collections.users);
+      if (session.userId) {
+        const docResult = await db.collection(collections.users).doc(session.userId).get().catch(() => ({ data: [] }));
+        const document = getFirstDocument(docResult, collections.users);
+        if (document) {
+          const nowIso = new Date().toISOString();
+          await db.collection(collections.users).doc(session.userId).update({
+            last_active: nowIso,
+            updated_at: new Date()
+          }).catch(() => {});
+
+          const profile = applyAvatarUrlFromSettings(
+            normalizeCurrentUserProfile({ ...document, last_active: nowIso, _id: session.userId }),
+            await getUserAvatarOptionsSettings().catch(() => DEFAULT_USER_AVATAR_OPTIONS_SETTINGS)
+          );
+          return updateCurrentProfileCache(profile);
+        }
       }
 
-      if (normalizedPhoneNumber) {
-        const phoneMatchedResult = await db.collection(collections.users).where({ phone: normalizedPhoneNumber }).limit(20).get();
-        phoneMatchedDocuments = getResponseData(phoneMatchedResult, collections.users);
-      }
-
-      const existingDocument = phoneMatchedDocuments.length > 0
-        ? selectCanonicalUserDocument([authUidDocument, ...phoneMatchedDocuments])
-        : authUidDocument;
-
-      if (existingDocument) {
-        const existingProfile = normalizeCurrentUserProfile(existingDocument);
-        const rawExistingUid = getUserUid(existingDocument);
-        const resolvedUid = existingProfile.uid || await getNextUserUid();
-        const resolvedDefaultName = buildDefaultUserName(resolvedUid);
-        const avatarSettings = existingProfile.avatarIndex > 0
-          ? await getUserAvatarOptionsSettings()
-          : null;
-        const updatePayload = {
+      const phoneResult = await db.collection(collections.users).where({ phone: session.phone }).limit(10).get();
+      const phoneDocs = getResponseData(phoneResult, collections.users);
+      if (phoneDocs.length > 0) {
+        const userDoc = phoneDocs.length === 1
+          ? phoneDocs[0]
+          : phoneDocs.filter((d) => Number(d.uid) > 0).sort((a, b) => (Number(a.uid) || Infinity) - (Number(b.uid) || Infinity))[0] || phoneDocs[0];
+        const docId = getDocumentId(userDoc);
+        const nowIso = new Date().toISOString();
+        await db.collection(collections.users).doc(docId).update({
           last_active: nowIso,
           updated_at: new Date()
-        };
+        }).catch(() => {});
 
-        if (authUid && existingProfile.authUid !== authUid) {
-          updatePayload.auth_uid = authUid;
-        }
-
-        if (authStatus.email && existingProfile.email !== authStatus.email) {
-          updatePayload.email = authStatus.email;
-        }
-
-        if (normalizedPhoneNumber && existingProfile.phone !== normalizedPhoneNumber) {
-          updatePayload.phone = normalizedPhoneNumber;
-        }
-
-        if (rawExistingUid !== resolvedUid) {
-          updatePayload.uid = resolvedUid;
-        }
-
-        if (!existingProfile.name || isSystemGeneratedUserName(existingProfile.name)) {
-          updatePayload.name = resolvedDefaultName;
-        }
-
-        if (!Array.isArray(existingDocument.wealth_history)) {
-          updatePayload.wealth_history = existingProfile.wealthHistory;
-        }
-
-        if (!existingDocument.reward_claims || typeof existingDocument.reward_claims !== 'object') {
-          updatePayload.reward_claims = existingProfile.rewardClaims;
-        }
-
-        await db.collection(collections.users).doc(existingProfile.id).update(updatePayload);
-
-        clearPendingInviteCode();
-
-        return updateCurrentProfileCache(
-          applyAvatarUrlFromSettings(
-            normalizeCurrentUserProfile({
-              ...existingDocument,
-              ...updatePayload,
-              _id: existingProfile.id
-            }),
-            avatarSettings || undefined
-          )
+        const profile = applyAvatarUrlFromSettings(
+          normalizeCurrentUserProfile({ ...userDoc, last_active: nowIso, _id: docId }),
+          await getUserAvatarOptionsSettings().catch(() => DEFAULT_USER_AVATAR_OPTIONS_SETTINGS)
         );
+        return updateCurrentProfileCache(profile);
       }
 
-      const pendingInviteCode = rememberPendingInviteCode();
-      let inviterUserId = '';
-
-      if (pendingInviteCode) {
-        const inviterUid = parseNaturalNumber(pendingInviteCode);
-        const inviterResult = await db
-          .collection(collections.users)
-          .where({ uid: inviterUid })
-          .limit(1)
-          .get();
-        const inviterDocument = getFirstDocument(inviterResult, collections.users);
-
-        if (inviterDocument && (inviterDocument.auth_uid || inviterDocument.authUid) !== authUid) {
-          inviterUserId = getDocumentId(inviterDocument);
-        }
-      }
-
-      const avatarSettings = await getUserAvatarOptionsSettings();
-      const newUserPayload = {
-        uid: await getNextUserUid(),
-        auth_uid: authUid,
-        name: '',
-        avatar_index: pickRandomDefaultAvatarIndex(avatarSettings),
-        email: authStatus.email,
-        phone: normalizedPhoneNumber,
-        status: 'active',
-        level: 1,
-        experience: 0,
-        is_student: false,
-        inviter_user_id: inviterUserId,
-        balance: 0,
-        wealth_history: [],
-        reward_claims: {},
-        join_date: nowIso.slice(0, 10),
-        last_active: nowIso,
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-      newUserPayload.name = buildDefaultUserName(newUserPayload.uid);
-
-      const createResult = await db.collection(collections.users).add(newUserPayload);
-      clearPendingInviteCode();
-
-      return updateCurrentProfileCache(
-        applyAvatarUrlFromSettings(
-          normalizeCurrentUserProfile({
-            ...newUserPayload,
-            _id: createResult.id
-          }),
-          avatarSettings
-        )
-      );
+      clearCurrentProfileCache();
+      return null;
     })().finally(() => {
       currentProfilePromise = null;
     });
@@ -1924,12 +1806,12 @@ export const userProfileService = {
   },
 
   async updateCurrentProfile(profilePatch) {
-    const authStatus = await resolveAuthStatus({ allowAnonymous: false });
-    if (!authStatus.isAuthenticated) {
+    const session = readSession();
+    if (!session?.phone) {
       throw new Error('请先登录后再修改资料');
     }
 
-    const currentProfile = await this.ensureCurrentProfile({ allowAnonymous: false });
+    const currentProfile = await this.ensureCurrentProfile({ refresh: false });
     if (!currentProfile) {
       return null;
     }
@@ -2939,6 +2821,33 @@ export const clientDistributionSettingsService = {
   }
 };
 
+export const platformServiceFeeSettingsService = {
+  async getSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: PLATFORM_SERVICE_FEE_SETTINGS_KEY })
+        .limit(1)
+        .get();
+
+      if (isMissingCollectionResponse(result)) {
+        return { ...DEFAULT_PLATFORM_SERVICE_FEE_SETTINGS };
+      }
+
+      const document = getFirstDocument(result, collections.appSettings);
+      if (!document) {
+        return { ...DEFAULT_PLATFORM_SERVICE_FEE_SETTINGS };
+      }
+
+      return normalizePlatformServiceFeeSettings(document);
+    } catch (error) {
+      console.error('获取平台技术服务费设置失败:', error);
+      return { ...DEFAULT_PLATFORM_SERVICE_FEE_SETTINGS };
+    }
+  }
+};
+
 export const wealthService = {
   async getCurrentWallet(options = {}) {
     const currentProfile = await userProfileService.getCurrentProfile(options);
@@ -2949,7 +2858,7 @@ export const wealthService = {
 
     return {
       balance: currentProfile.balance,
-      history: currentProfile.wealthHistory
+      history: filterPersonalWealthHistory(currentProfile.wealthHistory)
     };
   },
 
@@ -3271,10 +3180,19 @@ export const shopService = {
     }
 
     const normalizedQuantity = Math.max(1, Number(quantity) || 1);
-    const totalPoints = sku.pricePoints * normalizedQuantity;
-    const totalCash = sku.priceCash * normalizedQuantity;
-    const totalRewardPointsReturn = Math.max(0, Number(sku.rewardPointsReturn || 0)) * normalizedQuantity;
+    const productPriceCash = Math.max(0, Number(product.priceCash || product.priceCashFrom || 0));
+    const beansDeductionRatio = Math.max(0, Math.min(1, Number(product.beansDeductionRatio ?? 0.1)));
+    const grossCashAmount = Number((productPriceCash * normalizedQuantity).toFixed(2));
+    const maxDeductibleCash = Number((grossCashAmount * beansDeductionRatio).toFixed(2));
+    const maxDeductiblePoints = Math.floor(maxDeductibleCash / 0.1);
+    const totalPoints = Math.min(currentProfile.balance, maxDeductiblePoints);
+    const totalCash = Number((grossCashAmount - (totalPoints * 0.1)).toFixed(2));
+    const totalRewardPointsReturn = 0;
     const isCashOrder = totalCash > 0;
+    const platformServiceFeeSettings = await platformServiceFeeSettingsService.getSettings();
+    const consumerServiceFeeRate = Math.max(0, Number(platformServiceFeeSettings.consumerRate || 0));
+    const platformServiceFeeAmount = Number((totalCash * consumerServiceFeeRate).toFixed(2));
+    const merchantSettleAmount = Number((totalCash - platformServiceFeeAmount).toFixed(2));
 
     if (currentProfile.balance < totalPoints) {
       throw new Error('福豆余额不足');
@@ -3312,6 +3230,9 @@ export const shopService = {
       receiver_snapshot: receiverSnapshot,
       total_points: totalPoints,
       total_cash: totalCash,
+      platform_service_fee_rate: consumerServiceFeeRate,
+      platform_service_fee_amount: platformServiceFeeAmount,
+      merchant_settle_amount: merchantSettleAmount,
       reward_points_return_total: totalRewardPointsReturn,
       reward_points_awarded: 0,
       badge_bonus_points_awarded: 0,
@@ -3340,9 +3261,9 @@ export const shopService = {
       sku_name_snapshot: sku.skuName || '默认规格',
       cover_snapshot: product.coverImage,
       attrs_snapshot: sku.attrs || {},
-      price_points_snapshot: sku.pricePoints,
-      price_cash_snapshot: sku.priceCash,
-      reward_points_return_snapshot: sku.rewardPointsReturn || 0,
+      price_points_snapshot: totalPoints,
+      price_cash_snapshot: totalCash,
+      reward_points_return_snapshot: 0,
       quantity: normalizedQuantity,
       subtotal_points: totalPoints,
       subtotal_cash: totalCash,
@@ -3518,139 +3439,46 @@ export const badgeService = {
   }
 };
 
+const _liwuAuthService = createAuthService({ db, auth, collections: { users: collections.users } });
+
 export const authService = {
-  async getAuthStatus(options = {}) {
-    return resolveAuthStatus(options);
+  async getAuthStatus() {
+    return _liwuAuthService.getAuthStatus();
   },
 
   async loginAnonymously() {
     try {
       await ensureAnonymousLogin();
-      const authStatus = await resolveAuthStatus({ allowAnonymous: true });
-      return { success: true, authStatus };
+      return { success: true, authStatus: await _liwuAuthService.getAuthStatus() };
     } catch (error) {
-      console.error('匿名登录失败:', error);
       return { success: false, error };
     }
   },
 
   async requestPhoneOtp(phone) {
-    const normalizedPhone = normalizePhone(phone);
-
-    if (!normalizedPhone) {
-      throw new Error('请输入手机号');
-    }
-
-    rememberPendingAuthPhone(normalizedPhone);
-    writeSessionStorageJSON(MOCK_PHONE_OTP_STORAGE_KEY, {
-      phoneNumber: normalizedPhone,
-      requestedAt: new Date().toISOString(),
-      code: MOCK_PHONE_OTP_CODE
-    });
-
-    return {
-      success: true,
-      mockCode: MOCK_PHONE_OTP_CODE
-    };
+    return _liwuAuthService.requestOtp(phone);
   },
 
   async verifyPhoneOtp({ phone, code }) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedCode = String(code || '').trim();
-
-    if (!normalizedPhone) {
-      throw new Error('请输入手机号');
-    }
-
-    if (!normalizedCode) {
-      throw new Error('请输入验证码');
-    }
-
-    const mockPhoneOtpSession = readSessionStorageJSON(MOCK_PHONE_OTP_STORAGE_KEY);
-
-    if (!mockPhoneOtpSession || mockPhoneOtpSession.phoneNumber !== normalizedPhone) {
-      throw new Error('请先获取验证码');
-    }
-
-    if (normalizedCode !== MOCK_PHONE_OTP_CODE) {
-      throw new Error('验证码错误，请输入 1234');
-    }
-
-    clearPendingAuthPhone();
-    clearMockPhoneOtpSession();
-
-    let currentAuthStatus = {
-      authUid: '',
-      displayName: ''
-    };
-
-    try {
-      currentAuthStatus = await resolveAuthStatus({ allowAnonymous: true });
-    } catch (error) {
-      console.error('读取当前匿名态失败:', error);
-    }
-
-    let profile = null;
-    let mockSession = buildMockPhoneSession({
-      phoneNumber: normalizedPhone,
-      authUid: currentAuthStatus.authUid,
-      displayName: currentAuthStatus.displayName && !isAnonymousDisplayName(currentAuthStatus.displayName)
-        ? currentAuthStatus.displayName
-        : ''
-    });
-
-    writeMockPhoneAuthSession(mockSession);
-
-    try {
-      await ensureAnonymousLogin();
-      clearCurrentProfileCache();
-      profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: true });
-      if (profile?.phone !== normalizedPhone) {
-        profile = await userProfileService.updateCurrentProfile({ phone: normalizedPhone });
-      }
-
-      if (profile) {
-        mockSession = buildMockPhoneSession({
-          phoneNumber: normalizedPhone,
-          authUid: profile.authUid,
-          displayName: profile.name
-        });
-        writeMockPhoneAuthSession(mockSession);
-      }
-    } catch (error) {
-      console.error('模拟手机号登录云端同步失败:', error);
-    }
-
-    return {
-      success: true,
-      profile,
-      authStatus: await resolveAuthStatus({ allowAnonymous: false })
-    };
+    const result = await _liwuAuthService.verifyOtp(phone, code);
+    clearCurrentProfileCache();
+    return result;
   },
 
   hasOAuthRedirectParams() {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-
+    if (typeof window === 'undefined') return false;
     const searchParams = new URLSearchParams(window.location.search);
     return Boolean(searchParams.get('code') && searchParams.get('state'));
   },
 
   async startWechatLogin({ phone, redirectTo } = {}) {
     const normalizedPhone = normalizePhone(phone);
-
-    if (!normalizedPhone) {
-      throw new Error('请输入手机号');
-    }
+    if (!normalizedPhone) throw new Error('请输入手机号');
 
     rememberPendingAuthPhone(normalizedPhone);
-
     const signInResult = await auth.signInWithOAuth({
       provider: DEFAULT_WECHAT_PROVIDER_ID,
-      options: {
-        redirectTo
-      }
+      options: { redirectTo }
     });
 
     if (signInResult?.error) {
@@ -3662,49 +3490,28 @@ export const authService = {
   },
 
   async completeWechatLogin() {
-    const verifyResult = await auth.verifyOAuth({
-      provider: DEFAULT_WECHAT_PROVIDER_ID
-    });
-
+    const verifyResult = await auth.verifyOAuth({ provider: DEFAULT_WECHAT_PROVIDER_ID });
     if (verifyResult?.error) {
       clearPendingAuthPhone();
       throw new Error(verifyResult.error.message || '微信登录失败');
     }
 
-    clearCurrentProfileCache();
-    let profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: false });
     const pendingPhone = rememberPendingAuthPhone();
-
-    if (pendingPhone && profile?.phone !== pendingPhone) {
-      profile = await userProfileService.updateCurrentProfile({ phone: pendingPhone });
+    if (pendingPhone) {
+      const result = await _liwuAuthService.verifyOtp(pendingPhone, '1234');
+      clearPendingAuthPhone();
+      clearCurrentProfileCache();
+      return { success: true, profile: result.profile, authStatus: await _liwuAuthService.getAuthStatus() };
     }
 
     clearPendingAuthPhone();
-
-    return {
-      success: true,
-      profile,
-      authStatus: await resolveAuthStatus({ allowAnonymous: false })
-    };
+    return { success: true, profile: null, authStatus: await _liwuAuthService.getAuthStatus() };
   },
 
   async signOut() {
-    try {
-      const currentStatus = await resolveAuthStatus({ allowAnonymous: false });
-      clearPendingAuthPhone();
-      clearMockPhoneOtpSession();
-      clearMockPhoneAuthSession();
-      clearCurrentProfileCache();
-
-      if (currentStatus.hasSession && !currentStatus.isAnonymous && !currentStatus.isMockSession) {
-        await auth.signOut();
-      }
-
-      return { success: true };
-    } catch (error) {
-      console.error('退出登录失败:', error);
-      return { success: false, error };
-    }
+    _liwuAuthService.logout();
+    clearCurrentProfileCache();
+    return { success: true };
   },
 
   getCurrentUser() {
@@ -3712,19 +3519,11 @@ export const authService = {
   },
 
   async getCurrentSession() {
-    return resolveCurrentSession();
+    return _liwuAuthService.getSession();
   },
 
-  onLoginStateChanged(callback) {
-    return auth.onLoginStateChanged(callback);
-  },
-
-  onAuthStateChange(callback) {
-    if (typeof auth.onAuthStateChange !== 'function') {
-      return null;
-    }
-
-    return auth.onAuthStateChange(callback);
+  onSessionChange(callback) {
+    return _liwuAuthService.onSessionChange(callback);
   }
 };
 

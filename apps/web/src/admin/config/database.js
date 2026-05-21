@@ -50,7 +50,13 @@ export const DATABASE_CONFIG = {
     partnerBrandInvites: 'partner_brand_invites',
     userAddresses: 'user_addresses',
     pointLedger: 'point_ledger',
-    badgeProfiles: 'badge_profiles'
+    badgeProfiles: 'badge_profiles',
+    userProfiles: 'user_profiles',
+    userWallets: 'user_wallets',
+    userMemberships: 'user_memberships',
+    userReferrals: 'user_referrals',
+    userPartnerIdentities: 'user_partner_identities',
+    userOperationalStates: 'user_operational_states'
   },
   
   // Database options

@@ -1,0 +1,19 @@
+{
+  "envId": "liwu-0gtd91eebd863ccf",
+  "functionRoot": "cloudfunctions",
+  "functions": [
+    {
+      "name": "fortuneDailySettlement",
+      "timeout": 60,
+      "memorySize": 256,
+      "runtime": "Nodejs18.15",
+      "triggers": [
+        {
+          "name": "fortune-daily-settlement-trigger",
+          "type": "timer",
+          "config": "0 0 4 * * * *"
+        }
+      ]
+    }
+  ]
+}

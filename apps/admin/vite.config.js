@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'url'
 import { handleTencentTtsProxy } from './src/server/tencentTtsProxy.js'
 import { handleLocalClientBuildRequest } from './src/server/localClientBuildServer.js'
 
@@ -31,6 +32,11 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), localTtsProxyPlugin(env)],
     base: '/admin/',
     envPrefix: ['VITE_', 'REACT_APP_'],
+    resolve: {
+      alias: {
+        '@liwu/auth': fileURLToPath(new URL('../../packages/auth/index.js', import.meta.url))
+      }
+    },
     server: {
       proxy: {
         '/api/cloudbase-proxy': {

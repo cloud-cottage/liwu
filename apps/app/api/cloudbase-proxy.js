@@ -25,6 +25,17 @@ const RESPONSE_HEADER_BLOCKLIST = new Set([
   'connection'
 ]);
 
+const buildRequestId = () => `cbp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const logProxyEvent = (requestId, stage, details = {}) => {
+  console.log(JSON.stringify({
+    scope: 'cloudbase-proxy',
+    requestId,
+    stage,
+    ...details
+  }));
+};
+
 const readRawBody = async (req) => {
   const chunks = [];
 
@@ -49,12 +60,24 @@ const isAllowedTarget = (target) => {
 };
 
 export default async function handler(req, res) {
+  const rawRequestId = Array.isArray(req.query?.requestId) ? req.query.requestId[0] : req.query?.requestId;
+  const requestId = rawRequestId || buildRequestId();
   const rawTarget = Array.isArray(req.query?.target) ? req.query.target[0] : req.query?.target;
+  const startedAt = Date.now();
 
   if (!rawTarget || !isAllowedTarget(rawTarget)) {
+    logProxyEvent(requestId, 'invalid_target', {
+      method: req.method,
+      rawTarget: rawTarget || ''
+    });
     res.status(400).json({ error: 'invalid_target' });
     return;
   }
+
+  logProxyEvent(requestId, 'request_started', {
+    method: req.method,
+    rawTarget
+  });
 
   try {
     const upstreamHeaders = new Headers();
@@ -78,7 +101,15 @@ export default async function handler(req, res) {
       redirect: 'manual'
     });
 
+    logProxyEvent(requestId, 'upstream_response', {
+      method: req.method,
+      rawTarget,
+      status: upstreamResponse.status,
+      durationMs: Date.now() - startedAt
+    });
+
     res.status(upstreamResponse.status);
+    res.setHeader('x-liwu-proxy-request-id', requestId);
 
     upstreamResponse.headers.forEach((value, key) => {
       if (!RESPONSE_HEADER_BLOCKLIST.has(key.toLowerCase())) {
@@ -89,9 +120,17 @@ export default async function handler(req, res) {
     const responseBuffer = Buffer.from(await upstreamResponse.arrayBuffer());
     res.send(responseBuffer);
   } catch (error) {
+    logProxyEvent(requestId, 'proxy_failed', {
+      method: req.method,
+      rawTarget,
+      durationMs: Date.now() - startedAt,
+      message: error?.message || 'Proxy request failed',
+      stack: error?.stack || ''
+    });
     res.status(502).json({
       error: 'proxy_failed',
-      message: error?.message || 'Proxy request failed'
+      message: error?.message || 'Proxy request failed',
+      requestId
     });
   }
 }

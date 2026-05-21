@@ -1,5 +1,6 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { DATABASE_CONFIG } from '../config/database.js';
+import { readSession, buildAuthUid } from '@liwu/auth';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
@@ -233,8 +234,6 @@ const clearMockPhoneOtpSession = () => {
     window.sessionStorage.removeItem(MOCK_PHONE_OTP_STORAGE_KEY);
   }
 };
-
-const readMockPhoneAuthSession = () => readLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY);
 
 const writeMockPhoneAuthSession = (value) => {
   writeLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY, value);
@@ -590,6 +589,21 @@ const normalizeAuthStatus = ({ session, currentUser } = {}) => {
 };
 
 const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
+  const liwuSession = readSession();
+  if (liwuSession?.phone) {
+    return {
+      hasSession: true,
+      authUid: liwuSession.authUid || buildAuthUid(liwuSession.phone),
+      phoneNumber: liwuSession.phone,
+      displayName: liwuSession.displayName || '',
+      provider: 'phone',
+      loginMethod: 'phone',
+      isAnonymous: false,
+      isAuthenticated: true,
+      isMockSession: false
+    };
+  }
+
   let currentUser = await resolveCurrentUser().catch(() => null);
   let session = await resolveCurrentSession();
 
@@ -599,29 +613,8 @@ const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
     session = await resolveCurrentSession();
   }
 
-  const baseStatus = normalizeAuthStatus({ session, currentUser });
-  const mockPhoneAuthSession = readMockPhoneAuthSession();
-
-  if (baseStatus.isAuthenticated) {
-    return baseStatus;
-  }
-
-  if (!mockPhoneAuthSession) {
-    return baseStatus;
-  }
-
-  return {
-    ...baseStatus,
-    hasSession: true,
-    authUid: mockPhoneAuthSession.authUid || baseStatus.authUid,
-    phoneNumber: mockPhoneAuthSession.phoneNumber || baseStatus.phoneNumber,
-    displayName: mockPhoneAuthSession.displayName || baseStatus.displayName,
-    provider: 'mock_phone',
-    loginMethod: 'phone',
-    isAnonymous: false,
-    isAuthenticated: true,
-    isMockSession: true
-  };
+  return normalizeAuthStatus({ session, currentUser });
+};
 };
 
 const resolveAwarenessIdentity = async () => {

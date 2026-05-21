@@ -1,18 +1,17 @@
 import cloudbase from '@cloudbase/js-sdk';
+import { createAuthService, readSession } from '@liwu/auth';
 import { DATABASE_CONFIG } from '../config/database.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
 const PENDING_AUTH_PHONE_STORAGE_KEY = 'liwu_pending_auth_phone';
-const MOCK_PHONE_OTP_STORAGE_KEY = 'liwu_mock_phone_otp_session';
-const MOCK_PHONE_AUTH_STORAGE_KEY = 'liwu_mock_phone_auth_session';
 const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
 const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
 const MAX_WEALTH_HISTORY_ITEMS = 50;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
-const MOCK_PHONE_OTP_CODE = '1234';
 const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
+const CLOUDBASE_PROXY_TRACE_KEY = '__liwuCloudBaseProxyTrace';
 
 const isLocalDevHost = (hostname = '') => (
   hostname === 'localhost' ||
@@ -41,7 +40,37 @@ const isCloudBaseApiUrl = (value = '') => {
   }
 };
 
-const toProxyUrl = (targetUrl) => `${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}`;
+const buildProxyRequestId = () => `cbreq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const rememberProxyTrace = (trace = {}) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window[CLOUDBASE_PROXY_TRACE_KEY] = {
+    ...trace,
+    recordedAt: Date.now()
+  };
+};
+
+export const getLatestCloudBaseProxyTrace = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const trace = window[CLOUDBASE_PROXY_TRACE_KEY] || null;
+  if (!trace?.requestId) {
+    return null;
+  }
+
+  if (Date.now() - Number(trace.recordedAt || 0) > 2 * 60 * 1000) {
+    return null;
+  }
+
+  return trace;
+};
+
+const toProxyUrl = (targetUrl, requestId) => `${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}`;
 
 const installCloudBaseRequestProxy = () => {
   if (typeof window === 'undefined' || !shouldUseCloudBaseProxy() || window.__liwuCloudBaseProxyInstalled) {
@@ -49,11 +78,37 @@ const installCloudBaseRequestProxy = () => {
   }
 
   const originalOpen = window.XMLHttpRequest.prototype.open;
+  const originalSend = window.XMLHttpRequest.prototype.send;
   const originalFetch = window.fetch.bind(window);
 
   window.XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
-    const nextUrl = typeof url === 'string' && isCloudBaseApiUrl(url) ? toProxyUrl(url) : url;
+    if (typeof url === 'string' && isCloudBaseApiUrl(url)) {
+      const requestId = buildProxyRequestId();
+      this.__liwuCloudBaseRequestId = requestId;
+      this.__liwuCloudBaseTarget = url;
+      rememberProxyTrace({ requestId, target: url, stage: 'request_started', transport: 'xhr' });
+      const nextUrl = toProxyUrl(url, requestId);
+      return originalOpen.call(this, method, nextUrl, ...rest);
+    }
+
+    const nextUrl = url;
     return originalOpen.call(this, method, nextUrl, ...rest);
+  };
+
+  window.XMLHttpRequest.prototype.send = function patchedSend(...args) {
+    if (this.__liwuCloudBaseRequestId) {
+      this.addEventListener('loadend', () => {
+        rememberProxyTrace({
+          requestId: this.__liwuCloudBaseRequestId,
+          target: this.__liwuCloudBaseTarget || '',
+          stage: this.status >= 400 ? 'response_error' : 'response_finished',
+          transport: 'xhr',
+          status: this.status
+        });
+      }, { once: true });
+    }
+
+    return originalSend.apply(this, args);
   };
 
   window.fetch = function patchedFetch(input, init) {
@@ -67,11 +122,34 @@ const installCloudBaseRequestProxy = () => {
       return originalFetch(input, init);
     }
 
+    const requestId = buildProxyRequestId();
+    rememberProxyTrace({ requestId, target: rawUrl, stage: 'request_started', transport: 'fetch' });
+
     if (typeof input === 'string' || input instanceof URL) {
-      return originalFetch(toProxyUrl(rawUrl), init);
+      return originalFetch(toProxyUrl(rawUrl, requestId), init).then((response) => {
+        rememberProxyTrace({
+          requestId,
+          target: rawUrl,
+          stage: response.ok ? 'response_finished' : 'response_error',
+          transport: 'fetch',
+          status: response.status,
+          proxyRequestId: response.headers.get('x-liwu-proxy-request-id') || requestId
+        });
+        return response;
+      });
     }
 
-    return originalFetch(new Request(toProxyUrl(rawUrl), input), init);
+    return originalFetch(new Request(toProxyUrl(rawUrl, requestId), input), init).then((response) => {
+      rememberProxyTrace({
+        requestId,
+        target: rawUrl,
+        stage: response.ok ? 'response_finished' : 'response_error',
+        transport: 'fetch',
+        status: response.status,
+        proxyRequestId: response.headers.get('x-liwu-proxy-request-id') || requestId
+      });
+      return response;
+    });
   };
 
   window.__liwuCloudBaseProxyInstalled = true;
@@ -228,22 +306,22 @@ const writeLocalStorageJSON = (key, value) => {
   window.localStorage.setItem(key, JSON.stringify(value));
 };
 
-const clearMockPhoneOtpSession = () => {
-  if (typeof window !== 'undefined') {
-    window.sessionStorage.removeItem(MOCK_PHONE_OTP_STORAGE_KEY);
+const removeLocalStorageByPrefix = (prefix = '') => {
+  if (typeof window === 'undefined' || !prefix) {
+    return;
   }
-};
 
-const readMockPhoneAuthSession = () => readLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY);
-
-const writeMockPhoneAuthSession = (value) => {
-  writeLocalStorageJSON(MOCK_PHONE_AUTH_STORAGE_KEY, value);
-};
-
-const clearMockPhoneAuthSession = () => {
-  if (typeof window !== 'undefined') {
-    window.localStorage.removeItem(MOCK_PHONE_AUTH_STORAGE_KEY);
+  const keysToRemove = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key && key.startsWith(prefix)) {
+      keysToRemove.push(key);
+    }
   }
+
+  keysToRemove.forEach((key) => {
+    window.localStorage.removeItem(key);
+  });
 };
 
 const clearCurrentProfileCache = () => {
@@ -281,17 +359,6 @@ const parseNaturalNumber = (value = '') => {
 const formatNaturalNumber = (value) => String(Math.max(1, Number(value) || 1));
 
 const buildDefaultUserName = (uid = '') => `${DEFAULT_USER_NAME_PREFIX}${formatNaturalNumber(uid)}`;
-
-const isSystemGeneratedUserName = (value = '') => {
-  const normalizedValue = String(value || '').trim();
-
-  return (
-    !normalizedValue ||
-    /^用户\d*$/.test(normalizedValue) ||
-    /^小悟[\da-z]+$/i.test(normalizedValue) ||
-    /^觉醒伙伴\d+$/.test(normalizedValue)
-  );
-};
 
 const getUserUid = (document = {}) => (
   parseNaturalNumber(document.uid)
@@ -355,45 +422,6 @@ const isAnonymousDisplayName = (value = '') => {
   return !normalizedValue || normalizedValue === 'anonymous' || normalizedValue === 'anon';
 };
 
-const buildMockPhoneSession = ({ phoneNumber, authUid = '', displayName = '' }) => ({
-  authUid: buildPhoneAuthUid(phoneNumber) || authUid || `mock_phone_${normalizePhone(phoneNumber)}`,
-  phoneNumber: normalizePhone(phoneNumber),
-  displayName: displayName || `用户${normalizePhone(phoneNumber).slice(-4)}`,
-  loginMethod: 'phone',
-  signedInAt: new Date().toISOString()
-});
-
-const getDocumentTimestamp = (document = {}) => {
-  const rawTimestamp =
-    document.created_at?.$date ||
-    document.created_at ||
-    document.updated_at?.$date ||
-    document.updated_at ||
-    document.join_date ||
-    0;
-  const parsedTimestamp = new Date(rawTimestamp).getTime();
-  return Number.isNaN(parsedTimestamp) ? 0 : parsedTimestamp;
-};
-
-const selectCanonicalUserDocument = (documents = []) => (
-  [...documents]
-    .filter(Boolean)
-    .sort((left, right) => {
-      const leftUid = getUserUid(left) || Number.MAX_SAFE_INTEGER;
-      const rightUid = getUserUid(right) || Number.MAX_SAFE_INTEGER;
-      if (leftUid !== rightUid) {
-        return leftUid - rightUid;
-      }
-
-      const leftTimestamp = getDocumentTimestamp(left);
-      const rightTimestamp = getDocumentTimestamp(right);
-      if (leftTimestamp !== rightTimestamp) {
-        return leftTimestamp - rightTimestamp;
-      }
-
-      return String(getDocumentId(left)).localeCompare(String(getDocumentId(right)));
-    })[0] || null
-);
 
 const clampInviterRewardRate = (value) => {
   const nextValue = Number(value);
@@ -590,6 +618,21 @@ const normalizeAuthStatus = ({ session, currentUser } = {}) => {
 };
 
 const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
+  const liwuSession = readSession();
+  if (liwuSession?.phone) {
+    return {
+      hasSession: true,
+      authUid: liwuSession.authUid || buildPhoneAuthUid(liwuSession.phone),
+      phoneNumber: liwuSession.phone,
+      displayName: liwuSession.displayName || '',
+      provider: 'phone',
+      loginMethod: 'phone',
+      isAnonymous: false,
+      isAuthenticated: true,
+      isMockSession: false
+    };
+  }
+
   let currentUser = await resolveCurrentUser().catch(() => null);
   let session = await resolveCurrentSession();
 
@@ -599,29 +642,7 @@ const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
     session = await resolveCurrentSession();
   }
 
-  const baseStatus = normalizeAuthStatus({ session, currentUser });
-  const mockPhoneAuthSession = readMockPhoneAuthSession();
-
-  if (baseStatus.isAuthenticated) {
-    return baseStatus;
-  }
-
-  if (!mockPhoneAuthSession) {
-    return baseStatus;
-  }
-
-  return {
-    ...baseStatus,
-    hasSession: true,
-    authUid: mockPhoneAuthSession.authUid || baseStatus.authUid,
-    phoneNumber: mockPhoneAuthSession.phoneNumber || baseStatus.phoneNumber,
-    displayName: mockPhoneAuthSession.displayName || baseStatus.displayName,
-    provider: 'mock_phone',
-    loginMethod: 'phone',
-    isAnonymous: false,
-    isAuthenticated: true,
-    isMockSession: true
-  };
+  return normalizeAuthStatus({ session, currentUser });
 };
 
 const resolveAwarenessIdentity = async () => {
@@ -695,7 +716,7 @@ export const ensureAnonymousLogin = async () => {
 
 export const userProfileService = {
   async ensureCurrentProfile(options = {}) {
-    const { refresh = false, allowAnonymous = true } = options;
+    const { refresh = false } = options;
 
     if (!refresh && currentProfileCache) {
       return currentProfileCache;
@@ -706,133 +727,48 @@ export const userProfileService = {
     }
 
     currentProfilePromise = (async () => {
-      rememberPendingInviteCode();
-
-      const authStatus = await resolveAuthStatus({ allowAnonymous });
-      const authUid = authStatus?.authUid || '';
-      const normalizedPhoneNumber = normalizePhone(authStatus.phoneNumber);
-      const nowIso = new Date().toISOString();
-
-      if (!authUid) {
+      const session = readSession();
+      if (!session?.phone) {
         clearCurrentProfileCache();
         return null;
       }
 
-      let authUidDocument = null;
-      let phoneMatchedDocuments = [];
+      await ensureAnonymousLogin();
 
-      if (authUid) {
-        const existingResult = await db.collection(collections.users).where({ auth_uid: authUid }).limit(1).get();
-        authUidDocument = getFirstDocument(existingResult, collections.users);
+      if (session.userId) {
+        const docResult = await db.collection(collections.users).doc(session.userId).get().catch(() => ({ data: [] }));
+        const document = getFirstDocument(docResult, collections.users);
+        if (document) {
+          const nowIso = new Date().toISOString();
+          await db.collection(collections.users).doc(session.userId).update({
+            last_active: nowIso,
+            updated_at: new Date()
+          }).catch(() => {});
+
+          const profile = normalizeCurrentUserProfile({ ...document, last_active: nowIso, _id: session.userId });
+          return updateCurrentProfileCache(profile);
+        }
       }
 
-      if (normalizedPhoneNumber) {
-        const phoneMatchedResult = await db.collection(collections.users).where({ phone: normalizedPhoneNumber }).limit(20).get();
-        phoneMatchedDocuments = getResponseData(phoneMatchedResult, collections.users);
-      }
-
-      const existingDocument = phoneMatchedDocuments.length > 0
-        ? selectCanonicalUserDocument([authUidDocument, ...phoneMatchedDocuments])
-        : authUidDocument;
-
-      if (existingDocument) {
-        const existingProfile = normalizeCurrentUserProfile(existingDocument);
-        const rawExistingUid = getUserUid(existingDocument);
-        const resolvedUid = existingProfile.uid || await getNextUserUid();
-        const updatePayload = {
+      const phoneResult = await db.collection(collections.users).where({ phone: session.phone }).limit(10).get();
+      const phoneDocs = getResponseData(phoneResult, collections.users);
+      if (phoneDocs.length > 0) {
+        const userDoc = phoneDocs.length === 1
+          ? phoneDocs[0]
+          : phoneDocs.filter((d) => Number(d.uid) > 0).sort((a, b) => (Number(a.uid) || Infinity) - (Number(b.uid) || Infinity))[0] || phoneDocs[0];
+        const docId = getDocumentId(userDoc);
+        const nowIso = new Date().toISOString();
+        await db.collection(collections.users).doc(docId).update({
           last_active: nowIso,
           updated_at: new Date()
-        };
+        }).catch(() => {});
 
-        if (authUid && existingProfile.authUid !== authUid) {
-          updatePayload.auth_uid = authUid;
-        }
-
-        if (authStatus.email && existingProfile.email !== authStatus.email) {
-          updatePayload.email = authStatus.email;
-        }
-
-        if (normalizedPhoneNumber && existingProfile.phone !== normalizedPhoneNumber) {
-          updatePayload.phone = normalizedPhoneNumber;
-        }
-
-        if (rawExistingUid !== resolvedUid) {
-          updatePayload.uid = resolvedUid;
-        }
-
-        if (!existingProfile.name || isSystemGeneratedUserName(existingProfile.name)) {
-          updatePayload.name = buildDefaultUserName(resolvedUid);
-        }
-
-        if (!Array.isArray(existingDocument.wealth_history)) {
-          updatePayload.wealth_history = existingProfile.wealthHistory;
-        }
-
-        if (!existingDocument.reward_claims || typeof existingDocument.reward_claims !== 'object') {
-          updatePayload.reward_claims = existingProfile.rewardClaims;
-        }
-
-        await db.collection(collections.users).doc(existingProfile.id).update(updatePayload);
-
-        clearPendingInviteCode();
-
-        return updateCurrentProfileCache(
-          normalizeCurrentUserProfile({
-            ...existingDocument,
-            ...updatePayload,
-            _id: existingProfile.id
-          })
-        );
+        const profile = normalizeCurrentUserProfile({ ...userDoc, last_active: nowIso, _id: docId });
+        return updateCurrentProfileCache(profile);
       }
 
-      const pendingInviteCode = rememberPendingInviteCode();
-      let inviterUserId = '';
-
-      if (pendingInviteCode) {
-        const inviterUid = parseNaturalNumber(pendingInviteCode);
-        const inviterResult = await db
-          .collection(collections.users)
-          .where({ uid: inviterUid })
-          .limit(1)
-          .get();
-        const inviterDocument = getFirstDocument(inviterResult, collections.users);
-
-        if (inviterDocument && (inviterDocument.auth_uid || inviterDocument.authUid) !== authUid) {
-          inviterUserId = getDocumentId(inviterDocument);
-        }
-      }
-
-      const newUserPayload = {
-        uid: await getNextUserUid(),
-        auth_uid: authUid,
-        name: '',
-        email: authStatus.email,
-        phone: normalizedPhoneNumber,
-        status: 'active',
-        level: 1,
-        experience: 0,
-        is_student: false,
-        inviter_user_id: inviterUserId,
-        balance: 0,
-        wealth_history: [],
-        reward_claims: {},
-        join_date: nowIso.slice(0, 10),
-        last_active: nowIso,
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-
-      newUserPayload.name = buildDefaultUserName(newUserPayload.uid);
-
-      const createResult = await db.collection(collections.users).add(newUserPayload);
-      clearPendingInviteCode();
-
-      return updateCurrentProfileCache(
-        normalizeCurrentUserProfile({
-          ...newUserPayload,
-          _id: createResult.id
-        })
-      );
+      clearCurrentProfileCache();
+      return null;
     })().finally(() => {
       currentProfilePromise = null;
     });
@@ -1271,193 +1207,42 @@ export const wealthService = {
   }
 };
 
+const _liwuAuthService = createAuthService({ db, auth, collections: { users: collections.users } });
+
 export const authService = {
-  async getAuthStatus(options = {}) {
-    return resolveAuthStatus(options);
+  async getAuthStatus() {
+    return _liwuAuthService.getAuthStatus();
   },
 
   async loginAnonymously() {
     try {
       await ensureAnonymousLogin();
-      const authStatus = await resolveAuthStatus({ allowAnonymous: true });
-      return { success: true, authStatus };
+      return { success: true, authStatus: await _liwuAuthService.getAuthStatus() };
     } catch (error) {
-      console.error('匿名登录失败:', error);
       return { success: false, error };
     }
   },
 
   async requestPhoneOtp(phone) {
-    const normalizedPhone = normalizePhone(phone);
-
-    if (!normalizedPhone) {
-      throw new Error('请输入手机号');
-    }
-
-    rememberPendingAuthPhone(normalizedPhone);
-    writeSessionStorageJSON(MOCK_PHONE_OTP_STORAGE_KEY, {
-      phoneNumber: normalizedPhone,
-      requestedAt: new Date().toISOString(),
-      code: MOCK_PHONE_OTP_CODE
-    });
-
-    return {
-      success: true,
-      mockCode: MOCK_PHONE_OTP_CODE
-    };
+    return _liwuAuthService.requestOtp(phone);
   },
 
   async verifyPhoneOtp({ phone, code }) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedCode = String(code || '').trim();
-
-    if (!normalizedPhone) {
-      throw new Error('请输入手机号');
-    }
-
-    if (!normalizedCode) {
-      throw new Error('请输入验证码');
-    }
-
-    const mockPhoneOtpSession = readSessionStorageJSON(MOCK_PHONE_OTP_STORAGE_KEY);
-
-    if (!mockPhoneOtpSession || mockPhoneOtpSession.phoneNumber !== normalizedPhone) {
-      throw new Error('请先获取验证码');
-    }
-
-    if (normalizedCode !== MOCK_PHONE_OTP_CODE) {
-      throw new Error('验证码错误，请输入 1234');
-    }
-
-    clearPendingAuthPhone();
-    clearMockPhoneOtpSession();
-
-    let currentAuthStatus = {
-      authUid: '',
-      displayName: ''
-    };
-
-    try {
-      currentAuthStatus = await resolveAuthStatus({ allowAnonymous: true });
-    } catch (error) {
-      console.error('读取当前匿名态失败:', error);
-    }
-
-    let profile = null;
-    let mockSession = buildMockPhoneSession({
-      phoneNumber: normalizedPhone,
-      authUid: currentAuthStatus.authUid,
-      displayName: currentAuthStatus.displayName && !isAnonymousDisplayName(currentAuthStatus.displayName)
-        ? currentAuthStatus.displayName
-        : ''
-    });
-
-    writeMockPhoneAuthSession(mockSession);
-
-    try {
-      await ensureAnonymousLogin();
-      clearCurrentProfileCache();
-      profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: true });
-      if (profile?.phone !== normalizedPhone) {
-        profile = await userProfileService.updateCurrentProfile({ phone: normalizedPhone });
-      }
-
-      if (profile) {
-        mockSession = buildMockPhoneSession({
-          phoneNumber: normalizedPhone,
-          authUid: profile.authUid,
-          displayName: profile.name
-        });
-        writeMockPhoneAuthSession(mockSession);
-      }
-    } catch (error) {
-      console.error('模拟手机号登录云端同步失败:', error);
-    }
-
-    return {
-      success: true,
-      profile,
-      authStatus: await resolveAuthStatus({ allowAnonymous: false })
-    };
+    const result = await _liwuAuthService.verifyOtp(phone, code);
+    clearCurrentProfileCache();
+    return result;
   },
 
   hasOAuthRedirectParams() {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-
+    if (typeof window === 'undefined') return false;
     const searchParams = new URLSearchParams(window.location.search);
     return Boolean(searchParams.get('code') && searchParams.get('state'));
   },
 
-  async startWechatLogin({ phone, redirectTo } = {}) {
-    const normalizedPhone = normalizePhone(phone);
-
-    if (!normalizedPhone) {
-      throw new Error('请输入手机号');
-    }
-
-    rememberPendingAuthPhone(normalizedPhone);
-
-    const signInResult = await auth.signInWithOAuth({
-      provider: DEFAULT_WECHAT_PROVIDER_ID,
-      options: {
-        redirectTo
-      }
-    });
-
-    if (signInResult?.error) {
-      clearPendingAuthPhone();
-      throw new Error(signInResult.error.message || '微信登录跳转失败');
-    }
-
-    return { success: true, data: signInResult?.data };
-  },
-
-  async completeWechatLogin() {
-    const verifyResult = await auth.verifyOAuth({
-      provider: DEFAULT_WECHAT_PROVIDER_ID
-    });
-
-    if (verifyResult?.error) {
-      clearPendingAuthPhone();
-      throw new Error(verifyResult.error.message || '微信登录失败');
-    }
-
-    clearCurrentProfileCache();
-    let profile = await userProfileService.ensureCurrentProfile({ refresh: true, allowAnonymous: false });
-    const pendingPhone = rememberPendingAuthPhone();
-
-    if (pendingPhone && profile?.phone !== pendingPhone) {
-      profile = await userProfileService.updateCurrentProfile({ phone: pendingPhone });
-    }
-
-    clearPendingAuthPhone();
-
-    return {
-      success: true,
-      profile,
-      authStatus: await resolveAuthStatus({ allowAnonymous: false })
-    };
-  },
-
   async signOut() {
-    try {
-      const currentStatus = await resolveAuthStatus({ allowAnonymous: false });
-      clearPendingAuthPhone();
-      clearMockPhoneOtpSession();
-      clearMockPhoneAuthSession();
-      clearCurrentProfileCache();
-
-      if (currentStatus.hasSession && !currentStatus.isAnonymous && !currentStatus.isMockSession) {
-        await auth.signOut();
-      }
-
-      return { success: true };
-    } catch (error) {
-      console.error('退出登录失败:', error);
-      return { success: false, error };
-    }
+    _liwuAuthService.logout();
+    clearCurrentProfileCache();
+    return { success: true };
   },
 
   getCurrentUser() {
@@ -1465,19 +1250,11 @@ export const authService = {
   },
 
   async getCurrentSession() {
-    return resolveCurrentSession();
+    return _liwuAuthService.getSession();
   },
 
-  onLoginStateChanged(callback) {
-    return auth.onLoginStateChanged(callback);
-  },
-
-  onAuthStateChange(callback) {
-    if (typeof auth.onAuthStateChange !== 'function') {
-      return null;
-    }
-
-    return auth.onAuthStateChange(callback);
+  onSessionChange(callback) {
+    return _liwuAuthService.onSessionChange(callback);
   }
 };
 

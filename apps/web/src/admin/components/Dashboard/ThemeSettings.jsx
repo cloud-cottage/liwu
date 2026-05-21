@@ -13,6 +13,8 @@ const ThemeSettings = ({
   pageMastheadSettings,
   meditationSettings,
   badgeSettings,
+  platformServiceFeeSettings,
+  shopRewardSettings,
   shopPartnerPricingSettings,
   error,
   saving,
@@ -23,6 +25,8 @@ const ThemeSettings = ({
   savingPageMasthead,
   savingMeditationSettings,
   savingBadgeSettings,
+  savingPlatformServiceFee,
+  savingShopRewardSettings,
   savingShopPartnerPricing,
   onSave,
   onSaveAwarenessDisplay,
@@ -33,6 +37,8 @@ const ThemeSettings = ({
   onSaveMeditationSettings,
   onSaveBadgeSettings
   ,
+  onSavePlatformServiceFee,
+  onSaveShopRewardSettings,
   onSaveShopPartnerPricing
 }) => {
   const [activeTab, setActiveTab] = useState('home');
@@ -43,6 +49,9 @@ const ThemeSettings = ({
   const [draftAwarenessSlogan, setDraftAwarenessSlogan] = useState(pageMastheadSettings.awarenessSlogan || '');
   const [draftShopSlogan, setDraftShopSlogan] = useState(pageMastheadSettings.shopSlogan || '');
   const [draftMeditationSlogan, setDraftMeditationSlogan] = useState(pageMastheadSettings.meditationSlogan || '');
+  const [draftConsumerServiceFeeRate, setDraftConsumerServiceFeeRate] = useState(Number(platformServiceFeeSettings.consumerRate || 0.09));
+  const [draftPartnerAgentServiceFeeRate, setDraftPartnerAgentServiceFeeRate] = useState(Number(platformServiceFeeSettings.partnerAgentRate || 0.033));
+  const [draftShopRewardBeansPerYuan, setDraftShopRewardBeansPerYuan] = useState(Number(shopRewardSettings.rewardBeansPerYuan || 1));
   const [draftShopPartnerPricingTiers, setDraftShopPartnerPricingTiers] = useState(() => shopPartnerPricingSettings.tiers || []);
   const [draftSlides, setDraftSlides] = useState(() => brandCarouselSettings.slides || []);
   const [draftAvatarOptions, setDraftAvatarOptions] = useState(() => userAvatarOptionsSettings.avatars || []);
@@ -154,6 +163,15 @@ const ThemeSettings = ({
   useEffect(() => {
     setDraftShopPartnerPricingTiers(shopPartnerPricingSettings.tiers || []);
   }, [shopPartnerPricingSettings.tiers]);
+
+  useEffect(() => {
+    setDraftConsumerServiceFeeRate(Number(platformServiceFeeSettings.consumerRate || 0.09));
+    setDraftPartnerAgentServiceFeeRate(Number(platformServiceFeeSettings.partnerAgentRate || 0.033));
+  }, [platformServiceFeeSettings.consumerRate, platformServiceFeeSettings.partnerAgentRate]);
+
+  useEffect(() => {
+    setDraftShopRewardBeansPerYuan(Number(shopRewardSettings.rewardBeansPerYuan || 1));
+  }, [shopRewardSettings.rewardBeansPerYuan]);
 
   useEffect(() => {
     setDraftPreviewUrl(clientDistributionSettings.previewUrl || '');
@@ -314,6 +332,15 @@ const ThemeSettings = ({
 
   const handleSaveShopSettings = async () => {
     await onSavePageMasthead(draftPageMastheadPayload);
+    await onSavePlatformServiceFee({
+      ...platformServiceFeeSettings,
+      consumerRate: draftConsumerServiceFeeRate,
+      partnerAgentRate: draftPartnerAgentServiceFeeRate
+    });
+    await onSaveShopRewardSettings({
+      ...shopRewardSettings,
+      rewardBeansPerYuan: draftShopRewardBeansPerYuan
+    });
     await onSaveShopPartnerPricing({ ...shopPartnerPricingSettings, tiers: draftShopPartnerPricingTiers });
   };
 
@@ -759,10 +786,82 @@ const ThemeSettings = ({
               partner_pricing
             </div>
             <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              平台技术服务费
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              A 类用于全平台普通用户的小额消费；B 类用于 partner 代理商在 web 客户端后台下单时的平台技术服务费。
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px', marginTop: '18px' }}>
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>A 类费率（普通用户）</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  value={draftConsumerServiceFeeRate}
+                  onChange={(event) => {
+                    const nextValue = Math.min(1, Math.max(0, Number(event.target.value) || 0));
+                    setDraftConsumerServiceFeeRate(nextValue);
+                  }}
+                  style={fieldInputStyle}
+                />
+                <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                  默认 0.09，即 9%。
+                </div>
+              </label>
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>B 类费率（代理商）</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  value={draftPartnerAgentServiceFeeRate}
+                  onChange={(event) => {
+                    const nextValue = Math.min(1, Math.max(0, Number(event.target.value) || 0));
+                    setDraftPartnerAgentServiceFeeRate(nextValue);
+                  }}
+                  style={fieldInputStyle}
+                />
+                <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                  默认 0.033，即 3.3%。
+                </div>
+              </label>
+            </div>
+
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
               代理商折扣梯度
             </div>
             <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
               代理商折扣仅用于 web 端合作伙伴后台。5000 元档位按商品标价金额判断；10000 / 20000 / 50000 档位按折后实际付款额判断。
+            </div>
+
+            <div style={{ marginTop: '10px', fontSize: '22px', fontWeight: 700, color: '#111827' }}>
+              工坊返豆比例
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '14px', color: '#475569', lineHeight: 1.7 }}>
+              默认比例为 1 个/元。用户每实际支付 1000 元，在订单确认收货后返还 1000 个福豆。该比例同样适用于代理商后台成交商品。返还福豆会从系统福豆余额中同步扣减。
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 320px)', gap: '12px', marginTop: '18px' }}>
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>返豆比例（个/元）</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={draftShopRewardBeansPerYuan}
+                  onChange={(event) => {
+                    const nextValue = Math.max(0, Number(event.target.value) || 0);
+                    setDraftShopRewardBeansPerYuan(nextValue);
+                  }}
+                  style={fieldInputStyle}
+                />
+                <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+                  例如填 1，表示每支付 1 元返 1 个福豆。
+                </div>
+              </label>
             </div>
 
             <div style={{ display: 'grid', gap: '12px', marginTop: '18px' }}>
@@ -1026,10 +1125,10 @@ const ThemeSettings = ({
           <button
             type="button"
             onClick={() => { void handleSaveShopSettings(); }}
-            disabled={savingPageMasthead || savingShopPartnerPricing}
+            disabled={savingPageMasthead || savingPlatformServiceFee || savingShopRewardSettings || savingShopPartnerPricing}
             style={primaryButtonStyle}
           >
-            {(savingPageMasthead || savingShopPartnerPricing) ? '保存中...' : '保存工坊设置'}
+            {(savingPageMasthead || savingPlatformServiceFee || savingShopRewardSettings || savingShopPartnerPricing) ? '保存中...' : '保存工坊设置'}
           </button>
         </div>
       )}
