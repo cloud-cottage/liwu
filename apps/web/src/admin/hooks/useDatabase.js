@@ -47,6 +47,22 @@ const wait = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
 
+const withTimeout = (promise, ms = 8000, label = 'request') => new Promise((resolve, reject) => {
+  const timeoutId = setTimeout(() => {
+    reject(new Error(`${label} timeout`));
+  }, ms);
+
+  Promise.resolve(promise)
+    .then((value) => {
+      clearTimeout(timeoutId);
+      resolve(value);
+    })
+    .catch((error) => {
+      clearTimeout(timeoutId);
+      reject(error);
+    });
+});
+
 const runWithRetry = async (requestFactory, { retries = 2, delayMs = 250 } = {}) => {
   let lastError = null;
 
@@ -119,6 +135,22 @@ export const useDatabase = () => {
   const [partnerBrands, setPartnerBrands] = useState([]);
   const [partnerBrandMembers, setPartnerBrandMembers] = useState([]);
   const [partnerBrandInvites, setPartnerBrandInvites] = useState([]);
+  const [fortuneDebugState, setFortuneDebugState] = useState({
+    systemFortune: 'idle',
+    rawUsers: 'idle',
+    partnerUsers: 'idle',
+    pointLedger: 'idle',
+    partnerBrands: 'idle',
+    rawUsersCount: 0,
+    partnerUsersCount: 0,
+    pointLedgerCount: 0,
+    partnerBrandsCount: 0,
+    systemFortuneError: '',
+    rawUsersError: '',
+    partnerUsersError: '',
+    pointLedgerError: '',
+    partnerBrandsError: ''
+  });
   const [settingsError, setSettingsError] = useState(null);
   const [savingMeditationSettings, setSavingMeditationSettings] = useState(false);
   const [savingAwarenessTagSettings, setSavingAwarenessTagSettings] = useState(false);
@@ -165,11 +197,15 @@ export const useDatabase = () => {
       const [
         dashboardDataResult,
         awarenessTagOverviewResult,
-        shopManagementDataResult
+        shopManagementDataResult,
+        systemFortuneResult,
+        partnerBrandWorkspaceResult
       ] = await runSettledBatch([
         () => DatabaseService.getDashboardData(),
         () => DatabaseService.getAwarenessTagOverview(),
-        () => DatabaseService.getShopManagementData()
+        () => DatabaseService.getShopManagementData(),
+        () => DatabaseService.getSystemFortuneSettings(),
+        () => DatabaseService.getPartnerBrandWorkspaceData()
       ]);
 
       const dashboardData = dashboardDataResult.status === 'fulfilled' ? dashboardDataResult.value : EMPTY_DASHBOARD_DATA;
@@ -177,6 +213,12 @@ export const useDatabase = () => {
       const nextShopManagementData = shopManagementDataResult.status === 'fulfilled'
         ? shopManagementDataResult.value
         : { categories: [], products: [], skus: [], orders: [], orderItems: [] };
+      const nextSystemFortuneSettings = systemFortuneResult.status === 'fulfilled'
+        ? systemFortuneResult.value
+        : DEFAULT_SYSTEM_FORTUNE;
+      const nextPartnerBrandWorkspace = partnerBrandWorkspaceResult.status === 'fulfilled'
+        ? partnerBrandWorkspaceResult.value
+        : { brands: [], members: [], invites: [] };
 
       setUsers(dashboardData.users);
       setTags(dashboardData.tags);
@@ -189,12 +231,18 @@ export const useDatabase = () => {
       setShopSkus(nextShopManagementData.skus || []);
       setShopOrders(nextShopManagementData.orders || []);
       setShopOrderItems(nextShopManagementData.orderItems || []);
+      setSystemFortuneSettings(nextSystemFortuneSettings);
+      setPartnerBrands(nextPartnerBrandWorkspace.brands || []);
+      setPartnerBrandMembers(nextPartnerBrandWorkspace.members || []);
+      setPartnerBrandInvites(nextPartnerBrandWorkspace.invites || []);
       setLoadedSections((current) => ({ ...current, overview: true }));
 
       const partialFailureLabels = [
         dashboardDataResult.status === 'rejected' ? '总览与用户' : '',
         awarenessTagOverviewResult.status === 'rejected' ? '觉察统计' : '',
-        shopManagementDataResult.status === 'rejected' ? '工坊数据' : ''
+        shopManagementDataResult.status === 'rejected' ? '工坊数据' : '',
+        systemFortuneResult.status === 'rejected' ? '系统福豆' : '',
+        partnerBrandWorkspaceResult.status === 'rejected' ? '品牌方店铺' : ''
       ].filter(Boolean);
 
       setSettingsError(
@@ -299,17 +347,105 @@ export const useDatabase = () => {
       }
 
       if (section === 'fortune') {
-        const [systemFortune, partnerUsersData, partnerBrandWorkspace] = await Promise.all([
-          runWithRetry(() => DatabaseService.getSystemFortuneSettings()),
-          runWithRetry(() => DatabaseService.getPartnerUsers()),
-          runWithRetry(() => DatabaseService.getPartnerBrandWorkspaceData())
+        setFortuneDebugState({
+          systemFortune: 'loading',
+          rawUsers: 'loading',
+          partnerUsers: 'loading',
+          pointLedger: 'loading',
+          partnerBrands: 'loading',
+          rawUsersCount: 0,
+          partnerUsersCount: 0,
+          pointLedgerCount: 0,
+          partnerBrandsCount: 0,
+          systemFortuneError: '',
+          rawUsersError: '',
+          partnerUsersError: '',
+          pointLedgerError: '',
+          partnerBrandsError: ''
+        });
+
+        let latestRawUsers = [];
+        let latestTaggedPartnerUsers = [];
+        const partialFailureLabels = [];
+
+        const mergeAndSetUsers = () => {
+          const taggedUsersById = new Map((latestTaggedPartnerUsers || []).map((user) => [user.id, user]));
+          const mergedUsers = (latestRawUsers || []).map((user) => ({
+            ...user,
+            tags: taggedUsersById.get(user.id)?.tags || user.tags || []
+          }));
+          setUsers(mergedUsers);
+        };
+
+        const runFortuneRequestAndApply = async (label, requestFactory, onFulfilled) => {
+          try {
+            const value = await withTimeout(
+              runWithRetry(requestFactory, { retries: 1, delayMs: 400 }),
+              30000,
+              label
+            );
+            onFulfilled?.(value);
+            setFortuneDebugState((current) => ({
+              ...current,
+              [label]: 'fulfilled',
+              [`${label}Error`]: '',
+              ...(label === 'rawUsers' ? { rawUsersCount: Array.isArray(value) ? value.length : 0 } : {}),
+              ...(label === 'partnerUsers' ? { partnerUsersCount: Array.isArray(value) ? value.length : 0 } : {}),
+              ...(label === 'pointLedger' ? { pointLedgerCount: Array.isArray(value) ? value.length : 0 } : {}),
+              ...(label === 'partnerBrands' ? { partnerBrandsCount: Array.isArray(value?.brands) ? value.brands.length : 0 } : {})
+            }));
+            return { status: 'fulfilled' };
+          } catch (reason) {
+            partialFailureLabels.push(label);
+            setFortuneDebugState((current) => ({
+              ...current,
+              [label]: 'rejected',
+              [`${label}Error`]: String(reason?.message || reason || '')
+            }));
+            return { status: 'rejected' };
+          }
+        };
+
+        await Promise.all([
+          runFortuneRequestAndApply('systemFortune', () => DatabaseService.getSystemFortuneSettings(), (value) => {
+            setSystemFortuneSettings(value || DEFAULT_SYSTEM_FORTUNE);
+          }),
+          runFortuneRequestAndApply('rawUsers', () => DatabaseService.getUsers(), (value) => {
+            latestRawUsers = value || [];
+            if (latestRawUsers.length > 0) {
+              mergeAndSetUsers();
+            }
+          }),
+          runFortuneRequestAndApply('partnerUsers', () => DatabaseService.getPartnerUsers(), (value) => {
+            latestTaggedPartnerUsers = value || [];
+            if (latestTaggedPartnerUsers.length > 0) {
+              setPartnerUsers(latestTaggedPartnerUsers);
+              mergeAndSetUsers();
+            }
+          }),
+          runFortuneRequestAndApply('pointLedger', () => DatabaseService.getFortunePointLedgerEntries(), (value) => {
+            if (Array.isArray(value) && value.length > 0) {
+              setPointLedgerEntries(value);
+            }
+          }),
+          runFortuneRequestAndApply('partnerBrands', () => DatabaseService.getPartnerBrandWorkspaceData(), (value) => {
+            if (Array.isArray(value?.brands) && value.brands.length > 0) {
+              setPartnerBrands(value.brands);
+            }
+            if (Array.isArray(value?.members) && value.members.length > 0) {
+              setPartnerBrandMembers(value.members);
+            }
+            if (Array.isArray(value?.invites) && value.invites.length > 0) {
+              setPartnerBrandInvites(value.invites);
+            }
+          })
         ]);
 
-        setSystemFortuneSettings(systemFortune);
-        setPartnerUsers(partnerUsersData || []);
-        setPartnerBrands(partnerBrandWorkspace.brands || []);
-        setPartnerBrandMembers(partnerBrandWorkspace.members || []);
-        setPartnerBrandInvites(partnerBrandWorkspace.invites || []);
+        setSettingsError(
+          partialFailureLabels.length > 0
+            ? `福豆页部分数据加载失败，已使用默认值：${partialFailureLabels.join('、')}`
+            : null
+        );
       }
 
       if (section === 'settings') {
@@ -1023,6 +1159,7 @@ export const useDatabase = () => {
     partnerBrands,
     partnerBrandMembers,
     partnerBrandInvites,
+    fortuneDebugState,
     meditationAudioLibrary,
     meditationCompositionSettings,
     meditationCalendar,

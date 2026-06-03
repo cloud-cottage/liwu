@@ -19,10 +19,10 @@ const getPageMastheadSettings = async () => {
     const document = (result.data || [])[0] || {}
 
     return {
-      homeSlogan: sanitizeSlogan(document.home_slogan ?? document.homeSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.homeSlogan),
-      awarenessSlogan: sanitizeSlogan(document.awareness_slogan ?? document.awarenessSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.awarenessSlogan),
-      shopSlogan: sanitizeSlogan(document.shop_slogan ?? document.shopSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.shopSlogan),
-      meditationSlogan: sanitizeSlogan(document.meditation_slogan ?? document.meditationSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.meditationSlogan)
+      homeSlogan: sanitizeSlogan(document.home_slogan != null ? document.home_slogan : document.homeSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.homeSlogan),
+      awarenessSlogan: sanitizeSlogan(document.awareness_slogan != null ? document.awareness_slogan : document.awarenessSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.awarenessSlogan),
+      shopSlogan: sanitizeSlogan(document.shop_slogan != null ? document.shop_slogan : document.shopSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.shopSlogan),
+      meditationSlogan: sanitizeSlogan(document.meditation_slogan != null ? document.meditation_slogan : document.meditationSlogan, DEFAULT_PAGE_MASTHEAD_SETTINGS.meditationSlogan)
     }
   } catch {
     return {

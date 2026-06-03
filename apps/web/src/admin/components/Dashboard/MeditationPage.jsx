@@ -1,7 +1,8 @@
-import React, { useState, useCallback } from 'react';
-import { uploadAudioFile } from '../../utils/audioUpload.js';
+import React, { useCallback, useEffect, useState } from 'react';
+import { getAudioTempUrl, uploadAudioFile } from '../../utils/audioUpload.js';
 import { synthesizeSpeech, blobUrlToFile } from '../../utils/ttsService.js';
 import { MEDITATION_AUDIO_LIBRARY_TYPES } from '../../services/database.js';
+import { buildMeditationSessionPlan } from '@liwu/shared-utils/meditation-session-plan.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -118,12 +119,384 @@ const formatSeconds = (secs) => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
+const isSsmlText = (value = '') => /^<speak[\s>]/i.test(String(value || '').trim());
+
+const normalizeSsmlBreakDurations = (value = '') => String(value || '').replace(
+  /(<break\b[^>]*\btime\s*=\s*)(["'])(\d+(?:\.\d+)?)s\2/gi,
+  (fullMatch, prefix, quote, secondsValue) => {
+    const millisecondsValue = Math.round(Number(secondsValue) * 1000);
+    if (!Number.isFinite(millisecondsValue) || millisecondsValue <= 0) {
+      return fullMatch;
+    }
+
+    return `${prefix}${quote}${millisecondsValue}ms${quote}`;
+  }
+);
+
+const normalizeStoredTtsText = (value = '', isSSML = false) => {
+  const trimmedValue = String(value || '').trim();
+  if (!trimmedValue) {
+    return '';
+  }
+
+  return isSSML || isSsmlText(trimmedValue)
+    ? normalizeSsmlBreakDurations(trimmedValue)
+    : trimmedValue;
+};
+
+const sortAudioGroups = (groups = []) => [...groups].sort((left, right) => {
+  if (left.type !== right.type) {
+    return MEDITATION_AUDIO_LIBRARY_TYPES.indexOf(left.type) - MEDITATION_AUDIO_LIBRARY_TYPES.indexOf(right.type);
+  }
+
+  return Number(left.sortOrder ?? 0) - Number(right.sortOrder ?? 0);
+});
+
+const getTypeGroups = (groups = [], type) => sortAudioGroups(groups).filter((group) => group.type === type);
+
+const getDefaultGroupIdForType = (groups = [], type) => getTypeGroups(groups, type)[0]?.id || '';
+
+const createEmptyGroupSelections = (groups = []) => Object.fromEntries(
+  sortAudioGroups(groups).map((group) => [group.id, []])
+);
+
+const normalizeGroupSelections = (groups = [], selections = {}) => {
+  const nextSelections = createEmptyGroupSelections(groups);
+  Object.keys(nextSelections).forEach((groupId) => {
+    if (Array.isArray(selections[groupId])) {
+      nextSelections[groupId] = [...selections[groupId]];
+    }
+  });
+  return nextSelections;
+};
+
+const aggregateSectionsFromSelections = (groups = [], selections = {}) => Object.fromEntries(
+  MEDITATION_AUDIO_LIBRARY_TYPES.map((type) => [
+    type,
+    getTypeGroups(groups, type).flatMap((group) => Array.isArray(selections[group.id]) ? selections[group.id] : [])
+  ])
+);
+
+const PREVIEW_TRACK_KEYS = ['background', 'voice'];
+
+const buildMeditationPresetPreviewPlan = async ({ preset, audioLibrary, compositionSettings }) => {
+  if (!preset) {
+    return null;
+  }
+
+  const resolvedItems = await Promise.all((audioLibrary?.items || []).map(async (item) => ({
+    ...item,
+    audioUrl: item.audioUrl || (item.fileId ? await getAudioTempUrl(item.fileId) || '' : '')
+  })));
+
+  const plan = buildMeditationSessionPlan({
+    audioLibrary: {
+      ...audioLibrary,
+      items: resolvedItems
+    },
+    compositionSettings,
+    meditationCalendar: { days: {} },
+    meditationLibrary: {
+      meditations: [preset]
+    },
+    preset
+  });
+
+  if (!plan?.segments?.length) {
+    return null;
+  }
+
+  return {
+    presetName: plan.presetName || preset.name || '未命名冥想',
+    segments: plan.segments,
+    sessionDuration: plan.sessionDuration
+  };
+};
+
+const MeditationPreviewDialog = ({ plan, onClose }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const backgroundAudioRef = React.useRef(new Audio());
+  const voiceAudioRef = React.useRef(new Audio());
+  const timerRef = React.useRef(null);
+  const startMsRef = React.useRef(null);
+  const elapsedBeforePauseRef = React.useRef(0);
+  const runtimeRef = React.useRef({
+    background: { segmentId: '', itemIndex: 0 },
+    voice: { segmentId: '', itemIndex: 0 }
+  });
+  const isPlayingRef = React.useRef(false);
+
+  const getAudioRef = useCallback((trackKey) => (
+    trackKey === 'background' ? backgroundAudioRef : voiceAudioRef
+  ), []);
+
+  const stopTicker = useCallback(() => {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const getElapsedSeconds = useCallback(() => {
+    if (isPlayingRef.current && startMsRef.current != null) {
+      return Math.max(0, (performance.now() - startMsRef.current) / 1000);
+    }
+
+    return Math.max(0, elapsedBeforePauseRef.current);
+  }, []);
+
+  const pausePreviewPlayback = useCallback(() => {
+    elapsedBeforePauseRef.current = getElapsedSeconds();
+    stopTicker();
+    isPlayingRef.current = false;
+    backgroundAudioRef.current.pause();
+    voiceAudioRef.current.pause();
+    setIsPlaying(false);
+    setIsBuffering(false);
+  }, [getElapsedSeconds, stopTicker]);
+
+  const clearTrackRuntime = useCallback((trackKey) => {
+    const audio = getAudioRef(trackKey).current;
+    runtimeRef.current[trackKey] = { segmentId: '', itemIndex: 0 };
+    audio.pause();
+    audio.onended = null;
+    audio.onerror = null;
+    audio.onwaiting = null;
+    audio.onplaying = null;
+    audio.oncanplay = null;
+    audio.src = '';
+  }, [getAudioRef]);
+
+  const completePreviewPlayback = useCallback(() => {
+    stopTicker();
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    setIsBuffering(false);
+    elapsedBeforePauseRef.current = plan.sessionDuration;
+    setElapsedSeconds(plan.sessionDuration);
+    clearTrackRuntime('background');
+    clearTrackRuntime('voice');
+  }, [clearTrackRuntime, plan.sessionDuration, stopTicker]);
+
+  const playTrackPlaylistItem = useCallback((trackKey, segment, itemIndex = 0) => {
+    const audio = getAudioRef(trackKey).current;
+    const playlist = Array.isArray(segment?.playlist) ? segment.playlist.filter((item) => item?.audioUrl) : [];
+
+    if (playlist.length === 0) {
+      clearTrackRuntime(trackKey);
+      return;
+    }
+
+    const normalizedIndex = Math.max(0, itemIndex % playlist.length);
+    const item = playlist[normalizedIndex];
+
+    runtimeRef.current[trackKey] = {
+      segmentId: segment.id,
+      itemIndex: normalizedIndex
+    };
+
+    audio.pause();
+    audio.src = item.audioUrl;
+    audio.onwaiting = () => setIsBuffering(true);
+    audio.oncanplay = () => setIsBuffering(false);
+    audio.onplaying = () => setIsBuffering(false);
+    audio.onended = () => {
+      if (runtimeRef.current[trackKey].segmentId !== segment.id) {
+        return;
+      }
+
+      const elapsed = getElapsedSeconds();
+      if (elapsed >= segment.endSeconds) {
+        clearTrackRuntime(trackKey);
+        return;
+      }
+
+      if (segment.playbackMode === 'sequence') {
+        if (normalizedIndex + 1 >= playlist.length) {
+          clearTrackRuntime(trackKey);
+          return;
+        }
+
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        return;
+      }
+
+      playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+    };
+    audio.onerror = () => {
+      if (segment.playbackMode === 'sequence' && normalizedIndex + 1 < playlist.length) {
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        return;
+      }
+
+      if (segment.playbackMode === 'loop' && playlist.length > 1) {
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        return;
+      }
+
+      clearTrackRuntime(trackKey);
+    };
+    audio.load();
+
+    if (isPlayingRef.current) {
+      setIsBuffering(true);
+      audio.play().catch(() => {
+        clearTrackRuntime(trackKey);
+        pausePreviewPlayback();
+      });
+    }
+  }, [clearTrackRuntime, getAudioRef, getElapsedSeconds, pausePreviewPlayback]);
+
+  const syncTrackPlayback = useCallback((elapsed) => {
+    PREVIEW_TRACK_KEYS.forEach((trackKey) => {
+      const activeSegment = plan.segments.find((segment) => (
+        segment.trackKey === trackKey &&
+        elapsed >= segment.startSeconds &&
+        elapsed < segment.endSeconds
+      )) || null;
+      const currentRuntime = runtimeRef.current[trackKey];
+
+      if (!activeSegment) {
+        if (currentRuntime.segmentId) {
+          clearTrackRuntime(trackKey);
+        }
+        return;
+      }
+
+      if (currentRuntime.segmentId !== activeSegment.id) {
+        playTrackPlaylistItem(trackKey, activeSegment, 0);
+      }
+    });
+  }, [clearTrackRuntime, plan.segments, playTrackPlaylistItem]);
+
+  const startTicker = useCallback(() => {
+    if (timerRef.current) {
+      return;
+    }
+
+    timerRef.current = window.setInterval(() => {
+      const elapsed = getElapsedSeconds();
+      setElapsedSeconds(Math.min(elapsed, plan.sessionDuration));
+      syncTrackPlayback(elapsed);
+
+      if (elapsed >= plan.sessionDuration) {
+        completePreviewPlayback();
+      }
+    }, 250);
+  }, [completePreviewPlayback, getElapsedSeconds, plan.sessionDuration, syncTrackPlayback]);
+
+  const startPreviewPlayback = useCallback(async () => {
+    const resumeElapsedSeconds = elapsedBeforePauseRef.current;
+    sessionStartMsRef.current = performance.now() - resumeElapsedSeconds * 1000;
+    syncTrackPlayback(resumeElapsedSeconds);
+    isPlayingRef.current = true;
+    setIsPlaying(true);
+    setIsBuffering(true);
+
+    const playableAudios = [backgroundAudioRef.current, voiceAudioRef.current].filter((audio) => audio.src);
+    const playbackResults = await Promise.allSettled(playableAudios.map((audio) => audio.play()));
+    if (playbackResults.some((result) => result.status === 'rejected')) {
+      pausePreviewPlayback();
+      return;
+    }
+
+    setIsBuffering(false);
+    startTicker();
+  }, [pausePreviewPlayback, startTicker, syncTrackPlayback]);
+
+  const handleTogglePreviewPlayback = async () => {
+    if (isPlayingRef.current) {
+      pausePreviewPlayback();
+      return;
+    }
+
+    await startPreviewPlayback();
+  };
+
+  useEffect(() => () => {
+    stopTicker();
+    clearTrackRuntime('background');
+    clearTrackRuntime('voice');
+  }, [clearTrackRuntime, stopTicker]);
+
+  const remainingSeconds = Math.max(0, Math.ceil(plan.sessionDuration - elapsedSeconds));
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div style={{ width: '520px', maxWidth: '94vw', backgroundColor: '#fff', borderRadius: '18px', padding: '24px', boxShadow: '0 24px 60px rgba(15,23,42,0.18)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
+          <div>
+            <div style={{ fontSize: '16px', fontWeight: '600', color: '#0f172a' }}>试听冥想音频</div>
+            <div style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>{plan.presetName}</div>
+          </div>
+          <button style={ghostBtnStyle} onClick={onClose}>关闭</button>
+        </div>
+
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: '14px', padding: '16px', backgroundColor: '#f8fafc', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <div style={{ fontSize: '28px', fontWeight: '300', color: '#0f172a' }}>{formatSeconds(remainingSeconds)}</div>
+            <div style={{ fontSize: '12px', color: '#64748b' }}>
+              总时长 {formatSeconds(plan.sessionDuration)}
+            </div>
+          </div>
+          <div style={{ height: '8px', backgroundColor: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', marginBottom: '12px' }}>
+            <div
+              style={{
+                width: `${plan.sessionDuration > 0 ? Math.min((elapsedSeconds / plan.sessionDuration) * 100, 100) : 0}%`,
+                height: '100%',
+                background: 'linear-gradient(90deg, #22c55e, #06b6d4)'
+              }}
+            />
+          </div>
+          <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
+            {isBuffering && isPlaying ? '缓冲中...' : '按当前冥想库、音频库和时间轴配置生成 Final Track 预览。'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <button style={primaryBtnStyle} onClick={() => { void handleTogglePreviewPlayback(); }}>
+            {isPlaying ? '暂停试听' : '开始试听'}
+          </button>
+          <button
+            style={ghostBtnStyle}
+            onClick={() => {
+              completePreviewPlayback();
+              elapsedBeforePauseRef.current = 0;
+              setElapsedSeconds(0);
+            }}
+          >
+            重置
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
+          {plan.segments.map((segment) => (
+            <div key={segment.id} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', padding: '10px 12px', backgroundColor: '#fff' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>
+                {TYPE_LABELS[segment.type]}
+              </div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                {formatSeconds(segment.startSeconds)} - {formatSeconds(segment.endSeconds)} · {segment.playbackMode === 'loop' ? '循环铺满' : '顺序拼接'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── AudioLibrarySection ─────────────────────────────────────────────────────
 
-const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
+const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGroup }) => {
   const [expanded, setExpanded] = useState(false);
   const [addMode, setAddMode] = useState(null); // 'file' | 'tts'
   const [editingId, setEditingId] = useState(null);
+  const [groupName, setGroupName] = useState(group.name || '');
+  const [renamingGroup, setRenamingGroup] = useState(false);
+  const [groupError, setGroupError] = useState('');
 
   // File upload form state
   const [fileForm, setFileForm] = useState({ title: '', file: null, duration: '' });
@@ -147,7 +520,34 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
   const [uploadingAudioId, setUploadingAudioId] = useState(null);
   const [itemFeedbackMap, setItemFeedbackMap] = useState({});
 
-  const typeItems = items.filter((item) => item.type === type);
+  const groupItems = items.filter((item) => item.groupId === group.id);
+
+  useEffect(() => {
+    setGroupName(group.name || '');
+  }, [group.id, group.name]);
+
+  const handleRenameGroup = async () => {
+    const nextName = groupName.trim();
+    if (!nextName) {
+      setGroupError('请填写音频组名称');
+      return;
+    }
+
+    if (nextName === group.name) {
+      setGroupError('');
+      return;
+    }
+
+    setRenamingGroup(true);
+    setGroupError('');
+    try {
+      await onRenameGroup(group.id, nextName);
+    } catch (error) {
+      setGroupError(error.message || '音频组名称保存失败');
+    } finally {
+      setRenamingGroup(false);
+    }
+  };
 
   const handleFileUpload = async () => {
     setFileError('');
@@ -155,11 +555,12 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
     if (!fileForm.file) { setFileError('请选择音频文件'); return; }
     setFileUploading(true);
     try {
-      const cloudPath = `meditation-audio/${type}/${generateId()}-${fileForm.file.name}`;
+      const cloudPath = `meditation-audio/${group.type}/${group.id}/${generateId()}-${fileForm.file.name}`;
       const { fileId, audioUrl } = await uploadAudioFile({ file: fileForm.file, cloudPath });
       const newItem = {
         id: generateId(),
-        type,
+        type: group.type,
+        groupId: group.id,
         title: fileForm.title.trim(),
         fileId,
         audioUrl,
@@ -182,15 +583,17 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
     if (!ttsForm.ttsText.trim()) { setTtsError('请填写朗读文本'); return; }
     setTtsSubmitting(true);
     try {
-      const text = ttsForm.ttsText.trim();
+      const text = normalizeStoredTtsText(ttsForm.ttsText, ttsForm.isSSML);
       const newItem = {
         id: generateId(),
-        type,
+        type: group.type,
+        groupId: group.id,
         title: text.replace(/<[^>]+>/g, '').slice(0, 20),
         fileId: '',
         audioUrl: '',
         duration: 0,
         ttsText: text,
+        isSSML: Boolean(ttsForm.isSSML),
         createdAt: new Date().toISOString()
       };
       await onSaveItem(newItem, null);
@@ -210,9 +613,9 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
       [item.id]: null
     }));
     try {
-      const blobUrl = await synthesizeSpeech(item.ttsText);
+      const blobUrl = await synthesizeSpeech(item.ttsText, { isSSML: Boolean(item.isSSML) });
       const file = await blobUrlToFile(blobUrl, `${item.id}.mp3`);
-      const cloudPath = `meditation-audio/${item.type}/${item.id}.mp3`;
+      const cloudPath = `meditation-audio/${item.type}/${item.groupId || group.id}/${item.id}.mp3`;
       const { fileId, audioUrl } = await uploadAudioFile({ file, cloudPath });
       await onSaveItem({ ...item, fileId, audioUrl }, item.id);
       URL.revokeObjectURL(blobUrl);
@@ -258,7 +661,7 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
     }));
 
     try {
-      const cloudPath = `meditation-audio/${targetItem.type}/${targetItem.id}-${file.name}`;
+      const cloudPath = `meditation-audio/${targetItem.type}/${targetItem.groupId || group.id}/${targetItem.id}-${file.name}`;
       const { fileId, audioUrl } = await uploadAudioFile({ file, cloudPath });
       await onSaveItem({ ...targetItem, fileId, audioUrl }, targetItem.id);
       setItemFeedbackMap((currentMap) => ({
@@ -284,28 +687,67 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
 
   const startEdit = (item) => {
     setEditingId(item.id);
-    setEditForm({ title: item.title, duration: String(item.duration || ''), ttsText: item.ttsText || '' });
+    setEditForm({ title: item.title, duration: String(item.duration || ''), ttsText: item.ttsText || '', isSSML: Boolean(item.isSSML) });
   };
 
   const handleSaveEdit = async (item) => {
     const isTts = !!item.ttsText;
-    const title = isTts ? (editForm.ttsText || '').trim().slice(0, 20) : editForm.title.trim();
-    await onSaveItem({ ...item, title, duration: Number(editForm.duration) || 0, ttsText: editForm.ttsText }, item.id);
+    const normalizedTtsText = normalizeStoredTtsText(editForm.ttsText, editForm.isSSML);
+    const title = isTts ? normalizedTtsText.replace(/<[^>]+>/g, '').slice(0, 20) : editForm.title.trim();
+    await onSaveItem({
+      ...item,
+      title,
+      duration: Number(editForm.duration) || 0,
+      ttsText: normalizedTtsText,
+      isSSML: Boolean(editForm.isSSML) || isSsmlText(normalizedTtsText)
+    }, item.id);
     setEditingId(null);
   };
 
-  const handlePlayToggle = (item) => {
+  const handleDeleteItem = async (item) => {
+    const shouldDelete = window.confirm(`确定删除音频片段「${item.title || '未命名音频'}」吗？此操作不可撤销。`);
+    if (!shouldDelete) {
+      return;
+    }
+
+    await onDeleteItem(item.id);
+  };
+
+  const handlePlayToggle = async (item) => {
     if (playingId === item.id) {
       audioRef.current && audioRef.current.pause();
       setPlayingId(null);
     } else {
-      if (audioRef.current) {
-        audioRef.current.pause();
+      try {
+        const nextAudioUrl = item.fileId
+          ? await getAudioTempUrl(item.fileId) || item.audioUrl || ''
+          : item.audioUrl || '';
+
+        if (!nextAudioUrl) {
+          throw new Error('缺少可播放的音频地址');
+        }
+
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        audioRef.current = new Audio(nextAudioUrl);
+        audioRef.current.onended = () => setPlayingId(null);
+        await audioRef.current.play();
+        setPlayingId(item.id);
+        setItemFeedbackMap((currentMap) => ({
+          ...currentMap,
+          [item.id]: null
+        }));
+      } catch (err) {
+        setPlayingId(null);
+        setItemFeedbackMap((currentMap) => ({
+          ...currentMap,
+          [item.id]: {
+            type: 'error',
+            text: err.message || '音频播放失败。'
+          }
+        }));
       }
-      audioRef.current = new Audio(item.audioUrl);
-      audioRef.current.onended = () => setPlayingId(null);
-      audioRef.current.play();
-      setPlayingId(item.id);
     }
   };
 
@@ -317,14 +759,30 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', backgroundColor: '#f8fafc', cursor: 'pointer' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{TYPE_LABELS[type]}</span>
-          <span style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: '#e2e8f0', padding: '2px 8px', borderRadius: '10px' }}>{typeItems.length} 条</span>
+          <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{group.name}</span>
+          <span style={{ fontSize: '11px', color: '#64748b' }}>{TYPE_LABELS[group.type]}</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: '#e2e8f0', padding: '2px 8px', borderRadius: '10px' }}>{groupItems.length} 条</span>
         </div>
         <span style={{ color: '#94a3b8', fontSize: '12px' }}>{expanded ? '▲' : '▼'}</span>
       </div>
 
       {expanded && (
         <div style={{ padding: '16px 18px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginBottom: '12px', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 240px' }}>
+              <label style={labelStyle}>音频组名称</label>
+              <input
+                style={inputStyle}
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                placeholder="输入音频组名称"
+              />
+            </div>
+            <button style={ghostBtnStyle} onClick={handleRenameGroup} disabled={renamingGroup}>
+              {renamingGroup ? '保存中...' : '保存组名'}
+            </button>
+          </div>
+          {groupError && <div style={{ color: '#dc2626', fontSize: '12px', marginBottom: '10px' }}>{groupError}</div>}
           <input
             ref={manualAudioInputRef}
             type="file"
@@ -333,10 +791,10 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
             style={{ display: 'none' }}
           />
           {/* Item list */}
-          {typeItems.length === 0 && (
+          {groupItems.length === 0 && (
             <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '12px' }}>暂无音频，请添加</div>
           )}
-          {typeItems.map((item) => (
+          {groupItems.map((item) => (
             <div key={item.id} style={{ border: '1px solid #f1f5f9', borderRadius: '8px', padding: '12px', marginBottom: '8px', backgroundColor: '#fafafa' }}>
               {editingId === item.id ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -353,6 +811,14 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
                   {!!item.ttsText && (
                     <div>
                       <label style={labelStyle}>朗读文本（标题自动取前20字）</label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#475569', cursor: 'pointer', marginBottom: '6px' }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(editForm.isSSML)}
+                          onChange={(e) => setEditForm((f) => ({ ...f, isSSML: e.target.checked }))}
+                        />
+                        SSML 格式
+                      </label>
                       <textarea style={{ ...inputStyle, minHeight: '60px', resize: 'vertical' }} value={editForm.ttsText} onChange={(e) => setEditForm((f) => ({ ...f, ttsText: e.target.value }))} />
                     </div>
                   )}
@@ -407,7 +873,7 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
                       </button>
                     )}
                     <button style={ghostBtnStyle} onClick={() => startEdit(item)}>编辑</button>
-                    <button style={dangerBtnStyle} onClick={() => onDeleteItem(item.id)}>删除</button>
+                    <button style={dangerBtnStyle} onClick={() => handleDeleteItem(item)}>删除</button>
                   </div>
                 </div>
               )}
@@ -505,6 +971,47 @@ const AudioLibrarySection = ({ type, items, onSaveItem, onDeleteItem }) => {
   );
 };
 
+const AudioLibrarySection = ({ type, groups, items, onSaveItem, onDeleteItem, onRenameGroup }) => {
+  const [expanded, setExpanded] = useState(false);
+  const typeGroups = getTypeGroups(groups, type);
+  const typeItems = items.filter((item) => item.type === type);
+
+  return (
+    <div style={{ border: '1px solid #cbd5e1', borderRadius: '14px', overflow: 'hidden', marginBottom: '14px' }}>
+      <div
+        onClick={() => setExpanded((value) => !value)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', backgroundColor: '#f8fafc', cursor: 'pointer' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{TYPE_LABELS[type]}</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: '#e2e8f0', padding: '2px 8px', borderRadius: '10px' }}>
+            {typeGroups.length} 组 / {typeItems.length} 条音频
+          </span>
+        </div>
+        <span style={{ color: '#94a3b8', fontSize: '12px' }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '16px' }}>
+          <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>
+            该音频库下的音频按音频组组织。音频组顺序固定，名称可调整。
+          </div>
+          {typeGroups.map((group) => (
+            <AudioGroupSection
+              key={group.id}
+              group={group}
+              items={items}
+              onSaveItem={onSaveItem}
+              onDeleteItem={onDeleteItem}
+              onRenameGroup={onRenameGroup}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── AudioLibraryTab ──────────────────────────────────────────────────────────
 
 const AudioLibraryTab = ({ library, saving, onUpdate }) => {
@@ -524,6 +1031,18 @@ const AudioLibraryTab = ({ library, saving, onUpdate }) => {
     await onUpdate({ ...library, items: nextItems });
   }, [library, onUpdate]);
 
+  const handleRenameGroup = useCallback(async (groupId, nextName) => {
+    const normalizedName = String(nextName || '').trim();
+    if (!normalizedName) {
+      return;
+    }
+
+    const nextGroups = (library.groups || []).map((group) => (
+      group.id === groupId ? { ...group, name: normalizedName } : group
+    ));
+    await onUpdate({ ...library, groups: nextGroups });
+  }, [library, onUpdate]);
+
   return (
     <div>
       <div style={sectionTitleStyle}>六大音频库管理</div>
@@ -532,9 +1051,11 @@ const AudioLibraryTab = ({ library, saving, onUpdate }) => {
         <AudioLibrarySection
           key={type}
           type={type}
+          groups={library.groups || []}
           items={library.items || []}
           onSaveItem={handleSaveItem}
           onDeleteItem={handleDeleteItem}
+          onRenameGroup={handleRenameGroup}
         />
       ))}
     </div>
@@ -552,8 +1073,8 @@ const SECTION_LABELS = {
   goodbye: '告别'
 };
 
-const PresetSectionPicker = ({ sectionType, selectedIds, audioItems, onChange }) => {
-  const typeItems = audioItems.filter((i) => i.type === sectionType);
+const PresetGroupPicker = ({ group, selectedIds, audioItems, onChange }) => {
+  const groupItems = audioItems.filter((item) => item.groupId === group.id);
   const [showPicker, setShowPicker] = useState(false);
 
   const toggleItem = (itemId) => {
@@ -563,12 +1084,15 @@ const PresetSectionPicker = ({ sectionType, selectedIds, audioItems, onChange })
     onChange(next);
   };
 
-  const selectedItems = selectedIds.map((id) => typeItems.find((i) => i.id === id)).filter(Boolean);
+  const selectedItems = selectedIds.map((id) => groupItems.find((item) => item.id === id)).filter(Boolean);
 
   return (
     <div style={{ marginBottom: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-        <span style={{ fontSize: '12px', fontWeight: '500', color: '#475569' }}>{SECTION_LABELS[sectionType]}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <span style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>{group.name}</span>
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>{TYPE_LABELS[group.type]}</span>
+        </div>
         <span style={{ fontSize: '11px', color: '#94a3b8' }}>
           {selectedIds.length === 0 ? '未选择' : selectedIds.length === 1 ? '固定' : `${selectedIds.length}条随机`}
         </span>
@@ -595,15 +1119,15 @@ const PresetSectionPicker = ({ sectionType, selectedIds, audioItems, onChange })
       </div>
 
       <button style={ghostBtnStyle} onClick={() => setShowPicker((v) => !v)}>
-        {showPicker ? '收起' : `+ 从${TYPE_LABELS[sectionType]}选择`}
+        {showPicker ? '收起' : '+ 选择音频'}
       </button>
 
       {showPicker && (
         <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px', marginTop: '6px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fafafa' }}>
-          {typeItems.length === 0 && (
-            <div style={{ color: '#94a3b8', fontSize: '12px' }}>该类型暂无音频，请先在音频库添加</div>
+          {groupItems.length === 0 && (
+            <div style={{ color: '#94a3b8', fontSize: '12px' }}>该音频组暂无音频，请先在音频库添加</div>
           )}
-          {typeItems.map((item) => {
+          {groupItems.map((item) => {
             const checked = selectedIds.includes(item.id);
             return (
               <label
@@ -628,17 +1152,21 @@ const PresetSectionPicker = ({ sectionType, selectedIds, audioItems, onChange })
   );
 };
 
-const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdate }) => {
+const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, compositionSettings, saving, onUpdate }) => {
   const meditations = meditationLibrary.meditations || [];
+  const audioGroups = sortAudioGroups(audioLibrary.groups || []);
   const audioItems = audioLibrary.items || [];
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ name: '', sections: {} });
+  const [editForm, setEditForm] = useState({ name: '', groupSelections: {} });
+  const [previewPlan, setPreviewPlan] = useState(null);
+  const [previewingId, setPreviewingId] = useState(null);
+  const [previewError, setPreviewError] = useState('');
 
   const startCreate = () => {
     setEditingId('__new__');
     setEditForm({
       name: '',
-      sections: { bowl: [], greeting: [], nature: [], breath: [], quote: [], goodbye: [] }
+      groupSelections: createEmptyGroupSelections(audioGroups)
     });
   };
 
@@ -646,25 +1174,30 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
     setEditingId(item.id);
     setEditForm({
       name: item.name,
-      sections: {
-        bowl: [...(item.sections.bowl || [])],
-        greeting: [...(item.sections.greeting || [])],
-        nature: [...(item.sections.nature || [])],
-        breath: [...(item.sections.breath || [])],
-        quote: [...(item.sections.quote || [])],
-        goodbye: [...(item.sections.goodbye || [])]
-      }
+      groupSelections: normalizeGroupSelections(audioGroups, item.groupSelections || {})
     });
   };
 
   const handleSave = async () => {
     if (!editForm.name.trim()) return;
+    const nextGroupSelections = normalizeGroupSelections(audioGroups, editForm.groupSelections);
+    const nextSections = aggregateSectionsFromSelections(audioGroups, nextGroupSelections);
     let nextMeditations;
     if (editingId === '__new__') {
-      nextMeditations = [...meditations, { id: generateId(), name: editForm.name.trim(), sections: editForm.sections }];
+      nextMeditations = [
+        ...meditations,
+        {
+          id: generateId(),
+          name: editForm.name.trim(),
+          groupSelections: nextGroupSelections,
+          sections: nextSections
+        }
+      ];
     } else {
       nextMeditations = meditations.map((m) =>
-        m.id === editingId ? { ...m, name: editForm.name.trim(), sections: editForm.sections } : m
+        m.id === editingId
+          ? { ...m, name: editForm.name.trim(), groupSelections: nextGroupSelections, sections: nextSections }
+          : m
       );
     }
     await onUpdate({ ...meditationLibrary, meditations: nextMeditations });
@@ -677,16 +1210,46 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
     setEditingId(null);
   };
 
-  const updateSection = (sectionType, ids) => {
-    setEditForm((f) => ({ ...f, sections: { ...f.sections, [sectionType]: ids } }));
+  const updateGroupSelection = (groupId, ids) => {
+    setEditForm((form) => ({
+      ...form,
+      groupSelections: {
+        ...form.groupSelections,
+        [groupId]: ids
+      }
+    }));
+  };
+
+  const handlePreview = async (item) => {
+    setPreviewingId(item.id);
+    setPreviewError('');
+    try {
+      const plan = await buildMeditationPresetPreviewPlan({
+        preset: item,
+        audioLibrary,
+        compositionSettings
+      });
+
+      if (!plan) {
+        throw new Error('当前冥想缺少可试听的时间轴或音频配置');
+      }
+
+      setPreviewPlan(plan);
+    } catch (error) {
+      setPreviewError(error.message || '冥想试听生成失败');
+    } finally {
+      setPreviewingId(null);
+    }
   };
 
   const getSummary = (item) => {
-    const filled = MEDITATION_AUDIO_LIBRARY_TYPES.filter((t) => (item.sections[t] || []).length > 0);
-    return filled.map((t) => {
-      const count = item.sections[t].length;
-      return `${SECTION_LABELS[t]}${count > 1 ? `×${count}` : ''}`;
-    }).join(' · ');
+    return audioGroups
+      .filter((group) => (item.groupSelections?.[group.id] || []).length > 0)
+      .map((group) => {
+        const count = item.groupSelections[group.id].length;
+        return `${SECTION_LABELS[group.type]}/${group.name}${count > 1 ? `×${count}` : ''}`;
+      })
+      .join(' · ');
   };
 
   return (
@@ -698,6 +1261,11 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
       <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '18px' }}>
         每条冥想由六类音频组合而成。选择多条音频时，运行时随机选取一条。
       </div>
+      {previewError && (
+        <div style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '12px' }}>
+          {previewError}
+        </div>
+      )}
 
       {/* Preset list */}
       {meditations.length === 0 && !editingId && (
@@ -716,14 +1284,21 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
                   placeholder="输入冥想名称"
                 />
               </div>
-              {MEDITATION_AUDIO_LIBRARY_TYPES.map((t) => (
-                <PresetSectionPicker
-                  key={t}
-                  sectionType={t}
-                  selectedIds={editForm.sections[t] || []}
-                  audioItems={audioItems}
-                  onChange={(ids) => updateSection(t, ids)}
-                />
+              {MEDITATION_AUDIO_LIBRARY_TYPES.map((type) => (
+                <div key={type} style={{ marginBottom: '14px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#334155', marginBottom: '8px' }}>
+                    {TYPE_LABELS[type]}
+                  </div>
+                  {getTypeGroups(audioGroups, type).map((group) => (
+                    <PresetGroupPicker
+                      key={group.id}
+                      group={group}
+                      selectedIds={editForm.groupSelections[group.id] || []}
+                      audioItems={audioItems}
+                      onChange={(ids) => updateGroupSelection(group.id, ids)}
+                    />
+                  ))}
+                </div>
               ))}
               <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
                 <button style={primaryBtnStyle} onClick={handleSave}>保存</button>
@@ -737,7 +1312,16 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
                 <div style={{ fontSize: '14px', fontWeight: '500', color: '#1e293b', marginBottom: '3px' }}>{item.name}</div>
                 <div style={{ fontSize: '12px', color: '#94a3b8' }}>{getSummary(item) || '未配置音频'}</div>
               </div>
-              <button style={ghostBtnStyle} onClick={() => startEdit(item)}>编辑</button>
+              <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                <button
+                  style={ghostBtnStyle}
+                  onClick={() => handlePreview(item)}
+                  disabled={previewingId === item.id}
+                >
+                  {previewingId === item.id ? '生成中...' : '试听'}
+                </button>
+                <button style={ghostBtnStyle} onClick={() => startEdit(item)}>编辑</button>
+              </div>
             </div>
           )}
         </div>
@@ -755,14 +1339,21 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
               placeholder="输入冥想名称"
             />
           </div>
-          {MEDITATION_AUDIO_LIBRARY_TYPES.map((t) => (
-            <PresetSectionPicker
-              key={t}
-              sectionType={t}
-              selectedIds={editForm.sections[t] || []}
-              audioItems={audioItems}
-              onChange={(ids) => updateSection(t, ids)}
-            />
+          {MEDITATION_AUDIO_LIBRARY_TYPES.map((type) => (
+            <div key={type} style={{ marginBottom: '14px' }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: '#334155', marginBottom: '8px' }}>
+                {TYPE_LABELS[type]}
+              </div>
+              {getTypeGroups(audioGroups, type).map((group) => (
+                <PresetGroupPicker
+                  key={group.id}
+                  group={group}
+                  selectedIds={editForm.groupSelections[group.id] || []}
+                  audioItems={audioItems}
+                  onChange={(ids) => updateGroupSelection(group.id, ids)}
+                />
+              ))}
+            </div>
           ))}
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
             <button style={primaryBtnStyle} onClick={handleSave}>添加</button>
@@ -774,6 +1365,13 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
       {!editingId && (
         <button style={{ ...ghostBtnStyle, marginTop: '8px' }} onClick={startCreate}>+ 新增冥想</button>
       )}
+
+      {previewPlan && (
+        <MeditationPreviewDialog
+          plan={previewPlan}
+          onClose={() => setPreviewPlan(null)}
+        />
+      )}
     </div>
   );
 };
@@ -781,42 +1379,58 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, saving, onUpdat
 // ─── CompositionTab ───────────────────────────────────────────────────────────
 
 const TOTAL_SECONDS = 900; // 15 minutes
-const TRACK_HEIGHT = 40;
+const TRACK_HEIGHT = 110;
 const TRACK_GAP = 6;
 const LABEL_WIDTH = 68;
 const RULER_HEIGHT = 24;
+const TRACK_INSET = 8;
+const SLOT_GAP = 4;
 
-// One fixed track per type (10 tracks: bowl + greeting + nature×4 + breath + quote + goodbye)
-// Track index → { type, label, trackLabel }
 const TRACKS = [
-  { type: 'bowl',     label: '颂钵库',  color: '#7c3aed', bg: '#ede9fe' },
-  { type: 'greeting', label: '问候库',  color: '#0369a1', bg: '#e0f2fe' },
-  { type: 'nature',   label: '自然库①', color: '#15803d', bg: '#dcfce7' },
-  { type: 'nature',   label: '自然库②', color: '#15803d', bg: '#dcfce7' },
-  { type: 'nature',   label: '自然库③', color: '#15803d', bg: '#dcfce7' },
-  { type: 'nature',   label: '自然库④', color: '#15803d', bg: '#dcfce7' },
-  { type: 'breath',   label: '呼吸库',  color: '#b45309', bg: '#fef3c7' },
-  { type: 'quote',    label: '心语库',  color: '#be185d', bg: '#fce7f3' },
-  { type: 'goodbye',  label: '告别库',  color: '#475569', bg: '#f1f5f9' },
+  {
+    key: 'background',
+    label: '背景音轨',
+    color: '#0f766e',
+    bg: '#ecfeff',
+    border: '#99f6e4',
+    types: ['bowl', 'nature']
+  },
+  {
+    key: 'voice',
+    label: '人声音轨',
+    color: '#9a3412',
+    bg: '#fff7ed',
+    border: '#fdba74',
+    types: ['greeting', 'breath', 'quote', 'goodbye']
+  }
 ];
 
-// Assign each segment to a track index. nature segments fill nature tracks in order.
+const getTrackForType = (type) => TRACKS.find((track) => track.types.includes(type)) || TRACKS[0];
+
+const getTrackTypes = (trackKey) => TRACKS.find((track) => track.key === trackKey)?.types || [];
+
+const getTrackKeyForType = (type) => getTrackForType(type).key;
+
+const getTrackSlotMetrics = (track) => {
+  const slotCount = Math.max(track.types.length, 1);
+  const availableHeight = TRACK_HEIGHT - TRACK_INSET * 2;
+  const slotHeight = (availableHeight - SLOT_GAP * (slotCount - 1)) / slotCount;
+
+  return {
+    slotCount,
+    slotHeight
+  };
+};
+
 const assignTracksToSegments = (segments) => {
-  // Sort by startSeconds first
   const sorted = [...segments].sort((a, b) => a.startSeconds - b.startSeconds);
-  const result = [];
-  let natureIdx = 0;
-  for (const seg of sorted) {
-    let trackIdx;
-    if (seg.type === 'nature') {
-      trackIdx = 2 + (natureIdx % 4);
-      natureIdx++;
-    } else {
-      trackIdx = TRACKS.findIndex((t) => t.type === seg.type);
-    }
-    result.push({ seg, trackIdx });
-  }
-  return result;
+  return sorted.map((seg) => {
+    const track = getTrackForType(seg.type);
+    const trackIdx = TRACKS.findIndex((item) => item.key === track.key);
+    const slotIdx = track.types.indexOf(seg.type);
+
+    return { seg, trackIdx, slotIdx };
+  });
 };
 
 // Ruler tick marks: every minute label, minor ticks every 30s
@@ -827,7 +1441,12 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
   const [selectedId, setSelectedId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [addMode, setAddMode] = useState(false);
-  const [addForm, setAddForm] = useState({ type: 'bowl', startSeconds: '0', durationSeconds: '30' });
+  const [addForm, setAddForm] = useState({
+    trackKey: 'background',
+    type: 'bowl',
+    startSeconds: '0',
+    durationSeconds: '30'
+  });
 
   const itemsByType = useCallback((type) => (library.items || []).filter((i) => i.type === type), [library]);
 
@@ -840,7 +1459,7 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
     setEditForm({
       type: seg.type,
       startSeconds: String(seg.startSeconds),
-      durationSeconds: String(seg.durationSeconds),
+      durationSeconds: String(seg.durationSeconds)
     });
   };
 
@@ -849,7 +1468,14 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
   const handleSaveEdit = async () => {
     const nextSegments = segments.map((s) =>
       s.id === selectedId
-        ? { ...s, type: editForm.type, startSeconds: Number(editForm.startSeconds) || 0, durationSeconds: Number(editForm.durationSeconds) || 0 }
+        ? {
+          ...s,
+          type: editForm.type,
+          groupId: '',
+          audioItemId: '',
+          startSeconds: Number(editForm.startSeconds) || 0,
+          durationSeconds: Number(editForm.durationSeconds) || 0
+        }
         : s
     );
     await onUpdate({ ...settings, segments: nextSegments });
@@ -865,12 +1491,19 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
     const newSeg = {
       id: generateId(),
       type: addForm.type,
+      groupId: '',
+      audioItemId: '',
       startSeconds: Number(addForm.startSeconds) || 0,
-      durationSeconds: Number(addForm.durationSeconds) || 30,
+      durationSeconds: Number(addForm.durationSeconds) || 30
     };
     await onUpdate({ ...settings, segments: [...segments, newSeg] });
     setAddMode(false);
-    setAddForm({ type: 'bowl', startSeconds: '0', durationSeconds: '30' });
+    setAddForm({
+      trackKey: 'background',
+      type: 'bowl',
+      startSeconds: '0',
+      durationSeconds: '30'
+    });
   };
 
   // px per second in the timeline area
@@ -886,7 +1519,7 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
         {saving && <span style={{ fontSize: '12px', color: '#6366f1' }}>保存中...</span>}
       </div>
       <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '18px' }}>
-        点击时间轴上的色块可编辑；点击空白处新增片段。共 10 条音轨，15 分钟总时长。
+        此处只配置音频库级时间轴。音频组会在库内按顺序自动拼接，无需在这里单独设置。自然库只需设置目标总时长；其余音频库会在运行时按真实音频时长自动推导并校正时间轴。
       </div>
 
       {/* ── Timeline ─────────────────────────────────────────────── */}
@@ -895,7 +1528,7 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
         <div style={{ width: LABEL_WIDTH, flexShrink: 0, paddingTop: RULER_HEIGHT }}>
           {TRACKS.map((track, idx) => (
             <div
-              key={idx}
+              key={track.key}
               style={{
                 height: TRACK_HEIGHT,
                 marginBottom: TRACK_GAP,
@@ -905,9 +1538,14 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
                 paddingRight: '8px'
               }}
             >
-              <span style={{ fontSize: '11px', color: track.color, fontWeight: '600', whiteSpace: 'nowrap' }}>
-                {track.label}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                <span style={{ fontSize: '11px', color: track.color, fontWeight: '600', whiteSpace: 'nowrap' }}>
+                  {track.label}
+                </span>
+                <span style={{ fontSize: '10px', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                  {track.types.map((type) => SECTION_LABELS[type]).join(' / ')}
+                </span>
+              </div>
             </div>
           ))}
         </div>
@@ -975,11 +1613,16 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
             {/* Track backgrounds — clickable to add */}
             {TRACKS.map((track, idx) => (
               <div
-                key={`track-bg-${idx}`}
+                key={`track-bg-${track.key}`}
                 onClick={() => {
                   setSelectedId(null);
                   setAddMode(true);
-                  setAddForm((f) => ({ ...f, type: track.type, startSeconds: '0', durationSeconds: '30' }));
+                  setAddForm({
+                    trackKey: track.key,
+                    type: track.types[0],
+                    startSeconds: '0',
+                    durationSeconds: '30'
+                  });
                 }}
                 style={{
                   position: 'absolute',
@@ -987,49 +1630,79 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
                   right: 0,
                   top: idx * (TRACK_HEIGHT + TRACK_GAP),
                   height: TRACK_HEIGHT,
-                  backgroundColor: '#f8fafc',
-                  borderRadius: '6px',
+                  backgroundColor: track.bg,
+                  borderRadius: '8px',
                   cursor: 'copy',
-                  border: '1px solid #f1f5f9'
+                  border: `1px solid ${track.border}`
                 }}
-              />
+              >
+                <div style={{ display: 'flex', gap: '6px', padding: '8px', flexWrap: 'wrap' }}>
+                  {track.types.map((type) => (
+                    <span
+                      key={type}
+                      style={{
+                        fontSize: '10px',
+                        color: track.color,
+                        border: `1px solid ${track.border}`,
+                        backgroundColor: '#ffffffcc',
+                        borderRadius: '999px',
+                        padding: '2px 8px'
+                      }}
+                    >
+                      {TYPE_LABELS[type]}
+                    </span>
+                  ))}
+                </div>
+              </div>
             ))}
 
             {/* Segment blocks */}
-            {assigned.map(({ seg, trackIdx }) => {
+            {assigned.map(({ seg, trackIdx, slotIdx }) => {
               const track = TRACKS[trackIdx];
               const isSelected = seg.id === selectedId;
               const topPx = trackIdx * (TRACK_HEIGHT + TRACK_GAP);
+              const { slotHeight } = getTrackSlotMetrics(track);
+              const segmentTop = topPx + TRACK_INSET + Math.max(slotIdx, 0) * (slotHeight + SLOT_GAP);
               const leftPct = pct(seg.startSeconds);
               const widthPct = `${(seg.durationSeconds / TOTAL_SECONDS) * 100}%`;
-              const audioItem = itemsByType(seg.type).find((i) => i.id === seg.audioItemId);
+              const typeItemCount = itemsByType(seg.type).length;
+              const segmentLabel = seg.type === 'nature'
+                ? `${TYPE_LABELS[seg.type]} · 自动循环`
+                : TYPE_LABELS[seg.type];
               return (
                 <div
                   key={seg.id}
                   onClick={(e) => { e.stopPropagation(); openEdit(seg); }}
-                  title={`${track.label}  ${formatSeconds(seg.startSeconds)} → ${formatSeconds(seg.startSeconds + seg.durationSeconds)}`}
+                  title={`${track.label} / ${TYPE_LABELS[seg.type]}  ${formatSeconds(seg.startSeconds)} → ${formatSeconds(seg.startSeconds + seg.durationSeconds)}`}
                   style={{
                     position: 'absolute',
                     left: leftPct,
                     width: widthPct,
-                    top: topPx + 2,
-                    height: TRACK_HEIGHT - 4,
-                    backgroundColor: track.bg,
+                    top: segmentTop,
+                    height: slotHeight,
+                    backgroundColor: '#ffffff',
                     border: `2px solid ${isSelected ? track.color : track.color + '88'}`,
                     borderRadius: '6px',
                     cursor: 'pointer',
                     overflow: 'hidden',
                     display: 'flex',
                     alignItems: 'center',
-                    paddingLeft: '6px',
+                    padding: '0 8px',
                     boxSizing: 'border-box',
                     boxShadow: isSelected ? `0 0 0 2px ${track.color}44` : 'none',
                     zIndex: isSelected ? 2 : 1
                   }}
                 >
-                  <span style={{ fontSize: '10px', fontWeight: '600', color: track.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {audioItem ? audioItem.title : formatSeconds(seg.durationSeconds)}
-                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '10px', fontWeight: '600', color: track.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {segmentLabel}
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {seg.type === 'nature'
+                        ? `目标 ${formatSeconds(seg.durationSeconds)} · ${typeItemCount} 条素材循环`
+                        : `${formatSeconds(seg.durationSeconds)} · 库内 ${typeItemCount} 条音频`}
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -1043,21 +1716,57 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
           <div style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b', marginBottom: '14px' }}>
             {addMode ? '新增片段' : `编辑片段 — ${TYPE_LABELS[(selectedSeg || {}).type]}`}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '12px', marginBottom: '12px' }}>
+            {addMode && (
+              <div>
+                <label style={labelStyle}>音轨</label>
+                <select
+                  style={inputStyle}
+                  value={addForm.trackKey}
+                  onChange={(e) => {
+                    const nextTrackKey = e.target.value;
+                    const nextTypes = getTrackTypes(nextTrackKey);
+                    setAddForm((form) => ({
+                      ...form,
+                      trackKey: nextTrackKey,
+                      type: nextTypes[0] || 'bowl'
+                    }));
+                  }}
+                >
+                  {TRACKS.map((track) => (
+                    <option key={track.key} value={track.key}>{track.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label style={labelStyle}>音频类型</label>
               <select
                 style={inputStyle}
                 value={addMode ? addForm.type : editForm.type}
                 onChange={(e) => addMode
-                  ? setAddForm((f) => ({ ...f, type: e.target.value }))
-                  : setEditForm((f) => ({ ...f, type: e.target.value }))
+                  ? setAddForm((form) => ({
+                    ...form,
+                    type: e.target.value
+                  }))
+                  : setEditForm((form) => ({
+                    ...form,
+                    type: e.target.value
+                  }))
                 }
               >
-                {MEDITATION_AUDIO_LIBRARY_TYPES.map((t) => (
+                {(addMode ? getTrackTypes(addForm.trackKey) : getTrackTypes(getTrackKeyForType(editForm.type))).map((t) => (
                   <option key={t} value={t}>{TYPE_LABELS[t]}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label style={labelStyle}>{(addMode ? addForm.type : editForm.type) === 'nature' ? '目标总时长（秒）' : '素材库状态'}</label>
+              <div style={{ padding: '8px 12px', fontSize: '13px', color: '#475569', backgroundColor: '#f1f5f9', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                {(addMode ? addForm.type : editForm.type) === 'nature'
+                  ? '按自然库素材自动循环铺满'
+                  : `当前库内 ${itemsByType(addMode ? addForm.type : editForm.type).length} 条音频`}
+              </div>
             </div>
             <div>
               <label style={labelStyle}>开始（秒）</label>
@@ -1074,7 +1783,7 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
               />
             </div>
             <div>
-              <label style={labelStyle}>时长（秒）</label>
+              <label style={labelStyle}>{(addMode ? addForm.type : editForm.type) === 'nature' ? '目标总时长（秒）' : '兜底时长（秒）'}</label>
               <input
                 style={inputStyle}
                 type="number"
@@ -1096,6 +1805,16 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
               </div>
             </div>
           </div>
+          {(addMode ? addForm.type : editForm.type) === 'nature' && (
+            <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>
+              自然库不会手工拆成多段。系统会按自然库现有音频时长自动循环，直到铺满这里设置的目标总时长。
+            </div>
+          )}
+          {(addMode ? addForm.type : editForm.type) !== 'nature' && (
+            <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>
+              当前配置的是音频库级片段。运行时会按该音频库的自动拼接规则执行，并优先按真实音频时长自动校正；只有音频未填写时长时，才会回退到这里的兜底时长。
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '8px' }}>
             {addMode ? (
               <>
@@ -1117,7 +1836,15 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
       {!selectedSeg && !addMode && (
         <button
           style={{ ...ghostBtnStyle, marginTop: '16px' }}
-          onClick={() => { setAddMode(true); setAddForm({ type: 'bowl', startSeconds: '0', durationSeconds: '30' }); }}
+          onClick={() => {
+            setAddMode(true);
+            setAddForm({
+              trackKey: 'background',
+              type: 'bowl',
+              startSeconds: '0',
+              durationSeconds: '30'
+            });
+          }}
         >
           + 新增片段
         </button>
@@ -1380,6 +2107,7 @@ const MeditationPage = ({
           <MeditationPresetsTab
             meditationLibrary={meditationLibrary}
             audioLibrary={meditationAudioLibrary}
+            compositionSettings={meditationCompositionSettings}
             saving={savingMeditationLibrary}
             onUpdate={updateMeditationLibrary}
           />

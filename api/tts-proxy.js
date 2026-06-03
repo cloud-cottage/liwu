@@ -4,4 +4,4 @@ export const config = {
   }
 };
 
-export { handleTencentTtsProxy as default } from '../apps/admin/src/server/tencentTtsProxy.js';
+export { handleTencentTtsProxy as default } from '../apps/web/src/admin/server/tencentTtsProxy.js';

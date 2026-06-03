@@ -1,5 +1,6 @@
 const { getDb } = require('./cloudbase')
 const { getLocalProfile } = require('./storage')
+const { getCurrentShopProfile } = require('./shop')
 
 const AWARENESS_RECORDS = 'awareness_records'
 const APP_SETTINGS = 'app_settings'
@@ -75,7 +76,7 @@ const getTagSettings = async () => {
   const document = (result.data || [])[0]
 
   return {
-    tagsByKey: document?.tags_by_key || document?.tagsByKey || {}
+    tagsByKey: (document && (document.tags_by_key || document.tagsByKey)) || {}
   }
 }
 
@@ -85,7 +86,7 @@ const getAwarenessDisplaySettings = async () => {
     const result = await db.collection(APP_SETTINGS).where({ key: AWARENESS_DISPLAY_SETTINGS_KEY }).limit(1).get()
     const document = (result.data || [])[0] || {}
     return {
-      popularTagCount: Math.max(1, Number(document.popular_tag_count ?? document.popularTagCount ?? DEFAULT_POPULAR_TAG_COUNT))
+      popularTagCount: Math.max(1, Number(document.popular_tag_count != null ? document.popular_tag_count : (document.popularTagCount != null ? document.popularTagCount : DEFAULT_POPULAR_TAG_COUNT)))
     }
   } catch {
     return {
@@ -108,8 +109,8 @@ const buildWeeklySummary = (records = []) => {
 
   return {
     weeklyCount: weeklyRecords.length,
-    weeklyChampionName: championEntries[0]?.[0] || '',
-    weeklyChampionCount: championEntries[0]?.[1] || 0
+    weeklyChampionName: championEntries[0] ? (championEntries[0][0] || '') : '',
+    weeklyChampionCount: championEntries[0] ? (championEntries[0][1] || 0) : 0
   }
 }
 
@@ -128,8 +129,8 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
       totalCount: 0,
       lastUsedAt: record.timestamp,
       lastUserName: record.userName || '匿名用户',
-      description: tagSettingsByKey[record.tagKey]?.description || '',
-      relatedProductId: tagSettingsByKey[record.tagKey]?.related_product_id || tagSettingsByKey[record.tagKey]?.relatedProductId || '',
+      description: (tagSettingsByKey[record.tagKey] && tagSettingsByKey[record.tagKey].description) || '',
+      relatedProductId: (tagSettingsByKey[record.tagKey] && (tagSettingsByKey[record.tagKey].related_product_id || tagSettingsByKey[record.tagKey].relatedProductId)) || '',
       relatedProduct: null,
       weeklyCount: 0,
       weeklyChampionName: '',
@@ -148,8 +149,8 @@ const aggregateTags = (records = [], tagSettingsByKey = {}) => {
       currentTag.lastUserName = record.userName || '匿名用户'
     }
 
-    currentTag.description = tagSettingsByKey[record.tagKey]?.description || ''
-    currentTag.relatedProductId = tagSettingsByKey[record.tagKey]?.related_product_id || tagSettingsByKey[record.tagKey]?.relatedProductId || ''
+    currentTag.description = (tagSettingsByKey[record.tagKey] && tagSettingsByKey[record.tagKey].description) || ''
+    currentTag.relatedProductId = (tagSettingsByKey[record.tagKey] && (tagSettingsByKey[record.tagKey].related_product_id || tagSettingsByKey[record.tagKey].relatedProductId)) || ''
     tagMap[record.tagKey] = currentTag
   })
 
@@ -277,13 +278,17 @@ const publishAwareTag = async ({ content, accessType = 'public' }) => {
   }
 
   const db = getDb()
-  const profile = getLocalProfile()
+  const profile = await getCurrentShopProfile()
   const now = new Date().toISOString()
 
+  if (!profile.phone || !profile.id) {
+    throw new Error('请先绑定手机号后再发布觉察')
+  }
+
   const payload = {
-    author_key: profile.authorKey,
-    user_id: profile.authorKey,
-    auth_uid: profile.authorKey,
+    author_key: profile.id,
+    user_id: profile.id,
+    auth_uid: profile.phone,
     user_name: profile.name,
     content: trimmedContent,
     access_type: accessType,

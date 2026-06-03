@@ -24,7 +24,7 @@ const shouldUseCloudBaseProxy = () => {
     return false;
   }
 
-  return window.location.hostname === 'liwu.yunduojihua.com' || isLocalDevHost(window.location.hostname);
+  return window.location.protocol === 'http:' || window.location.protocol === 'https:';
 };
 
 const isCloudBaseApiUrl = (value = '') => {
@@ -33,7 +33,10 @@ const isCloudBaseApiUrl = (value = '') => {
     return (
       nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com') ||
       nextUrl.hostname.endsWith('.myqcloud.com') ||
-      nextUrl.hostname.endsWith('.qcloud.la')
+      nextUrl.hostname.endsWith('.qcloud.la') ||
+      nextUrl.hostname.endsWith('.tcb.qcloud.la') ||
+      nextUrl.hostname.includes('liwu-0gtd91eebd863ccf') ||
+      nextUrl.hostname.includes('-liwu-0gtd91eebd863ccf.')
     );
   } catch {
     return false;
@@ -71,6 +74,16 @@ export const getLatestCloudBaseProxyTrace = () => {
 };
 
 const toProxyUrl = (targetUrl, requestId) => `${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}`;
+
+export const proxyCloudBaseMediaUrl = (targetUrl = '') => {
+  if (!targetUrl || typeof window === 'undefined') {
+    return targetUrl || '';
+  }
+
+  return shouldUseCloudBaseProxy() && isCloudBaseApiUrl(targetUrl)
+    ? toProxyUrl(targetUrl)
+    : targetUrl;
+};
 
 const installCloudBaseRequestProxy = () => {
   if (typeof window === 'undefined' || !shouldUseCloudBaseProxy() || window.__liwuCloudBaseProxyInstalled) {

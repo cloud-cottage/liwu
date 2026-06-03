@@ -62,7 +62,7 @@ const normalizeCategory = (category = {}) => ({
   id: category._id || category.id || '',
   name: category.name || '',
   slug: category.slug || '',
-  sortOrder: Number(category.sort_order ?? category.sortOrder ?? 0),
+  sortOrder: Number(category.sort_order != null ? category.sort_order : (category.sortOrder != null ? category.sortOrder : 0)),
   status: category.status || 'active',
   description: category.description || '',
   coverImage: category.cover_image || category.coverImage || ''
@@ -79,22 +79,22 @@ const normalizeProduct = (product = {}) => ({
   description: product.description || '',
   status: product.status || 'draft',
   skuMode: product.sku_mode || product.skuMode || 'single',
-  pricePointsFrom: Number(product.price_points_from ?? product.pricePointsFrom ?? 0),
-  priceCashFrom: Number(product.price_cash_from ?? product.priceCashFrom ?? 0),
-  stockTotal: Number(product.stock_total ?? product.stockTotal ?? 0),
-  salesCount: Number(product.sales_count ?? product.salesCount ?? 0),
-  limitPerUser: Number(product.limit_per_user ?? product.limitPerUser ?? 0),
-  sortOrder: Number(product.sort_order ?? product.sortOrder ?? 0)
+  pricePointsFrom: Number(product.price_points_from != null ? product.price_points_from : (product.pricePointsFrom != null ? product.pricePointsFrom : 0)),
+  priceCashFrom: Number(product.price_cash_from != null ? product.price_cash_from : (product.priceCashFrom != null ? product.priceCashFrom : 0)),
+  stockTotal: Number(product.stock_total != null ? product.stock_total : (product.stockTotal != null ? product.stockTotal : 0)),
+  salesCount: Number(product.sales_count != null ? product.sales_count : (product.salesCount != null ? product.salesCount : 0)),
+  limitPerUser: Number(product.limit_per_user != null ? product.limit_per_user : (product.limitPerUser != null ? product.limitPerUser : 0)),
+  sortOrder: Number(product.sort_order != null ? product.sort_order : (product.sortOrder != null ? product.sortOrder : 0))
 })
 
 const normalizeSku = (sku = {}) => ({
   id: sku._id || sku.id || '',
   productId: sku.product_id || sku.productId || '',
   skuName: sku.sku_name || sku.skuName || '',
-  pricePoints: Number(sku.price_points ?? sku.pricePoints ?? 0),
-  priceCash: Number(sku.price_cash ?? sku.priceCash ?? 0),
-  rewardPointsReturn: Number(sku.reward_points_return ?? sku.rewardPointsReturn ?? 0),
-  stock: Number(sku.stock ?? 0),
+  pricePoints: Number(sku.price_points != null ? sku.price_points : (sku.pricePoints != null ? sku.pricePoints : 0)),
+  priceCash: Number(sku.price_cash != null ? sku.price_cash : (sku.priceCash != null ? sku.priceCash : 0)),
+  rewardPointsReturn: Number(sku.reward_points_return != null ? sku.reward_points_return : (sku.rewardPointsReturn != null ? sku.rewardPointsReturn : 0)),
+  stock: Number(sku.stock != null ? sku.stock : 0),
   status: sku.status || 'active'
 })
 
@@ -109,12 +109,27 @@ const normalizeAddress = (address = {}) => ({
   detailAddress: address.detail_address || address.detailAddress || '',
   postalCode: address.postal_code || address.postalCode || '',
   label: address.label || '',
-  isDefault: Boolean(address.is_default ?? address.isDefault)
+  isDefault: Boolean(address.is_default != null ? address.is_default : address.isDefault)
 })
 
 const getOrCreateCurrentUser = async () => {
   const db = getDb()
   const profile = getLocalProfile()
+
+  if (!profile.phone) {
+    return {
+      ...profile,
+      id: '',
+      uid: 0,
+      inviteCode: '',
+      phone: '',
+      isStudent: false,
+      studentExpireAt: '',
+      balance: 0,
+      wealthHistory: []
+    }
+  }
+
   let existingUser = null
 
   if (profile.authorKey) {
@@ -165,7 +180,7 @@ const getOrCreateCurrentUser = async () => {
       inviteCode: formatNaturalNumber(getUserUid(existingUser) || resolvedUid),
       name: existingUser.name || buildDefaultUserName(resolvedUid),
       phone: existingUser.phone || profile.phone || '',
-      isStudent: Boolean(existingUser.is_student ?? existingUser.isStudent),
+      isStudent: Boolean(existingUser.is_student != null ? existingUser.is_student : existingUser.isStudent),
       studentExpireAt: existingUser.student_expire_at || existingUser.studentExpireAt || '',
       balance: Number(existingUser.balance || 0),
       wealthHistory: existingUser.wealth_history || []
@@ -268,8 +283,8 @@ const getShopHomeLivingSettings = async () => {
     const result = await db.collection(APP_SETTINGS).where({ key: SHOP_HOME_LIVING_SETTINGS_KEY }).limit(1).get()
     const document = (result.data || [])[0] || {}
     const rawCards = Array.isArray(document.cards) ? document.cards : []
-    const imageWidth = Number(document.image_width ?? document.imageWidth ?? 700)
-    const imageHeight = Number(document.image_height ?? document.imageHeight ?? 700)
+    const imageWidth = Number(document.image_width != null ? document.image_width : (document.imageWidth != null ? document.imageWidth : 700))
+    const imageHeight = Number(document.image_height != null ? document.image_height : (document.imageHeight != null ? document.imageHeight : 700))
     const cards = DEFAULT_SHOP_HOME_LIVING_CARDS.map((fallbackCard, index) => {
       const currentCard = rawCards[index] || {}
       return {
@@ -561,15 +576,15 @@ const listUserOrders = async () => {
       id: order._id || order.id || '',
       orderNo: order.order_no || order.orderNo || '',
       status: order.status || 'pending_payment',
-      totalPoints: Number(order.total_points ?? order.totalPoints ?? 0),
-      totalCash: Number(order.total_cash ?? order.totalCash ?? 0),
+      totalPoints: Number(order.total_points != null ? order.total_points : (order.totalPoints != null ? order.totalPoints : 0)),
+      totalCash: Number(order.total_cash != null ? order.total_cash : (order.totalCash != null ? order.totalCash : 0)),
       createdAt: order.created_at || order.createdAt || '',
       items: (itemsByOrderId[order._id || order.id || ''] || []).map((item) => ({
         id: item._id || item.id || '',
         productName: item.product_name_snapshot || item.productNameSnapshot || '',
         skuName: item.sku_name_snapshot || item.skuNameSnapshot || '',
-        quantity: Number(item.quantity ?? 0),
-        subtotalPoints: Number(item.subtotal_points ?? item.subtotalPoints ?? 0)
+        quantity: Number(item.quantity != null ? item.quantity : 0),
+        subtotalPoints: Number(item.subtotal_points != null ? item.subtotal_points : (item.subtotalPoints != null ? item.subtotalPoints : 0))
       }))
     }))
     .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useCloudAwareness } from '@app/context/CloudAwarenessContext.jsx'
 import { shopService, userProfileService } from '@app/services/cloudbase.js'
@@ -88,15 +88,42 @@ const buildDefaultStoreId = (user = {}) => {
 }
 
 const getPartnerUserCompletenessScore = (user = {}) => (
-  (String(user?.storeId || '').trim() ? 4 : 0)
+  (Array.isArray(user?.tags) ? user.tags.length * 10 : 0)
+  + (String(user?.storeId || '').trim() ? 4 : 0)
   + (String(user?.storeOwnerUserId || '').trim() ? 3 : 0)
   + (String(user?.storeRole || '').trim() ? 2 : 0)
-  + (Array.isArray(user?.tags) && user.tags.length > 0 ? 1 : 0)
 )
 
 const pickPreferredPartnerUser = (users = []) => (
   [...users].sort((left, right) => getPartnerUserCompletenessScore(right) - getPartnerUserCompletenessScore(left))[0] || null
 )
+
+const mergePartnerUsers = (users = []) => {
+  const normalizedUsers = Array.isArray(users) ? users.filter(Boolean) : []
+  if (normalizedUsers.length === 0) {
+    return null
+  }
+
+  const preferredUser = pickPreferredPartnerUser(normalizedUsers)
+  if (!preferredUser) {
+    return null
+  }
+
+  const mergedTagsByName = new Map()
+  normalizedUsers.forEach((user) => {
+    getValidTags(user.tags).forEach((tag) => {
+      const tagName = getTagName(tag)
+      if (tagName && !mergedTagsByName.has(tagName)) {
+        mergedTagsByName.set(tagName, tag)
+      }
+    })
+  })
+
+  return {
+    ...preferredUser,
+    tags: [...mergedTagsByName.values()]
+  }
+}
 
 const buildSyntheticPartnerUserFromBrand = ({
   brand = null,
@@ -160,6 +187,11 @@ const readPartnerRoleSwitchCollapsed = () => {
 }
 
 const getTagName = (tag = {}) => String(tag.name || tag.label || '').trim();
+const getValidTags = (tags = []) => (
+  Array.isArray(tags)
+    ? tags.filter((tag) => getTagName(tag))
+    : []
+)
 
 const ROLE_CARDS = [
   {
@@ -1062,6 +1094,7 @@ const Partner = () => {
   const [livePartnerOrders, setLivePartnerOrders] = useState([])
   const [livePartnerSubOrders, setLivePartnerSubOrders] = useState([])
   const [livePartnerUsers, setLivePartnerUsers] = useState([])
+  const [liveCurrentUserTags, setLiveCurrentUserTags] = useState([])
   const [livePartnerBrands, setLivePartnerBrands] = useState([])
   const [livePartnerBrandMembers, setLivePartnerBrandMembers] = useState([])
   const [livePartnerBrandInvites, setLivePartnerBrandInvites] = useState([])
@@ -1288,10 +1321,10 @@ const Partner = () => {
       ? livePartnerUsers.filter((user) => normalizePhone(user.phone || '') === currentPhoneCandidate)
       : []
 
-    return pickPreferredPartnerUser(usersById)
-      || pickPreferredPartnerUser(usersByAuthUid)
-      || pickPreferredPartnerUser(usersByUid)
-      || pickPreferredPartnerUser(usersByPhone)
+    return mergePartnerUsers(usersById)
+      || mergePartnerUsers(usersByAuthUid)
+      || mergePartnerUsers(usersByUid)
+      || mergePartnerUsers(usersByPhone)
       || buildSyntheticPartnerUserFromBrand({
         brand: livePartnerBrands.length === 1 ? livePartnerBrands[0] : null,
         brandMember: livePartnerBrandMembers.length === 1 ? livePartnerBrandMembers[0] : null,
@@ -1310,11 +1343,49 @@ const Partner = () => {
     verifiedPhone
   ])
   const effectiveUserTags = useMemo(
-    () => (resolvedPartnerUser?.tags || userTags || []),
-    [resolvedPartnerUser, userTags]
+    () => {
+      if (Array.isArray(liveCurrentUserTags) && liveCurrentUserTags.length > 0) {
+        return getValidTags(liveCurrentUserTags)
+      }
+
+      const resolvedTags = getValidTags(resolvedPartnerUser?.tags)
+      if (resolvedTags.length > 0) {
+        return resolvedTags
+      }
+
+      return getValidTags(userTags)
+    },
+    [liveCurrentUserTags, resolvedPartnerUser, userTags]
   )
+  useEffect(() => {
+    const targetUserId = String(resolvedPartnerUser?.id || '').trim()
+    if (!targetUserId) {
+      setLiveCurrentUserTags([])
+      return undefined
+    }
+
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const nextTags = await DatabaseService.getUserTags(targetUserId)
+        if (!cancelled) {
+          setLiveCurrentUserTags(getValidTags(nextTags))
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Partner page failed to load current user tags:', error)
+          setLiveCurrentUserTags([])
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [resolvedPartnerUser?.id])
   const currentRoleTagNames = useMemo(
-    () => (effectiveUserTags || []).map(getTagName),
+    () => (effectiveUserTags || []).map(getTagName).filter(Boolean),
     [effectiveUserTags]
   )
   const adminAuthorized = currentRoleTagNames.includes(SUPER_ADMIN_ROLE_TAG_NAME) || currentRoleTagNames.includes(ADMIN_ROLE_TAG_NAME)
@@ -2657,6 +2728,25 @@ const Partner = () => {
             欢迎uid={displayUid || '未识别'}用户，你的身份是{activeRoleTitle}
           </div>
         )}
+        <div
+          style={{
+            marginBottom: '16px',
+            borderRadius: '14px',
+            backgroundColor: '#fff7ed',
+            border: '1px solid #fdba74',
+            padding: '12px 14px',
+            display: 'grid',
+            gap: '6px'
+          }}
+        >
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#9a3412', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            当前身份识别
+          </div>
+          <div style={{ fontSize: '13px', color: '#9a3412', lineHeight: 1.7 }}>
+            uid={displayUid || '未识别'} · 角色标签：{currentRoleTagNames.length ? currentRoleTagNames.join(' / ') : '未读取到标签'}
+            {resolvedPartnerUser?.storeRole ? ` · storeRole=${resolvedPartnerUser.storeRole}` : ''}
+          </div>
+        </div>
         {activeRole === '管理员' && adminAuthorized ? (
           <AdminDashboardPanel embedded activeTabOverride={adminTab} onActiveTabChange={setAdminTab} />
         ) : (
@@ -4296,7 +4386,9 @@ const AdminDashboardPanel = ({
   const [fortuneRecordTargetFilter, setFortuneRecordTargetFilter] = useState('all');
   const [fortuneRecordActionFilter, setFortuneRecordActionFilter] = useState('all');
   const [fortuneRecordKeyword, setFortuneRecordKeyword] = useState('');
+  const [fortuneUserKeyword, setFortuneUserKeyword] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarState);
+  const lastLoadedAdminTabRef = useRef('');
   const activeTab = activeTabOverride ?? internalActiveTab;
   const setActiveTab = onActiveTabChange ?? setInternalActiveTab;
   
@@ -4333,6 +4425,7 @@ const AdminDashboardPanel = ({
     partnerBrands,
     partnerBrandMembers,
     partnerBrandInvites,
+    fortuneDebugState,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
@@ -4396,11 +4489,19 @@ const AdminDashboardPanel = ({
   } = useDatabase();
 
   useEffect(() => {
-    if (activeTab !== 'overview') {
-      void loadAdminSection(activeTab).catch((sectionError) => {
-        console.error(`Failed to load admin section: ${activeTab}`, sectionError);
-      });
+    if (activeTab === 'overview') {
+      lastLoadedAdminTabRef.current = activeTab;
+      return;
     }
+
+    if (lastLoadedAdminTabRef.current === activeTab) {
+      return;
+    }
+
+    lastLoadedAdminTabRef.current = activeTab;
+    void loadAdminSection(activeTab, { force: true }).catch((sectionError) => {
+      console.error(`Failed to load admin section: ${activeTab}`, sectionError);
+    });
   }, [activeTab, loadAdminSection]);
 
   const handleRefreshCloudbase = () => {
@@ -4692,6 +4793,23 @@ const AdminDashboardPanel = ({
     () => [...otherFortuneUsers].sort((left, right) => Number(right.balance || 0) - Number(left.balance || 0)),
     [otherFortuneUsers]
   );
+  const searchableFortuneUsers = useMemo(
+    () => [...users].sort((left, right) => Number(right.balance || 0) - Number(left.balance || 0)),
+    [users]
+  );
+  const filteredFortuneUsers = useMemo(() => {
+    const normalizedKeyword = String(fortuneUserKeyword || '').trim().toLowerCase();
+    const baseUsers = normalizedKeyword ? searchableFortuneUsers : fortuneUsers;
+    if (!normalizedKeyword) {
+      return fortuneUsers;
+    }
+
+    return baseUsers.filter((user) => (
+      String(user.uid || '').includes(normalizedKeyword)
+      || String(user.phone || '').toLowerCase().includes(normalizedKeyword)
+      || String(user.name || '').toLowerCase().includes(normalizedKeyword)
+    ));
+  }, [fortuneUserKeyword, fortuneUsers, searchableFortuneUsers]);
   const fortuneAgents = useMemo(
     () => [...agentUsers].sort((left, right) => Number(right.balance || 0) - Number(left.balance || 0)),
     [agentUsers]
@@ -5310,6 +5428,46 @@ const AdminDashboardPanel = ({
 
         {!loading && !error && activeTab === 'fortune' && (
           <div style={{ display: 'grid', gap: '20px' }}>
+            <div
+              style={{
+                borderRadius: '14px',
+                backgroundColor: '#fff7ed',
+                border: '1px solid #fdba74',
+                padding: '14px 16px',
+                display: 'grid',
+                gap: '6px'
+              }}
+            >
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#9a3412', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                福豆页调试
+              </div>
+              <div style={{ fontSize: '13px', color: '#9a3412', lineHeight: 1.7 }}>
+                users={users.length} · agents={agentUsers.length} · brands={partnerBrands.length} · pointLedger={pointLedgerEntries.length}
+              </div>
+              <div style={{ fontSize: '13px', color: '#9a3412', lineHeight: 1.7 }}>
+                totalSystemBeans={totalSystemBeans} · totalUserBeans={totalUserBeans} · totalAgentBeans={totalAgentBeans} · totalBrandBeans={totalBrandBeans}
+              </div>
+              <div style={{ fontSize: '13px', color: '#9a3412', lineHeight: 1.7 }}>
+                systemFortune={fortuneDebugState.systemFortune} · rawUsers={fortuneDebugState.rawUsers} · partnerUsers={fortuneDebugState.partnerUsers} · pointLedgerQuery={fortuneDebugState.pointLedger} · partnerBrandsQuery={fortuneDebugState.partnerBrands}
+              </div>
+              <div style={{ fontSize: '13px', color: '#9a3412', lineHeight: 1.7 }}>
+                rawUsersQueryCount={fortuneDebugState.rawUsersCount} · partnerUsersQueryCount={fortuneDebugState.partnerUsersCount} · pointLedgerQueryCount={fortuneDebugState.pointLedgerCount} · partnerBrandsQueryCount={fortuneDebugState.partnerBrandsCount}
+              </div>
+              {(fortuneDebugState.systemFortuneError || fortuneDebugState.rawUsersError || fortuneDebugState.partnerUsersError || fortuneDebugState.pointLedgerError || fortuneDebugState.partnerBrandsError) && (
+                <div style={{ fontSize: '12px', color: '#9a3412', lineHeight: 1.7 }}>
+                  {[
+                    fortuneDebugState.systemFortuneError ? `systemFortuneError=${fortuneDebugState.systemFortuneError}` : '',
+                    fortuneDebugState.rawUsersError ? `rawUsersError=${fortuneDebugState.rawUsersError}` : '',
+                    fortuneDebugState.partnerUsersError ? `partnerUsersError=${fortuneDebugState.partnerUsersError}` : '',
+                    fortuneDebugState.pointLedgerError ? `pointLedgerError=${fortuneDebugState.pointLedgerError}` : '',
+                    fortuneDebugState.partnerBrandsError ? `partnerBrandsError=${fortuneDebugState.partnerBrandsError}` : ''
+                  ].filter(Boolean).join(' ｜ ')}
+                </div>
+              )}
+              <div style={{ fontSize: '13px', color: '#9a3412', lineHeight: 1.7 }}>
+                activeTab={activeTab}
+              </div>
+            </div>
             <OverviewCard title="福豆">
               <div style={{ display: 'grid', gap: '20px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px', alignItems: 'center' }}>
@@ -5393,25 +5551,48 @@ const AdminDashboardPanel = ({
 
             {activeFortuneSection === 'users' && (
               <OverviewCard title="用户福豆持有情况">
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.7 }}>
+                    可按 uid、手机号或用户名搜索，并直接对命中的用户做福豆增减。
+                  </div>
+                  <input
+                    type="text"
+                    value={fortuneUserKeyword}
+                    onChange={(event) => setFortuneUserKeyword(event.target.value)}
+                    placeholder="搜索 uid / 手机号 / 用户名"
+                    style={{
+                      minWidth: '260px',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: '1px solid #dbe4ee',
+                      fontSize: '13px'
+                    }}
+                  />
+                </div>
+
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '16px' }}>
                   <div style={{ borderRadius: '16px', backgroundColor: '#f8fafc', padding: '18px' }}>
                     <div style={metricKickerStyle}>用户总数</div>
-                    <div style={{ marginTop: '8px', fontSize: '30px', fontWeight: 700, color: '#111827' }}>{fortuneUsers.length}</div>
+                    <div style={{ marginTop: '8px', fontSize: '30px', fontWeight: 700, color: '#111827' }}>{filteredFortuneUsers.length}</div>
                   </div>
                   <div style={{ borderRadius: '16px', backgroundColor: '#f8fafc', padding: '18px' }}>
                     <div style={metricKickerStyle}>平均持有量</div>
-                    <div style={{ marginTop: '8px', fontSize: '30px', fontWeight: 700, color: '#111827' }}>{averageUserBeans}</div>
+                    <div style={{ marginTop: '8px', fontSize: '30px', fontWeight: 700, color: '#111827' }}>
+                      {filteredFortuneUsers.length > 0
+                        ? Math.round(filteredFortuneUsers.reduce((total, user) => total + Math.max(0, Number(user.balance || 0)), 0) / filteredFortuneUsers.length)
+                        : 0}
+                    </div>
                   </div>
                   <div style={{ borderRadius: '16px', backgroundColor: '#f8fafc', padding: '18px' }}>
                     <div style={metricKickerStyle}>前十合计</div>
                     <div style={{ marginTop: '8px', fontSize: '30px', fontWeight: 700, color: '#111827' }}>
-                      {fortuneUsers.slice(0, 10).reduce((total, user) => total + Number(user.balance || 0), 0)}
+                      {filteredFortuneUsers.slice(0, 10).reduce((total, user) => total + Number(user.balance || 0), 0)}
                     </div>
                   </div>
                 </div>
 
                 <div style={{ display: 'grid', gap: '12px' }}>
-                  {fortuneUsers.slice(0, 10).map((user, index) => (
+                  {filteredFortuneUsers.slice(0, 20).map((user, index) => (
                     <div
                       key={user.id}
                       style={{

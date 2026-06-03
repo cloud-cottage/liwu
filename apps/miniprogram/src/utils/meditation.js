@@ -54,8 +54,8 @@ const getMeditationSettings = async () => {
     const document = (result.data || [])[0] || {}
 
     return {
-      rewardPoints: Math.max(0, Number(document.reward_points ?? document.rewardPoints ?? 0)),
-      allowRepeatRewards: document.allow_repeat_rewards ?? document.allowRepeatRewards ?? true
+      rewardPoints: Math.max(0, Number(document.reward_points != null ? document.reward_points : (document.rewardPoints != null ? document.rewardPoints : 0))),
+      allowRepeatRewards: document.allow_repeat_rewards != null ? document.allow_repeat_rewards : (document.allowRepeatRewards != null ? document.allowRepeatRewards : true)
     }
   } catch {
     return {

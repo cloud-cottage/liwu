@@ -1,5 +1,9 @@
 const { getProfilePageData, saveLocalProfile } = require('../../utils/profile')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
+const { bindPhoneFromWechatCode } = require('../../utils/auth')
+
+const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '').trim()
+const isValidPhone = (value = '') => /^1\d{10}$/.test(normalizePhone(value))
 
 Page({
   data: {
@@ -71,10 +75,44 @@ Page({
     })
   },
 
+  async handleWechatPhoneBind(event) {
+    const code = event && event.detail ? (event.detail.code || '') : ''
+    if (!code) {
+      wx.showToast({
+        title: '手机号授权已取消',
+        icon: 'none'
+      })
+      return
+    }
+
+    this.setData({ saving: true })
+
+    try {
+      await bindPhoneFromWechatCode(code)
+      await this.loadPageData()
+      this.setData({ saving: false })
+      wx.showToast({
+        title: '手机号绑定成功',
+        icon: 'success'
+      })
+    } catch (error) {
+      this.setData({ saving: false })
+      wx.showToast({
+        title: error.message || '手机号绑定失败',
+        icon: 'none'
+      })
+    }
+  },
+
   async handleSave() {
     this.setData({ saving: true })
 
     try {
+      const normalizedPhone = normalizePhone(this.data.form.phone)
+      if (!isValidPhone(normalizedPhone)) {
+        throw new Error('请先绑定有效手机号')
+      }
+
       const nextProfile = saveLocalProfile(this.data.form)
       const app = getApp()
       app.globalData.profile = nextProfile

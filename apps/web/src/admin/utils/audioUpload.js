@@ -1,4 +1,4 @@
-import app, { ensureAnonymousLogin } from '../services/cloudbase.js'
+import app, { ensureAnonymousLogin, proxyCloudBaseMediaUrl } from '../services/cloudbase.js'
 
 export const uploadAudioFile = async ({ file, cloudPath }) => {
   await ensureAnonymousLogin()
@@ -19,7 +19,7 @@ export const uploadAudioFile = async ({ file, cloudPath }) => {
     audioUrl = tempFile?.tempFileURL || tempFile?.download_url || tempFile?.downloadUrl || ''
   }
 
-  return { fileId, audioUrl }
+  return { fileId, audioUrl: proxyCloudBaseMediaUrl(audioUrl) }
 }
 
 export const getAudioTempUrl = async (fileId) => {
@@ -31,5 +31,5 @@ export const getAudioTempUrl = async (fileId) => {
 
   const tempFileResult = await app.getTempFileURL({ fileList: [fileId] })
   const tempFile = tempFileResult?.fileList?.[0] || tempFileResult?.data?.fileList?.[0] || null
-  return tempFile?.tempFileURL || tempFile?.download_url || tempFile?.downloadUrl || ''
+  return proxyCloudBaseMediaUrl(tempFile?.tempFileURL || tempFile?.download_url || tempFile?.downloadUrl || '')
 }

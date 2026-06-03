@@ -1,6 +1,8 @@
 const { getHomePageData } = require('../../utils/home')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
 const { getPageMastheadSettings } = require('../../utils/pageMasthead')
+const { bindPhoneFromWechatCode } = require('../../utils/auth')
+const { requireBoundPhone } = require('../../utils/auth')
 
 const APP_TAGLINES = [
   'be clear with Liwu',
@@ -12,6 +14,8 @@ const APP_TAGLINES = [
 Page({
   data: {
     loading: true,
+    requiresPhoneBinding: false,
+    showPhonePrompt: true,
     profile: null,
     slides: [],
     showcaseItems: [],
@@ -48,6 +52,7 @@ Page({
       this.setData({
         loading: false,
         profile: pageData.profile,
+        requiresPhoneBinding: !pageData.profile.phone,
         homeSlogan: mastheadSettings.homeSlogan || '礼敬物品，礼赞生命。',
         slides: (pageData.slides || []).map((slide) => ({
           ...slide,
@@ -88,6 +93,31 @@ Page({
 
   handleShopTap() {
     openMiniRoute('/pages/shop/index')
+  },
+
+  handleGoBindPhone() {
+    openMiniRoute('/pages/profile/info/index')
+  },
+
+  handleDismissPhonePrompt() {
+    this.setData({ showPhonePrompt: false })
+  },
+
+  async handleWechatPhoneBind(event) {
+    const code = event && event.detail ? (event.detail.code || '') : ''
+    if (!code) {
+      wx.showToast({ title: '手机号授权已取消', icon: 'none' })
+      return
+    }
+
+    try {
+      await bindPhoneFromWechatCode(code)
+      await this.loadPageData()
+      this.setData({ showPhonePrompt: false })
+      wx.showToast({ title: '手机号绑定成功', icon: 'success' })
+    } catch (error) {
+      wx.showToast({ title: error.message || '手机号绑定失败', icon: 'none' })
+    }
   },
 
   onShareAppMessage() {

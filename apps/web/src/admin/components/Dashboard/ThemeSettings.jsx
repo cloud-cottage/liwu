@@ -79,24 +79,7 @@ const ThemeSettings = ({
     }
 
     const currentUrl = new URL(window.location.href);
-
-    if (currentUrl.pathname.startsWith('/admin') && currentUrl.port === '5173') {
-      currentUrl.port = '5174';
-      currentUrl.pathname = '/';
-      currentUrl.search = '';
-      currentUrl.hash = '';
-      return currentUrl.toString();
-    }
-
-    if (currentUrl.pathname.startsWith('/admin') && currentUrl.port === '5174') {
-      currentUrl.port = '5173';
-      currentUrl.pathname = '/';
-      currentUrl.search = '';
-      currentUrl.hash = '';
-      return currentUrl.toString();
-    }
-
-    currentUrl.pathname = currentUrl.pathname.replace(/\/admin\/?$/, '/') || '/';
+    currentUrl.pathname = '/';
     currentUrl.search = '';
     currentUrl.hash = '';
     return currentUrl.toString();
@@ -108,15 +91,9 @@ const ThemeSettings = ({
     }
 
     const currentUrl = new URL(window.location.href);
+    currentUrl.pathname = '/client-builds/liwu-app-debug.apk';
     currentUrl.search = '';
     currentUrl.hash = '';
-
-    if (currentUrl.port === '5174') {
-      currentUrl.pathname = '/client-builds/liwu-app-debug.apk';
-      return currentUrl.toString();
-    }
-
-    currentUrl.pathname = '/client-builds/liwu-app-debug.apk';
     return currentUrl.toString();
   }, []);
   const resolvedAndroidApkUrl = String(draftAndroidApkUrl || '').trim() || derivedAndroidApkUrl;

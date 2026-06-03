@@ -1,6 +1,8 @@
 const { listPopularTags, listUserTags, publishAwareTag, getTagDetailByKey } = require('../../utils/aware')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
 const { getPageMastheadSettings } = require('../../utils/pageMasthead')
+const { getProfilePageData } = require('../../utils/profile')
+const { bindPhoneFromWechatCode, ensureCanParticipate } = require('../../utils/auth')
 
 const PENDING_PRODUCT_STORAGE_KEY = 'liwu_mp_pending_shop_product_id'
 const CLOUD_WIDTH_RPX = 610
@@ -64,9 +66,10 @@ const buildWordCloudLayout = (tags = []) => {
   const centerX = width / 2
   const centerY = height / 2
   const placed = []
+  const firstTag = tags[0] || null
 
   const items = tags.map((tag, index) => {
-    const fontSize = getFontSize(tag.totalCount || 0, tags[0]?.totalCount || 0)
+    const fontSize = getFontSize(tag.totalCount || 0, firstTag ? (firstTag.totalCount || 0) : 0)
     const box = estimateTagBox(tag, fontSize)
     const seed = getStableSeedFromText(tag.key || tag.content || String(index))
     let chosen = null
@@ -153,7 +156,11 @@ const buildWordCloudLayout = (tags = []) => {
     }
   })
 
-  const maxBottom = layout.reduce((currentMax, item) => Math.max(currentMax, item._rect.height + Number(item.style.match(/top:(\d+)rpx;/)?.[1] || 0)), 0)
+  const maxBottom = layout.reduce((currentMax, item) => {
+    const match = item.style.match(/top:(\d+)rpx;/)
+    const topValue = match ? Number(match[1] || 0) : 0
+    return Math.max(currentMax, item._rect.height + topValue)
+  }, 0)
 
   return {
     cloudHeight: Math.max(CLOUD_MIN_HEIGHT_RPX, maxBottom + 24),
@@ -164,6 +171,8 @@ const buildWordCloudLayout = (tags = []) => {
 Page({
   data: {
     loading: true,
+    requiresPhoneBinding: false,
+    showPhonePrompt: true,
     saving: false,
     inputValue: '',
     myTags: [],
@@ -192,7 +201,8 @@ Page({
     this.setData({ loading: true })
 
     try {
-      const [myTags, popularTags, mastheadSettings] = await Promise.all([
+      const [pageData, myTags, popularTags, mastheadSettings] = await Promise.all([
+        getProfilePageData(),
         listUserTags(8),
         listPopularTags(),
         getPageMastheadSettings()
@@ -208,6 +218,7 @@ Page({
 
       this.setData({
         loading: false,
+        requiresPhoneBinding: !pageData.profile.phone,
         myTags,
         popularTags: cloudLayout.items,
         cloudHeight: cloudLayout.cloudHeight,
@@ -227,7 +238,38 @@ Page({
     this.setData({ inputValue: event.detail.value })
   },
 
+  handleGoBindPhone() {
+    openMiniRoute('/pages/profile/info/index')
+  },
+
+  handleDismissPhonePrompt() {
+    this.setData({ showPhonePrompt: false })
+  },
+
+  async handleWechatPhoneBind(event) {
+    const code = event && event.detail ? (event.detail.code || '') : ''
+    if (!code) {
+      wx.showToast({ title: '手机号授权已取消', icon: 'none' })
+      return
+    }
+
+    try {
+      await bindPhoneFromWechatCode(code)
+      await this.loadPageData()
+      this.setData({ showPhonePrompt: false })
+      wx.showToast({ title: '手机号绑定成功', icon: 'success' })
+    } catch (error) {
+      wx.showToast({ title: error.message || '手机号绑定失败', icon: 'none' })
+    }
+  },
+
   async handlePublish() {
+    if (this.data.requiresPhoneBinding) {
+      if (!ensureCanParticipate({ hasPhone: false, toastTitle: '绑定手机号后才能发布觉察' })) {
+        return
+      }
+    }
+
     const content = (this.data.inputValue || '').trim()
     if (!content) {
       wx.showToast({ title: '请输入标签内容', icon: 'none' })
@@ -284,7 +326,9 @@ Page({
   },
 
   handleOpenRelatedProduct() {
-    const productId = this.data.activeTag?.relatedProduct?.id
+    const productId = this.data.activeTag && this.data.activeTag.relatedProduct
+      ? (this.data.activeTag.relatedProduct.id || '')
+      : ''
     if (!productId) {
       return
     }
@@ -318,7 +362,7 @@ Page({
   },
 
   onShareAppMessage(event) {
-    if (event?.from === 'button' && event.target?.dataset?.shareType === 'tag' && this.data.activeTag) {
+    if (event && event.from === 'button' && event.target && event.target.dataset && event.target.dataset.shareType === 'tag' && this.data.activeTag) {
       const activeTag = this.data.activeTag
       return {
         title: `刚刚在「理悟」记录下此刻的觉察：${activeTag.content}`,

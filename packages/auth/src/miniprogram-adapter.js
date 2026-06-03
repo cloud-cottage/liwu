@@ -61,7 +61,7 @@ const createMiniProgramAuthService = (db) => ({
 
   isLoggedIn() {
     const session = readSession()
-    return Boolean(session?.phone && session?.userId)
+    return Boolean(session && normalizePhone(session.phone) && session.userId)
   },
 
   async loginWithWechatPhone(phoneNumber) {
@@ -120,7 +120,7 @@ const createMiniProgramAuthService = (db) => ({
 
   async bindWechatOpenId(openId) {
     const session = readSession()
-    if (!session?.userId) throw new Error('请先登录')
+    if (!session || !session.userId) throw new Error('请先登录')
     await db.collection('users').doc(session.userId).update({
       data: { wechat_open_id: openId, updated_at: new Date() }
     })
@@ -129,7 +129,7 @@ const createMiniProgramAuthService = (db) => ({
 
   async refreshProfile() {
     const session = readSession()
-    if (!session?.userId) return null
+    if (!session || !session.userId || !normalizePhone(session.phone)) return null
     const result = await db.collection('users').doc(session.userId).get()
     const doc = (result.data || [])[0] || result.data || null
     if (!doc) return null

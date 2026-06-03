@@ -37,9 +37,9 @@ const getThemeSettings = async () => {
   try {
     const db = getDb()
     const result = await db.collection('app_settings').where({ key: THEME_SETTINGS_KEY }).limit(1).get()
-    const document = Array.isArray(result?.data) ? result.data[0] : null
+    const document = Array.isArray(result && result.data) ? result.data[0] : null
     return {
-      theme: getThemePreset(document?.theme || 'IvoryAndSage').name
+      theme: getThemePreset((document && document.theme) || 'IvoryAndSage').name
     }
   } catch (error) {
     return {

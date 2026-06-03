@@ -92,7 +92,7 @@ const getBadgeSummary = async (userId = '') => {
     const equippedBadge = allBadges.find((badge) => badge.badgeId === equippedBadgeId) || null
 
     return {
-      equippedBadgeName: equippedBadge?.displayName || equippedBadge?.levelName || '',
+      equippedBadgeName: equippedBadge ? (equippedBadge.displayName || equippedBadge.levelName || '') : '',
       unlockedBadgeCount: unlockedBadgeIds.length
     }
   } catch {

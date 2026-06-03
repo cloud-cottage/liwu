@@ -1,4 +1,5 @@
 const { getProfilePageData, saveLocalProfile } = require('../../../utils/profile')
+const { bindPhoneFromWechatCode } = require('../../../utils/auth')
 
 Page({
   data: {
@@ -55,11 +56,42 @@ Page({
     })
   },
 
+  async handleWechatPhoneBind(event) {
+    const code = event && event.detail ? (event.detail.code || '') : ''
+    if (!code) {
+      wx.showToast({
+        title: '手机号授权已取消',
+        icon: 'none'
+      })
+      return
+    }
+
+    this.setData({ saving: true })
+    try {
+      await bindPhoneFromWechatCode(code)
+      await this.loadPageData()
+      this.setData({ saving: false })
+      wx.showToast({
+        title: '手机号绑定成功',
+        icon: 'success'
+      })
+    } catch (error) {
+      this.setData({ saving: false })
+      wx.showToast({
+        title: error.message || '手机号绑定失败',
+        icon: 'none'
+      })
+    }
+  },
+
   async handleSave() {
     this.setData({ saving: true })
 
     try {
-      const nextProfile = saveLocalProfile(this.data.form)
+      const nextProfile = saveLocalProfile({
+        name: this.data.form.name,
+        bio: this.data.form.bio
+      })
       const app = getApp()
       app.globalData.profile = nextProfile
       this.setData({

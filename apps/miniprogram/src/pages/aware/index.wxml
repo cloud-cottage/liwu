@@ -1,4 +1,10 @@
 <view class="page-shell aware-page-shell">
+  <view class="section-card" wx:if="{{requiresPhoneBinding && showPhonePrompt}}">
+    <view class="section-title">游客可浏览，绑定后可参与</view>
+    <view class="empty-text">你当前可以浏览社区觉察，但绑定手机号后才能发布觉察或参与互动。</view>
+    <button class="ghost-button" bindtap="handleDismissPhonePrompt">稍后再说</button>
+    <button class="primary-button" open-type="getPhoneNumber" bindgetphonenumber="handleWechatPhoneBind">微信授权绑定手机号</button>
+  </view>
   <view class="page-masthead">
     <view class="page-masthead__pill">Awareness</view>
     <view class="page-masthead__title">觉察</view>
@@ -16,7 +22,7 @@
       />
       <view class="aware-input-meta">{{inputValue.length}}/6</view>
       <button class="primary-button publish-button" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="handlePublish">
-        觉察此刻
+        {{requiresPhoneBinding ? '绑定手机号后可发布' : '觉察此刻'}}
       </button>
     </view>
   </view>

@@ -4,6 +4,16 @@ import react from '@vitejs/plugin-react'
 import { handleTencentTtsProxy } from './src/admin/server/tencentTtsProxy.js'
 import { handleLocalClientBuildRequest } from './src/admin/server/localClientBuildServer.js'
 
+const webRoot = fileURLToPath(new URL('.', import.meta.url))
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
+
+const loadMergedEnv = (mode, envDirs) => (
+  envDirs.reduce(
+    (accumulator, envDir) => ({ ...accumulator, ...loadEnv(mode, envDir, '') }),
+    {}
+  )
+)
+
 const localWebAdminProxyPlugin = (env) => ({
   name: 'local-web-admin-proxy',
   configureServer(server) {
@@ -52,10 +62,11 @@ const localWebAdminProxyPlugin = (env) => ({
 })
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
+  const env = loadMergedEnv(mode, [repoRoot, webRoot])
 
   return {
     plugins: [react(), localWebAdminProxyPlugin(env)],
+    envDir: webRoot,
     envPrefix: ['VITE_', 'REACT_APP_'],
     resolve: {
       alias: {

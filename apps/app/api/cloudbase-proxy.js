@@ -52,7 +52,10 @@ const isAllowedTarget = (target) => {
     return (
       targetUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com') ||
       targetUrl.hostname.endsWith('.myqcloud.com') ||
-      targetUrl.hostname.endsWith('.qcloud.la')
+      targetUrl.hostname.endsWith('.qcloud.la') ||
+      targetUrl.hostname.endsWith('.tcb.qcloud.la') ||
+      targetUrl.hostname.includes('liwu-0gtd91eebd863ccf') ||
+      targetUrl.hostname.includes('-liwu-0gtd91eebd863ccf.')
     );
   } catch {
     return false;

@@ -10,6 +10,7 @@ const {
 } = require('../../utils/shop')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
 const { getPageMastheadSettings } = require('../../utils/pageMasthead')
+const { bindPhoneFromWechatCode, ensureCanParticipate } = require('../../utils/auth')
 
 const PENDING_PRODUCT_STORAGE_KEY = 'liwu_mp_pending_shop_product_id'
 
@@ -64,6 +65,8 @@ const SHOP_TONES = [
 Page({
   data: {
     loading: true,
+    requiresPhoneBinding: false,
+    showPhonePrompt: true,
     submitting: false,
     livingCards: [],
     livingImageWidth: 700,
@@ -125,6 +128,7 @@ Page({
         categories,
         products: decorateProducts(products, categories),
         addresses,
+        requiresPhoneBinding: !profile.phone,
         walletBalance: profile.balance,
         shopSlogan: mastheadSettings.shopSlogan || '适合静心、阅读与日常安住的小器物。',
         selectedCategory,
@@ -196,6 +200,31 @@ Page({
     })
   },
 
+  handleGoBindPhone() {
+    openMiniRoute('/pages/profile/info/index')
+  },
+
+  handleDismissPhonePrompt() {
+    this.setData({ showPhonePrompt: false })
+  },
+
+  async handleWechatPhoneBind(event) {
+    const code = event && event.detail ? (event.detail.code || '') : ''
+    if (!code) {
+      wx.showToast({ title: '手机号授权已取消', icon: 'none' })
+      return
+    }
+
+    try {
+      await bindPhoneFromWechatCode(code)
+      await this.loadPageData()
+      this.setData({ showPhonePrompt: false })
+      wx.showToast({ title: '手机号绑定成功', icon: 'success' })
+    } catch (error) {
+      wx.showToast({ title: error.message || '手机号绑定失败', icon: 'none' })
+    }
+  },
+
   handleScrollList() {
     wx.pageScrollTo({
       selector: '#shop-list-section',
@@ -217,8 +246,8 @@ Page({
       this.setData({
         activeProduct: decorateProduct(detail, this.data.categories),
         showProductModal: true,
-        selectedSkuId: detail.skus[0]?.id || '',
-        selectedSkuSummary: resolveSkuSummary(detail, detail.skus[0]?.id || ''),
+        selectedSkuId: (detail.skus[0] && detail.skus[0].id) || '',
+        selectedSkuSummary: resolveSkuSummary(detail, (detail.skus[0] && detail.skus[0].id) || ''),
         addressDraft: addressesToDraft(this.data.addresses)
       })
     } catch (error) {
@@ -237,7 +266,7 @@ Page({
 
     wx.removeStorageSync(PENDING_PRODUCT_STORAGE_KEY)
     this.pendingProductId = ''
-    if (!this.data.categories.length && !optionalCategories?.length) {
+    if (!this.data.categories.length && !(optionalCategories && optionalCategories.length)) {
       return
     }
 
@@ -270,6 +299,12 @@ Page({
   },
 
   async handleSaveAddress() {
+    if (this.data.requiresPhoneBinding) {
+      if (!ensureCanParticipate({ hasPhone: false, toastTitle: '绑定手机号后才能保存地址' })) {
+        return
+      }
+    }
+
     try {
       const address = await saveUserAddress(this.data.addressDraft)
       const addresses = await listUserAddresses()
@@ -297,6 +332,12 @@ Page({
   async handleCreateOrder() {
     if (!this.data.activeProduct) {
       return
+    }
+
+    if (this.data.requiresPhoneBinding) {
+      if (!ensureCanParticipate({ hasPhone: false, toastTitle: '绑定手机号后才能下单' })) {
+        return
+      }
     }
 
     this.setData({ submitting: true })
@@ -354,8 +395,8 @@ Page({
   drawLivingCanvas(index) {
     const query = wx.createSelectorQuery().in(this)
     query.select(`#livingCanvas${index}`).fields({ node: true, size: true }).exec((result) => {
-      const canvasInfo = result?.[0]
-      if (!canvasInfo?.node || !canvasInfo.width || !canvasInfo.height) {
+      const canvasInfo = result ? result[0] : null
+      if (!canvasInfo || !canvasInfo.node || !canvasInfo.width || !canvasInfo.height) {
         return
       }
 
@@ -396,7 +437,7 @@ Page({
   },
 
   onShareAppMessage(event) {
-    if (event?.from === 'button' && event.target?.dataset?.shareType === 'product' && this.data.activeProduct) {
+    if (event && event.from === 'button' && event.target && event.target.dataset && event.target.dataset.shareType === 'product' && this.data.activeProduct) {
       const activeProduct = this.data.activeProduct
       return {
         title: `和我一起看看「理悟」工坊里的：${activeProduct.name}`,
@@ -511,7 +552,8 @@ const decorateProduct = (product = {}, categories = []) => {
 const decorateProducts = (products = [], categories = []) => products.map((product) => decorateProduct(product, categories))
 
 const resolveSkuSummary = (product = {}, skuId = '') => {
-  const selectedSku = (product?.skus || []).find((item) => item.id === skuId) || product?.skus?.[0] || null
+  const productSkus = (product && product.skus) ? product.skus : []
+  const selectedSku = productSkus.find((item) => item.id === skuId) || productSkus[0] || null
   if (!selectedSku) {
     return null
   }

@@ -4,46 +4,459 @@ import { useNavigate } from 'react-router-dom';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import DatabaseService, { DEFAULT_MEDITATION_SETTINGS } from '../../services/database.js';
+import {
+  DEFAULT_MEDITATION_SESSION_SECONDS,
+  MEDITATION_TRACK_KEYS,
+  buildFallbackMeditationSessionPlan,
+  buildMeditationSessionPlan
+} from '@liwu/shared-utils/meditation-session-plan.js';
 
-const SEGMENT_COUNT = 5;
-const AUDIO_LIBRARY = [
+const FALLBACK_BACKGROUND_AUDIO_LIBRARY = [
   '/audio/meditation/sea_wave1.mp3',
   '/audio/meditation/sea_wave2.mp3',
-  '/audio/meditation/sea_wave_seagull.mp3',
+  '/audio/meditation/sea_wave_seagull.mp3'
 ];
 const MIN_VALID_MEDITATION_SECONDS = 180;
+const SESSION_LABELS = {
+  morning: '早课',
+  noon: '午课',
+  afternoon: '下午课',
+  evening: '晚课'
+};
 
-const createSessionSegments = () =>
-  Array.from({ length: SEGMENT_COUNT }, () => ({
-    url: AUDIO_LIBRARY[Math.floor(Math.random() * AUDIO_LIBRARY.length)],
-  }));
+const formatTime = (seconds) => {
+  const normalizedSeconds = Math.max(0, Math.ceil(Number(seconds) || 0));
+  const minutes = Math.floor(normalizedSeconds / 60);
+  const remainingSeconds = normalizedSeconds % 60;
+
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
 
 const toMeditationMinutes = (seconds) => Number((Math.max(0, Number(seconds) || 0) / 60).toFixed(1));
+
+const buildFallbackSessionPlan = (now = new Date()) => buildFallbackMeditationSessionPlan({
+  fallbackAudioLibrary: FALLBACK_BACKGROUND_AUDIO_LIBRARY,
+  now,
+  defaultSessionSeconds: DEFAULT_MEDITATION_SESSION_SECONDS
+});
+
+const buildRuntimeSessionPlan = ({
+  audioLibrary,
+  compositionSettings,
+  meditationCalendar,
+  meditationLibrary,
+  now = new Date()
+}) => buildMeditationSessionPlan({
+  audioLibrary,
+  compositionSettings,
+  meditationCalendar,
+  meditationLibrary,
+  now,
+  fallbackAudioLibrary: FALLBACK_BACKGROUND_AUDIO_LIBRARY,
+  defaultSessionSeconds: DEFAULT_MEDITATION_SESSION_SECONDS
+});
 
 const MeditationPlayer = () => {
   const navigate = useNavigate();
   const { completeMeditationSession } = useWealth();
   const { authStatus, loading: authLoading } = useCloudAwareness();
-  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
   const [meditationSettings, setMeditationSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
-  const audioRef = useRef(new Audio());
-  const handleSegmentCompleteRef = useRef(() => {});
+  const [sessionPlan, setSessionPlan] = useState(null);
+  const [sessionError, setSessionError] = useState('');
+  const backgroundAudioRef = useRef(new Audio());
+  const voiceAudioRef = useRef(new Audio());
+  const timerRef = useRef(null);
+  const sessionStartMsRef = useRef(null);
+  const elapsedBeforePauseRef = useRef(0);
   const sessionPersistedRef = useRef(false);
   const listenedSecondsRef = useRef(0);
-  const lastAudioTimeRef = useRef(0);
-  const [segments] = useState(createSessionSegments);
+  const isPlayingRef = useRef(false);
+  const sessionPlanRef = useRef(null);
+  const completionHandledRef = useRef(false);
+  const trackRuntimeRef = useRef({
+    background: { segmentId: '', itemIndex: 0, completed: false },
+    voice: { segmentId: '', itemIndex: 0, completed: false }
+  });
   const canPlayMeditation = !authLoading && Boolean(authStatus?.isAuthenticated);
+
+  const getAudioRef = useCallback((trackKey) => (
+    trackKey === 'background' ? backgroundAudioRef : voiceAudioRef
+  ), []);
+
+  const getElapsedSeconds = useCallback(() => {
+    if (isPlayingRef.current && sessionStartMsRef.current != null) {
+      return Math.max(0, (performance.now() - sessionStartMsRef.current) / 1000);
+    }
+
+    return Math.max(0, elapsedBeforePauseRef.current);
+  }, []);
+
+  const stopTicker = useCallback(() => {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const pausePlayback = useCallback(() => {
+    elapsedBeforePauseRef.current = getElapsedSeconds();
+    stopTicker();
+    isPlayingRef.current = false;
+    backgroundAudioRef.current.pause();
+    voiceAudioRef.current.pause();
+    setIsPlaying(false);
+    setIsBuffering(false);
+  }, [getElapsedSeconds, stopTicker]);
+
+  const clearTrackRuntime = useCallback((trackKey) => {
+    const audio = getAudioRef(trackKey).current;
+    trackRuntimeRef.current[trackKey] = {
+      segmentId: '',
+      itemIndex: 0,
+      completed: false
+    };
+    audio.pause();
+    audio.onended = null;
+    audio.onerror = null;
+    audio.onwaiting = null;
+    audio.onplaying = null;
+    audio.oncanplay = null;
+    audio.src = '';
+  }, [getAudioRef]);
+
+  const completeTrackSegment = useCallback((trackKey, segmentId) => {
+    const audio = getAudioRef(trackKey).current;
+    trackRuntimeRef.current[trackKey] = {
+      segmentId,
+      itemIndex: 0,
+      completed: true
+    };
+    audio.pause();
+    audio.onended = null;
+    audio.onerror = null;
+    audio.onwaiting = null;
+    audio.onplaying = null;
+    audio.oncanplay = null;
+    audio.src = '';
+  }, [getAudioRef]);
+
+  const persistMeditationSession = useCallback(async ({
+    durationMinutes,
+    rewardAmount = 0,
+    allowRepeatReward = true,
+    rewardKey = 'default_meditation_program',
+    rewardDescription = '完成一次冥想'
+  }) => {
+    if (sessionPersistedRef.current || listenedSecondsRef.current <= MIN_VALID_MEDITATION_SECONDS) {
+      return {
+        rewarded: false,
+        rewardAmount: 0
+      };
+    }
+
+    sessionPersistedRef.current = true;
+    return completeMeditationSession({
+      duration: Math.max(1, Number(durationMinutes) || 0),
+      rewardAmount,
+      allowRepeatReward,
+      rewardKey,
+      rewardDescription
+    });
+  }, [completeMeditationSession]);
+
+  const playTrackPlaylistItem = useCallback((trackKey, segment, itemIndex = 0) => {
+    const audio = getAudioRef(trackKey).current;
+    const playlist = Array.isArray(segment?.playlist) ? segment.playlist.filter((item) => item?.audioUrl) : [];
+
+    if (playlist.length === 0) {
+      completeTrackSegment(trackKey, segment?.id || '');
+      return;
+    }
+
+    const normalizedIndex = Math.max(0, itemIndex % playlist.length);
+    const item = playlist[normalizedIndex];
+
+    trackRuntimeRef.current[trackKey] = {
+      segmentId: segment.id,
+      itemIndex: normalizedIndex,
+      completed: false
+    };
+
+    audio.pause();
+    audio.src = item.audioUrl;
+    audio.onwaiting = () => setIsBuffering(true);
+    audio.oncanplay = () => setIsBuffering(false);
+    audio.onplaying = () => setIsBuffering(false);
+    audio.onended = () => {
+      if (trackRuntimeRef.current[trackKey].segmentId !== segment.id) {
+        return;
+      }
+
+      const elapsedSeconds = getElapsedSeconds();
+      if (elapsedSeconds >= segment.endSeconds) {
+        clearTrackRuntime(trackKey);
+        return;
+      }
+
+      if (segment.playbackMode === 'sequence') {
+        if (normalizedIndex + 1 >= playlist.length) {
+          completeTrackSegment(trackKey, segment.id);
+          return;
+        }
+
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        return;
+      }
+
+      playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+    };
+    audio.onerror = () => {
+      if (segment.playbackMode === 'sequence' && normalizedIndex + 1 < playlist.length) {
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        return;
+      }
+
+      if (segment.playbackMode === 'loop' && playlist.length > 1) {
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        return;
+      }
+
+      completeTrackSegment(trackKey, segment.id);
+    };
+    audio.load();
+
+    if (isPlayingRef.current) {
+      setIsBuffering(true);
+      audio.play().catch((error) => {
+        console.error(`Audio playback failed for ${trackKey}:`, error);
+        completeTrackSegment(trackKey, segment.id);
+        setSessionError(error?.message || '音频播放失败，请稍后重试');
+        pausePlayback();
+      });
+    }
+  }, [clearTrackRuntime, completeTrackSegment, getAudioRef, getElapsedSeconds, pausePlayback]);
+
+  const syncTrackPlayback = useCallback((elapsedSeconds) => {
+    const plan = sessionPlanRef.current;
+
+    if (!plan) {
+      return;
+    }
+
+    MEDITATION_TRACK_KEYS.forEach((trackKey) => {
+      const activeSegment = plan.segments.find((segment) => (
+        segment.trackKey === trackKey &&
+        elapsedSeconds >= segment.startSeconds &&
+        elapsedSeconds < segment.endSeconds
+      )) || null;
+      const trackRuntime = trackRuntimeRef.current[trackKey];
+
+      if (!activeSegment) {
+        if (trackRuntime.segmentId) {
+          clearTrackRuntime(trackKey);
+        }
+        return;
+      }
+
+      if (trackRuntime.segmentId !== activeSegment.id) {
+        playTrackPlaylistItem(trackKey, activeSegment, 0);
+      }
+    });
+  }, [clearTrackRuntime, playTrackPlaylistItem]);
+
+  const completePlayback = useCallback(async () => {
+    if (completionHandledRef.current) {
+      return;
+    }
+
+    completionHandledRef.current = true;
+    stopTicker();
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    setIsBuffering(false);
+    clearTrackRuntime('background');
+    clearTrackRuntime('voice');
+    elapsedBeforePauseRef.current = Math.max(elapsedBeforePauseRef.current, duration || 0);
+    listenedSecondsRef.current = Math.max(listenedSecondsRef.current, elapsedBeforePauseRef.current);
+
+    const sessionMinutes = toMeditationMinutes(listenedSecondsRef.current);
+    const rewardResult = await persistMeditationSession({
+      durationMinutes: sessionMinutes,
+      rewardAmount: meditationSettings.rewardPoints,
+      allowRepeatReward: meditationSettings.allowRepeatRewards,
+      rewardKey: 'default_meditation_program',
+      rewardDescription: '完成一次冥想'
+    });
+
+    const completionMessage = rewardResult.error
+      ? '本次冥想已记入，云端福豆暂未到账。'
+      : rewardResult.repeatedRewardBlocked && meditationSettings.rewardPoints > 0
+        ? '本次冥想已记入，本次不重复发放福豆。'
+        : '本次冥想已记入。';
+
+    window.alert(completionMessage);
+    navigate('/');
+  }, [clearTrackRuntime, duration, meditationSettings, navigate, persistMeditationSession, stopTicker]);
+
+  const startTicker = useCallback(() => {
+    if (timerRef.current || !sessionPlanRef.current) {
+      return;
+    }
+
+    timerRef.current = window.setInterval(() => {
+      const elapsedSeconds = getElapsedSeconds();
+      const sessionDuration = sessionPlanRef.current?.sessionDuration || DEFAULT_SESSION_SECONDS;
+      listenedSecondsRef.current = Math.max(listenedSecondsRef.current, elapsedSeconds);
+      setDuration(sessionDuration);
+      setTimeLeft(Math.max(0, Math.ceil(sessionDuration - elapsedSeconds)));
+      syncTrackPlayback(elapsedSeconds);
+
+      if (elapsedSeconds >= sessionDuration) {
+        void completePlayback();
+      }
+    }, 250);
+  }, [completePlayback, getElapsedSeconds, syncTrackPlayback]);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const [
+          settings,
+          audioLibrary,
+          compositionSettings,
+          meditationCalendar,
+          meditationLibrary
+        ] = await Promise.all([
+          DatabaseService.getMeditationSettings(),
+          DatabaseService.getMeditationAudioLibrary(),
+          DatabaseService.getMeditationCompositionSettings(),
+          DatabaseService.getMeditationCalendar(),
+          DatabaseService.getMeditationLibrary()
+        ]);
+
+        if (!active) {
+          return;
+        }
+
+        const nextPlan = buildRuntimeSessionPlan({
+          audioLibrary,
+          compositionSettings,
+          meditationCalendar,
+          meditationLibrary
+        });
+
+        sessionPlanRef.current = nextPlan;
+        setMeditationSettings(settings);
+        setSessionPlan(nextPlan);
+        setSessionError('');
+        setDuration(nextPlan.sessionDuration);
+        setTimeLeft(nextPlan.sessionDuration);
+        setIsLoaded(true);
+        setIsBuffering(false);
+        completionHandledRef.current = false;
+      } catch (error) {
+        console.error('Failed to load meditation playback config:', error);
+
+        if (!active) {
+          return;
+        }
+
+        const fallbackPlan = buildFallbackSessionPlan();
+        sessionPlanRef.current = fallbackPlan;
+        setSessionPlan(fallbackPlan);
+        setSessionError(error.message || '冥想配置加载失败，已切换到默认背景音。');
+        setDuration(fallbackPlan.sessionDuration);
+        setTimeLeft(fallbackPlan.sessionDuration);
+        setIsLoaded(true);
+        setIsBuffering(false);
+        completionHandledRef.current = false;
+      }
+    })();
+
+    return () => {
+      active = false;
+      stopTicker();
+      clearTrackRuntime('background');
+      clearTrackRuntime('voice');
+    };
+  }, [clearTrackRuntime, stopTicker]);
+
+  const startPlayback = useCallback(async () => {
+    if (!isLoaded || !canPlayMeditation || !sessionPlanRef.current) {
+      return;
+    }
+
+    const resumeElapsedSeconds = elapsedBeforePauseRef.current;
+    sessionStartMsRef.current = performance.now() - resumeElapsedSeconds * 1000;
+    syncTrackPlayback(resumeElapsedSeconds);
+    isPlayingRef.current = true;
+    setIsPlaying(true);
+    setIsBuffering(true);
+
+    const playableAudios = [backgroundAudioRef.current, voiceAudioRef.current].filter((audio) => audio.src);
+    const playbackResults = await Promise.allSettled(playableAudios.map((audio) => audio.play()));
+    if (playbackResults.some((result) => result.status === 'rejected')) {
+      const rejectedResult = playbackResults.find((result) => result.status === 'rejected');
+      setSessionError(rejectedResult?.reason?.message || '播放启动失败，请检查网络或稍后重试');
+      pausePlayback();
+      return;
+    }
+
+    setSessionError('');
+    setIsBuffering(false);
+    startTicker();
+  }, [canPlayMeditation, isLoaded, pausePlayback, startTicker, syncTrackPlayback]);
 
   const elapsedTime = duration > 0 ? Math.max(duration - timeLeft, 0) : 0;
   const segmentProgress = duration > 0 ? Math.min((elapsedTime / duration) * 100, 100) : 0;
   const tonearmRotation = 8 + segmentProgress * 0.04 + (isPlaying ? 0 : -16);
   const timeLabel = !isLoaded ? '加载中...' : formatTime(timeLeft);
-  const footerLabel = isBuffering && isPlaying ? '缓冲中...' : '吸气，感受当下；呼气，放下杂念。';
+  const footerLabel = isBuffering && isPlaying
+    ? '缓冲中...'
+    : sessionPlan
+      ? `${SESSION_LABELS[sessionPlan.sessionKey] || '冥想'} · ${sessionPlan.presetName}${sessionPlan.usedFallback ? ' · 默认音频' : ''}`
+      : '吸气，感受当下；呼气，放下杂念。';
+
+  const togglePlay = async () => {
+    if (!canPlayMeditation) {
+      navigate('/profile');
+      return;
+    }
+
+    if (!isLoaded || !sessionPlan) {
+      return;
+    }
+
+    if (isPlayingRef.current) {
+      pausePlayback();
+      return;
+    }
+
+    await startPlayback();
+  };
+
+  const handleClose = () => {
+    if (window.confirm('确定要结束冥想吗？单次冥想超过 3 分钟会自动记入一次。')) {
+      stopTicker();
+      clearTrackRuntime('background');
+      clearTrackRuntime('voice');
+      void (async () => {
+        await persistMeditationSession({
+          durationMinutes: toMeditationMinutes(Math.max(listenedSecondsRef.current, getElapsedSeconds())),
+          rewardAmount: 0,
+          rewardDescription: '中断后保存一次冥想'
+        });
+        navigate('/');
+      })();
+    }
+  };
 
   if (!authLoading && !authStatus?.isAuthenticated) {
     return (
@@ -95,204 +508,6 @@ const MeditationPlayer = () => {
     );
   }
 
-  useEffect(() => {
-    let active = true;
-
-    DatabaseService.getMeditationSettings()
-      .then((settings) => {
-        if (active) {
-          setMeditationSettings(settings);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to load meditation settings:', error);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const persistMeditationSession = useCallback(async ({
-    durationMinutes,
-    rewardAmount = 0,
-    allowRepeatReward = true,
-    rewardKey = 'default_meditation_program',
-    rewardDescription = '完成一次冥想'
-  }) => {
-    if (sessionPersistedRef.current || listenedSecondsRef.current <= MIN_VALID_MEDITATION_SECONDS) {
-      return {
-        rewarded: false,
-        rewardAmount: 0
-      };
-    }
-
-    sessionPersistedRef.current = true;
-    return completeMeditationSession({
-      duration: Math.max(1, Number(durationMinutes) || 0),
-      rewardAmount,
-      allowRepeatReward,
-      rewardKey,
-      rewardDescription
-    });
-  }, [completeMeditationSession]);
-
-  useEffect(() => {
-    handleSegmentCompleteRef.current = async () => {
-      if (currentSegmentIndex < SEGMENT_COUNT - 1) {
-        const nextIndex = currentSegmentIndex + 1;
-        const audio = audioRef.current;
-
-        setCurrentSegmentIndex(nextIndex);
-        setIsLoaded(false);
-        setIsBuffering(true);
-        setDuration(0);
-        setTimeLeft(0);
-        lastAudioTimeRef.current = 0;
-        audio.src = segments[nextIndex].url;
-        audio.load();
-        return;
-      }
-
-      setIsPlaying(false);
-      const sessionMinutes = toMeditationMinutes(listenedSecondsRef.current);
-      const rewardResult = await persistMeditationSession({
-        durationMinutes: sessionMinutes,
-        rewardAmount: meditationSettings.rewardPoints,
-        allowRepeatReward: meditationSettings.allowRepeatRewards,
-        rewardKey: 'default_meditation_program',
-        rewardDescription: '完成一次冥想'
-      });
-
-      const completionMessage = rewardResult.error
-        ? '本次冥想已记入，云端福豆暂未到账。'
-        : rewardResult.repeatedRewardBlocked && meditationSettings.rewardPoints > 0
-          ? '本次冥想已记入，本次不重复发放福豆。'
-          : '本次冥想已记入。';
-
-      window.alert(completionMessage);
-      navigate('/');
-    };
-  }, [currentSegmentIndex, meditationSettings, navigate, persistMeditationSession, segments]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-
-    const handleLoadedMetadata = () => {
-      const nextDuration = Number.isFinite(audio.duration) ? Math.ceil(audio.duration) : 0;
-      setDuration(nextDuration);
-      setTimeLeft(nextDuration);
-      setIsLoaded(true);
-      setIsBuffering(false);
-    };
-
-    const handleCanPlay = () => {
-      setIsLoaded(true);
-      setIsBuffering(false);
-    };
-
-    const handleEnded = () => {
-      handleSegmentCompleteRef.current();
-    };
-
-    const handleTimeUpdate = () => {
-      if (!Number.isFinite(audio.duration)) {
-        return;
-      }
-
-      const currentTime = audio.currentTime;
-      if (currentTime < lastAudioTimeRef.current) {
-        lastAudioTimeRef.current = currentTime;
-      } else {
-        listenedSecondsRef.current += currentTime - lastAudioTimeRef.current;
-        lastAudioTimeRef.current = currentTime;
-      }
-
-      const nextDuration = Math.ceil(audio.duration);
-      setDuration(nextDuration);
-      setTimeLeft(Math.max(0, Math.ceil(audio.duration - currentTime)));
-    };
-
-    const handleWaiting = () => {
-      setIsBuffering(true);
-    };
-
-    const handlePlaying = () => {
-      setIsLoaded(true);
-      setIsBuffering(false);
-    };
-
-    const handleError = () => {
-      setIsLoaded(false);
-      setIsBuffering(false);
-      setIsPlaying(false);
-    };
-
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audio.addEventListener('canplay', handleCanPlay);
-    audio.addEventListener('ended', handleEnded);
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('waiting', handleWaiting);
-    audio.addEventListener('playing', handlePlaying);
-    audio.addEventListener('error', handleError);
-    audio.src = segments[0].url;
-    audio.load();
-
-    return () => {
-      audio.pause();
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.removeEventListener('canplay', handleCanPlay);
-      audio.removeEventListener('ended', handleEnded);
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('waiting', handleWaiting);
-      audio.removeEventListener('playing', handlePlaying);
-      audio.removeEventListener('error', handleError);
-      if (!sessionPersistedRef.current && listenedSecondsRef.current > MIN_VALID_MEDITATION_SECONDS) {
-        void persistMeditationSession({
-          durationMinutes: toMeditationMinutes(listenedSecondsRef.current),
-          rewardAmount: 0,
-          rewardDescription: '中断后保存一次冥想'
-        });
-      }
-    };
-  }, [persistMeditationSession, segments]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-
-    if (isPlaying && isLoaded && canPlayMeditation) {
-      audio.play().catch((error) => {
-        console.error('Audio playback failed:', error);
-        setIsPlaying(false);
-      });
-      return;
-    }
-
-    audio.pause();
-  }, [canPlayMeditation, isPlaying, isLoaded]);
-
-  const togglePlay = () => {
-    if (!canPlayMeditation) {
-      navigate('/profile');
-      return;
-    }
-
-    setIsPlaying((previousValue) => !previousValue);
-  };
-
-  const handleClose = () => {
-    if (window.confirm('确定要结束冥想吗？单次冥想超过 3 分钟会自动记入一次。')) {
-      void (async () => {
-        await persistMeditationSession({
-          durationMinutes: toMeditationMinutes(listenedSecondsRef.current),
-          rewardAmount: 0,
-          rewardDescription: '中断后保存一次冥想'
-        });
-        navigate('/');
-      })();
-    }
-  };
-
   return (
     <div
       style={{
@@ -302,7 +517,7 @@ const MeditationPlayer = () => {
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
-        overflow: 'hidden',
+        overflow: 'hidden'
       }}
     >
       <style>{`
@@ -319,7 +534,7 @@ const MeditationPlayer = () => {
           inset: 0,
           pointerEvents: 'none',
           background:
-            'radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.78), transparent 24%), radial-gradient(circle at 85% 10%, rgba(214, 140, 101, 0.16), transparent 24%)',
+            'radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.78), transparent 24%), radial-gradient(circle at 85% 10%, rgba(214, 140, 101, 0.16), transparent 24%)'
         }}
       />
 
@@ -329,7 +544,7 @@ const MeditationPlayer = () => {
           display: 'flex',
           justifyContent: 'flex-end',
           position: 'relative',
-          zIndex: 1,
+          zIndex: 1
         }}
       >
         <button
@@ -346,7 +561,7 @@ const MeditationPlayer = () => {
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            boxShadow: '0 8px 20px rgba(53, 40, 27, 0.08)',
+            boxShadow: '0 8px 20px rgba(53, 40, 27, 0.08)'
           }}
         >
           <X size={20} color="var(--color-accent-ink)" />
@@ -361,14 +576,14 @@ const MeditationPlayer = () => {
           justifyContent: 'space-between',
           padding: '0 24px 32px',
           position: 'relative',
-          zIndex: 1,
+          zIndex: 1
         }}
       >
         <div
           style={{
             display: 'flex',
             justifyContent: 'center',
-            marginTop: '8px',
+            marginTop: '8px'
           }}
         >
           <div
@@ -377,7 +592,7 @@ const MeditationPlayer = () => {
               borderRadius: '34px',
               padding: '22px',
               background: 'linear-gradient(145deg, rgba(84, 61, 40, 0.96), rgba(44, 31, 21, 0.96))',
-              boxShadow: '0 26px 60px rgba(53, 40, 27, 0.22)',
+              boxShadow: '0 26px 60px rgba(53, 40, 27, 0.22)'
             }}
           >
             <div
@@ -387,7 +602,7 @@ const MeditationPlayer = () => {
                 padding: '22px 18px 20px',
                 background:
                   'linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02))',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.08)'
               }}
             >
               <div
@@ -395,7 +610,7 @@ const MeditationPlayer = () => {
                   position: 'relative',
                   width: 'min(78vw, 312px)',
                   height: 'min(78vw, 312px)',
-                  margin: '34px auto 0',
+                  margin: '34px auto 0'
                 }}
               >
                 <div
@@ -404,7 +619,7 @@ const MeditationPlayer = () => {
                     inset: 0,
                     borderRadius: '50%',
                     background: 'radial-gradient(circle, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.24))',
-                    boxShadow: '0 22px 42px rgba(0, 0, 0, 0.26)',
+                    boxShadow: '0 22px 42px rgba(0, 0, 0, 0.26)'
                   }}
                 />
 
@@ -415,7 +630,7 @@ const MeditationPlayer = () => {
                     borderRadius: '50%',
                     background: 'linear-gradient(145deg, #191919, #090909)',
                     animation: isPlaying ? 'vinyl-spin 7.5s linear infinite' : 'none',
-                    overflow: 'hidden',
+                    overflow: 'hidden'
                   }}
                 >
                   <div
@@ -425,7 +640,7 @@ const MeditationPlayer = () => {
                       borderRadius: '50%',
                       border: '1px solid rgba(255, 255, 255, 0.05)',
                       boxShadow:
-                        '0 0 0 12px rgba(255, 255, 255, 0.018), 0 0 0 28px rgba(255, 255, 255, 0.018), 0 0 0 42px rgba(255, 255, 255, 0.014)',
+                        '0 0 0 12px rgba(255, 255, 255, 0.018), 0 0 0 28px rgba(255, 255, 255, 0.018), 0 0 0 42px rgba(255, 255, 255, 0.014)'
                     }}
                   />
 
@@ -434,7 +649,7 @@ const MeditationPlayer = () => {
                       position: 'absolute',
                       inset: '19%',
                       borderRadius: '50%',
-                      overflow: 'hidden',
+                      overflow: 'hidden'
                     }}
                   >
                     <img
@@ -443,7 +658,7 @@ const MeditationPlayer = () => {
                       style={{
                         width: '100%',
                         height: '100%',
-                        objectFit: 'cover',
+                        objectFit: 'cover'
                       }}
                     />
                     <div
@@ -451,7 +666,7 @@ const MeditationPlayer = () => {
                         position: 'absolute',
                         inset: 0,
                         background:
-                          'radial-gradient(circle at center, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.22))',
+                          'radial-gradient(circle at center, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.22))'
                       }}
                     />
                   </div>
@@ -497,7 +712,7 @@ const MeditationPlayer = () => {
                       position: 'relative',
                       zIndex: 1,
                       color: 'var(--color-accent-ink)',
-                      filter: 'drop-shadow(0 1px 2px rgba(255,255,255,0.2))',
+                      filter: 'drop-shadow(0 1px 2px rgba(255,255,255,0.2))'
                     }}
                   >
                     {isPlaying ? <Pause size={26} strokeWidth={2.4} /> : <Play size={26} strokeWidth={2.4} style={{ marginLeft: '3px' }} />}
@@ -514,7 +729,7 @@ const MeditationPlayer = () => {
                     transformOrigin: 'calc(100% - 14px) 14px',
                     transform: `rotate(${tonearmRotation}deg)`,
                     transition: 'transform 420ms ease-out',
-                    pointerEvents: 'none',
+                    pointerEvents: 'none'
                   }}
                 >
                   <div
@@ -527,7 +742,7 @@ const MeditationPlayer = () => {
                       borderRadius: '50%',
                       background:
                         'radial-gradient(circle at 30% 30%, #e8dfd1 0%, #96836f 46%, #5a4a3d 100%)',
-                      boxShadow: '0 8px 18px rgba(0, 0, 0, 0.26)',
+                      boxShadow: '0 8px 18px rgba(0, 0, 0, 0.26)'
                     }}
                   />
                   <div
@@ -540,7 +755,7 @@ const MeditationPlayer = () => {
                       borderRadius: '999px',
                       background:
                         'linear-gradient(90deg, rgba(223, 214, 202, 0.96), rgba(133, 118, 101, 0.98))',
-                      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.2)',
+                      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.2)'
                     }}
                   />
                   <div
@@ -554,7 +769,7 @@ const MeditationPlayer = () => {
                       background:
                         'linear-gradient(180deg, rgba(239, 226, 210, 0.96), rgba(132, 112, 90, 0.98))',
                       transform: 'rotate(18deg)',
-                      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.18)',
+                      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.18)'
                     }}
                   />
                 </div>
@@ -569,7 +784,7 @@ const MeditationPlayer = () => {
             flexDirection: 'column',
             alignItems: 'center',
             gap: '16px',
-            marginTop: '24px',
+            marginTop: '24px'
           }}
         >
           <div
@@ -578,7 +793,7 @@ const MeditationPlayer = () => {
               fontFamily: 'var(--font-sans)',
               fontWeight: 300,
               color: 'var(--color-accent-ink)',
-              letterSpacing: '0.04em',
+              letterSpacing: '0.04em'
             }}
           >
             {timeLabel}
@@ -591,21 +806,14 @@ const MeditationPlayer = () => {
             textAlign: 'center',
             color: 'var(--color-text-secondary)',
             fontSize: '14px',
-            opacity: 0.82,
+            opacity: 0.82
           }}
         >
-          {footerLabel}
+          {sessionError ? `${footerLabel} · ${sessionError}` : footerLabel}
         </div>
       </div>
     </div>
   );
-};
-
-const formatTime = (seconds) => {
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-
-  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
 export default MeditationPlayer;

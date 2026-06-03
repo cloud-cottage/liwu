@@ -8,13 +8,16 @@ const readErrorPayload = async (response) => {
   return { message: 'TTS 服务调用失败。' };
 };
 
-export async function synthesizeSpeech(text) {
+export async function synthesizeSpeech(text, options = {}) {
   const response = await fetch('/api/tts-proxy', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ text })
+    body: JSON.stringify({
+      text,
+      isSSML: Boolean(options.isSSML)
+    })
   });
 
   if (!response.ok) {
@@ -22,6 +25,7 @@ export async function synthesizeSpeech(text) {
     const error = new Error(errorPayload.userMessage || errorPayload.message || 'TTS 服务调用失败。');
     error.code = errorPayload.error || '';
     error.userMessage = errorPayload.userMessage || error.message;
+    error.requestId = errorPayload.requestId || '';
     throw error;
   }
 

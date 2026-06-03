@@ -82,7 +82,7 @@ const decorateShowcaseItems = (products = [], categories = []) => (
       id: product.id,
       name: product.name,
       imageUrl: product.coverImage || '',
-      categoryName: category?.name || '工坊',
+      categoryName: category ? (category.name || '工坊') : '工坊',
       monogram: (product.name || '礼').slice(0, 1),
       layoutClass: `showcase-tile-${index + 1}`
     }
