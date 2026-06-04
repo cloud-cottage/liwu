@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { getAudioTempUrl, uploadAudioFile } from '../../utils/audioUpload.js';
 import { synthesizeSpeech, blobUrlToFile } from '../../utils/ttsService.js';
 import { MEDITATION_AUDIO_LIBRARY_TYPES } from '../../services/database.js';
-import { buildMeditationSessionPlan } from '@liwu/shared-utils/meditation-session-plan.js';
+import {
+  buildMeditationSessionPlan,
+  getMeditationAudioMimeType,
+  MEDITATION_TRACK_VOLUMES
+} from '@liwu/shared-utils/meditation-session-plan.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -184,15 +188,95 @@ const buildMeditationPresetPreviewPlan = async ({ preset, audioLibrary, composit
     return null;
   }
 
+  const getAudioPlaybackSupport = (audioUrl) => {
+    try {
+      const probe = document.createElement('audio');
+      const mimeType = getMeditationAudioMimeType(audioUrl);
+      const supportLevel = probe.canPlayType(mimeType);
+      const isOpus = mimeType.includes('codecs="opus"');
+
+      if (isOpus) {
+        return {
+          supported: supportLevel === 'probably',
+          supportLevel
+        };
+      }
+
+      return {
+        supported: supportLevel !== '',
+        supportLevel
+      };
+    } catch {
+      return {
+        supported: true,
+        supportLevel: 'probably'
+      };
+    }
+  };
+
   const resolvedItems = await Promise.all((audioLibrary?.items || []).map(async (item) => ({
     ...item,
-    audioUrl: item.audioUrl || (item.fileId ? await getAudioTempUrl(item.fileId) || '' : '')
+    audioUrl: item.fileId
+      ? await getAudioTempUrl(item.fileId) || item.audioUrl || ''
+      : item.audioUrl || ''
   })));
+
+  const opusItems = resolvedItems.filter((item) => item.audioUrl && getMeditationAudioMimeType(item.audioUrl).includes('codecs="opus"'));
+  if (opusItems.length > 0) {
+    const unsupportedOpusItem = opusItems.find((item) => !getAudioPlaybackSupport(item.audioUrl).supported) || null;
+    if (unsupportedOpusItem) {
+      return {
+        previewBlockedReason: '当前浏览器未达到 Opus 的稳定支持级别（需要 probably），后台原生试听已阻止。'
+      };
+    }
+  }
+
+  const toPreviewPlayableItem = async (item) => {
+    if (!item.audioUrl) {
+      return null;
+    }
+
+    const response = await fetch(item.audioUrl, { method: 'GET' });
+    if (!response.ok && response.status !== 206) {
+      throw new Error(`AUDIO_FETCH_${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const blob = new Blob([arrayBuffer], {
+      type: getMeditationAudioMimeType(item.audioUrl)
+    });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const duration = await new Promise((resolve) => {
+      const probe = document.createElement('audio');
+      probe.preload = 'metadata';
+      probe.onloadedmetadata = () => {
+        resolve(Number.isFinite(probe.duration) ? probe.duration : Number(item.duration || 0));
+      };
+      probe.onerror = () => {
+        resolve(Number(item.duration || 0));
+      };
+      probe.src = blobUrl;
+    });
+
+    return {
+      ...item,
+      audioUrl: blobUrl,
+      duration: Math.max(0, Number(duration) || 0),
+      revokeAfterPreview: true
+    };
+  };
+
+  const playableItems = (await Promise.all(
+    resolvedItems
+      .filter((item) => item.audioUrl && getAudioPlaybackSupport(item.audioUrl).supported)
+      .map(toPreviewPlayableItem)
+  )).filter(Boolean);
 
   const plan = buildMeditationSessionPlan({
     audioLibrary: {
       ...audioLibrary,
-      items: resolvedItems
+      items: playableItems
     },
     compositionSettings,
     meditationCalendar: { days: {} },
@@ -217,20 +301,109 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [previewMessage, setPreviewMessage] = useState('');
   const backgroundAudioRef = React.useRef(new Audio());
   const voiceAudioRef = React.useRef(new Audio());
   const timerRef = React.useRef(null);
   const startMsRef = React.useRef(null);
   const elapsedBeforePauseRef = React.useRef(0);
   const runtimeRef = React.useRef({
-    background: { segmentId: '', itemIndex: 0 },
-    voice: { segmentId: '', itemIndex: 0 }
+    background: { segmentId: '', itemIndex: 0, completed: false },
+    voice: { segmentId: '', itemIndex: 0, completed: false }
   });
+  const resumeAfterScrubRef = React.useRef(false);
   const isPlayingRef = React.useRef(false);
+
+  const describeMediaError = useCallback((audio) => {
+    const mediaError = audio?.error;
+    if (!mediaError) {
+      return '';
+    }
+
+    const codeLabelMap = {
+      1: 'MEDIA_ERR_ABORTED',
+      2: 'MEDIA_ERR_NETWORK',
+      3: 'MEDIA_ERR_DECODE',
+      4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
+    };
+
+    return codeLabelMap[mediaError.code] || `MEDIA_ERR_${mediaError.code || 'UNKNOWN'}`;
+  }, []);
 
   const getAudioRef = useCallback((trackKey) => (
     trackKey === 'background' ? backgroundAudioRef : voiceAudioRef
   ), []);
+
+  const playAudioWithAbortRetry = useCallback(async (audio) => {
+    try {
+      await audio.play();
+      return { status: 'fulfilled' };
+    } catch (error) {
+      if (
+        error?.name === 'AbortError' &&
+        isPlayingRef.current &&
+        audio.src
+      ) {
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        try {
+          await audio.play();
+          return { status: 'fulfilled' };
+        } catch (retryError) {
+          return { status: 'rejected', reason: retryError };
+        }
+      }
+
+      return { status: 'rejected', reason: error };
+    }
+  }, []);
+
+  const resolveSegmentPlaybackPosition = useCallback((segment, elapsedWithinSegment = 0) => {
+    const playlist = Array.isArray(segment?.playlist) ? segment.playlist.filter((item) => item?.audioUrl) : [];
+    if (playlist.length === 0) {
+      return { itemIndex: 0, seekSeconds: 0 };
+    }
+
+    const normalizedElapsed = Math.max(0, Number(elapsedWithinSegment) || 0);
+    const itemDurations = playlist.map((item) => Math.max(0, Number(item.duration) || 0));
+
+    if (segment?.playbackMode === 'sequence') {
+      if (itemDurations.some((duration) => duration <= 0)) {
+        return { itemIndex: 0, seekSeconds: 0 };
+      }
+
+      let remainingElapsed = normalizedElapsed;
+      for (let index = 0; index < itemDurations.length; index += 1) {
+        const currentDuration = itemDurations[index];
+        if (remainingElapsed < currentDuration) {
+          return { itemIndex: index, seekSeconds: remainingElapsed };
+        }
+        remainingElapsed -= currentDuration;
+      }
+
+      const lastDuration = itemDurations[itemDurations.length - 1];
+      return {
+        itemIndex: itemDurations.length - 1,
+        seekSeconds: Math.max(0, lastDuration - 0.05)
+      };
+    }
+
+    const playlistDuration = itemDurations.reduce((sum, duration) => sum + duration, 0);
+    if (playlistDuration <= 0) {
+      return { itemIndex: 0, seekSeconds: 0 };
+    }
+
+    let remainingElapsed = normalizedElapsed % playlistDuration;
+    for (let index = 0; index < itemDurations.length; index += 1) {
+      const currentDuration = itemDurations[index];
+      if (remainingElapsed < currentDuration) {
+        return { itemIndex: index, seekSeconds: remainingElapsed };
+      }
+      remainingElapsed -= currentDuration;
+    }
+
+    return { itemIndex: 0, seekSeconds: 0 };
+  }, []);
 
   const stopTicker = useCallback(() => {
     if (timerRef.current) {
@@ -259,13 +432,33 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
 
   const clearTrackRuntime = useCallback((trackKey) => {
     const audio = getAudioRef(trackKey).current;
-    runtimeRef.current[trackKey] = { segmentId: '', itemIndex: 0 };
+    runtimeRef.current[trackKey] = { segmentId: '', itemIndex: 0, completed: false };
     audio.pause();
+    audio.currentTime = 0;
     audio.onended = null;
     audio.onerror = null;
     audio.onwaiting = null;
     audio.onplaying = null;
     audio.oncanplay = null;
+    audio.onloadedmetadata = null;
+    audio.src = '';
+  }, [getAudioRef]);
+
+  const completeTrackSegment = useCallback((trackKey, segmentId) => {
+    const audio = getAudioRef(trackKey).current;
+    runtimeRef.current[trackKey] = {
+      segmentId,
+      itemIndex: 0,
+      completed: true
+    };
+    audio.pause();
+    audio.currentTime = 0;
+    audio.onended = null;
+    audio.onerror = null;
+    audio.onwaiting = null;
+    audio.onplaying = null;
+    audio.oncanplay = null;
+    audio.onloadedmetadata = null;
     audio.src = '';
   }, [getAudioRef]);
 
@@ -280,7 +473,7 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
     clearTrackRuntime('voice');
   }, [clearTrackRuntime, plan.sessionDuration, stopTicker]);
 
-  const playTrackPlaylistItem = useCallback((trackKey, segment, itemIndex = 0) => {
+  const playTrackPlaylistItem = useCallback((trackKey, segment, itemIndex = 0, seekSeconds = 0, autoPlay = isPlayingRef.current) => {
     const audio = getAudioRef(trackKey).current;
     const playlist = Array.isArray(segment?.playlist) ? segment.playlist.filter((item) => item?.audioUrl) : [];
 
@@ -294,13 +487,23 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
 
     runtimeRef.current[trackKey] = {
       segmentId: segment.id,
-      itemIndex: normalizedIndex
+      itemIndex: normalizedIndex,
+      itemTitle: item.title || '未命名素材',
+      completed: false
     };
 
     audio.pause();
+    audio.currentTime = 0;
     audio.src = item.audioUrl;
+    audio.volume = MEDITATION_TRACK_VOLUMES[trackKey] ?? 1;
     audio.onwaiting = () => setIsBuffering(true);
     audio.oncanplay = () => setIsBuffering(false);
+    audio.onloadedmetadata = () => {
+      if (seekSeconds > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
+        audio.currentTime = Math.min(seekSeconds, Math.max(audio.duration - 0.05, 0));
+      }
+      setPreviewMessage(`已加载 ${TYPE_LABELS[segment.type]} · ${item.title || '音频片段'}`);
+    };
     audio.onplaying = () => setIsBuffering(false);
     audio.onended = () => {
       if (runtimeRef.current[trackKey].segmentId !== segment.id) {
@@ -309,47 +512,65 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
 
       const elapsed = getElapsedSeconds();
       if (elapsed >= segment.endSeconds) {
-        clearTrackRuntime(trackKey);
+        completeTrackSegment(trackKey, segment.id);
         return;
       }
 
       if (segment.playbackMode === 'sequence') {
         if (normalizedIndex + 1 >= playlist.length) {
-          clearTrackRuntime(trackKey);
+          completeTrackSegment(trackKey, segment.id);
           return;
         }
 
-        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1, 0);
         return;
       }
 
-      playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+      playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1, 0);
     };
     audio.onerror = () => {
+      const mediaErrorLabel = describeMediaError(audio);
+      setPreviewMessage(
+        `${TYPE_LABELS[segment.type]}「${item.title || '未命名素材'}」读取失败${mediaErrorLabel ? `：${mediaErrorLabel}` : ''}`
+      );
       if (segment.playbackMode === 'sequence' && normalizedIndex + 1 < playlist.length) {
-        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1, 0);
         return;
       }
 
       if (segment.playbackMode === 'loop' && playlist.length > 1) {
-        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1, 0);
         return;
       }
 
-      clearTrackRuntime(trackKey);
+      completeTrackSegment(trackKey, segment.id);
     };
     audio.load();
 
-    if (isPlayingRef.current) {
+    if (autoPlay) {
       setIsBuffering(true);
-      audio.play().catch(() => {
+      void playAudioWithAbortRetry(audio).then((result) => {
+        if (result.status !== 'rejected') {
+          return;
+        }
+        const error = result.reason;
         clearTrackRuntime(trackKey);
+        const mediaErrorLabel = describeMediaError(audio);
+        const reason = [
+          error?.name || '',
+          error?.message || '',
+          mediaErrorLabel
+        ].filter(Boolean).join(' / ');
+        setPreviewMessage(
+          `${TYPE_LABELS[segment.type]}「${item.title || '未命名素材'}」无法开始播放${reason ? `：${reason}` : ''}`
+        );
         pausePreviewPlayback();
       });
     }
-  }, [clearTrackRuntime, getAudioRef, getElapsedSeconds, pausePreviewPlayback]);
+  }, [clearTrackRuntime, completeTrackSegment, describeMediaError, getAudioRef, getElapsedSeconds, pausePreviewPlayback, playAudioWithAbortRetry]);
 
-  const syncTrackPlayback = useCallback((elapsed) => {
+  const syncTrackPlayback = useCallback((elapsed, options = {}) => {
+    const autoPlay = options.autoPlay ?? isPlayingRef.current;
     PREVIEW_TRACK_KEYS.forEach((trackKey) => {
       const activeSegment = plan.segments.find((segment) => (
         segment.trackKey === trackKey &&
@@ -365,11 +586,56 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
         return;
       }
 
-      if (currentRuntime.segmentId !== activeSegment.id) {
-        playTrackPlaylistItem(trackKey, activeSegment, 0);
+      const playbackPosition = resolveSegmentPlaybackPosition(
+        activeSegment,
+        Math.max(0, elapsed - activeSegment.startSeconds)
+      );
+
+      if (currentRuntime.segmentId === activeSegment.id && currentRuntime.completed) {
+        return;
+      }
+
+      if (
+        currentRuntime.segmentId !== activeSegment.id ||
+        currentRuntime.itemIndex !== playbackPosition.itemIndex
+      ) {
+        playTrackPlaylistItem(trackKey, activeSegment, playbackPosition.itemIndex, playbackPosition.seekSeconds, autoPlay);
       }
     });
-  }, [clearTrackRuntime, plan.segments, playTrackPlaylistItem]);
+  }, [clearTrackRuntime, plan.segments, playTrackPlaylistItem, resolveSegmentPlaybackPosition]);
+
+  const playPreparedAudiosSequentially = useCallback(async () => {
+    const playableAudios = [backgroundAudioRef.current, voiceAudioRef.current].filter((audio) => audio.src);
+    if (playableAudios.length === 0) {
+      return [{ status: 'rejected', reason: new Error('NO_PREPARED_AUDIO') }];
+    }
+
+    const playbackResults = [];
+    for (const audio of playableAudios) {
+      playbackResults.push(await playAudioWithAbortRetry(audio));
+    }
+    return playbackResults;
+  }, [playAudioWithAbortRetry]);
+
+  const hasPendingTrackPlayback = useCallback((trackKey, elapsed) => {
+    const trackSegments = plan.segments.filter((segment) => segment.trackKey === trackKey);
+    const futureSegmentExists = trackSegments.some((segment) => elapsed < segment.startSeconds);
+    if (futureSegmentExists) {
+      return true;
+    }
+
+    const activeSegment = trackSegments.find((segment) => (
+      elapsed >= segment.startSeconds &&
+      elapsed < segment.endSeconds
+    )) || null;
+
+    if (!activeSegment) {
+      return false;
+    }
+
+    const trackRuntime = runtimeRef.current[trackKey];
+    return !(trackRuntime.segmentId === activeSegment.id && trackRuntime.completed);
+  }, [plan.segments]);
 
   const startTicker = useCallback(() => {
     if (timerRef.current) {
@@ -381,30 +647,49 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
       setElapsedSeconds(Math.min(elapsed, plan.sessionDuration));
       syncTrackPlayback(elapsed);
 
+      const stillHasPlayableContent = PREVIEW_TRACK_KEYS.some((trackKey) => hasPendingTrackPlayback(trackKey, elapsed));
+      if (!stillHasPlayableContent) {
+        completePreviewPlayback();
+        return;
+      }
+
       if (elapsed >= plan.sessionDuration) {
         completePreviewPlayback();
       }
     }, 250);
-  }, [completePreviewPlayback, getElapsedSeconds, plan.sessionDuration, syncTrackPlayback]);
+  }, [completePreviewPlayback, getElapsedSeconds, hasPendingTrackPlayback, plan.sessionDuration, syncTrackPlayback]);
 
   const startPreviewPlayback = useCallback(async () => {
     const resumeElapsedSeconds = elapsedBeforePauseRef.current;
-    sessionStartMsRef.current = performance.now() - resumeElapsedSeconds * 1000;
-    syncTrackPlayback(resumeElapsedSeconds);
-    isPlayingRef.current = true;
-    setIsPlaying(true);
-    setIsBuffering(true);
+    startMsRef.current = performance.now() - resumeElapsedSeconds * 1000;
+    syncTrackPlayback(resumeElapsedSeconds, { autoPlay: false });
 
     const playableAudios = [backgroundAudioRef.current, voiceAudioRef.current].filter((audio) => audio.src);
-    const playbackResults = await Promise.allSettled(playableAudios.map((audio) => audio.play()));
-    if (playbackResults.some((result) => result.status === 'rejected')) {
+    if (playableAudios.length === 0) {
+      setPreviewMessage('当前预览计划没有可播放的音频素材');
       pausePreviewPlayback();
       return;
     }
 
+    isPlayingRef.current = true;
+    setIsPlaying(true);
+    setIsBuffering(true);
+    const playbackResults = await playPreparedAudiosSequentially();
+    if (playbackResults.some((result) => result.status === 'rejected')) {
+      const firstRejected = playbackResults.find((result) => result.status === 'rejected');
+      const rejectionReason = [
+        firstRejected?.reason?.name || '',
+        firstRejected?.reason?.message || ''
+      ].filter(Boolean).join(' / ');
+      setPreviewMessage(`播放启动失败，音频资源未能成功进入可播状态${rejectionReason ? `：${rejectionReason}` : ''}`);
+      pausePreviewPlayback();
+      return;
+    }
+
+    setPreviewMessage('试听已开始');
     setIsBuffering(false);
     startTicker();
-  }, [pausePreviewPlayback, startTicker, syncTrackPlayback]);
+  }, [pausePreviewPlayback, playPreparedAudiosSequentially, startTicker, syncTrackPlayback]);
 
   const handleTogglePreviewPlayback = async () => {
     if (isPlayingRef.current) {
@@ -415,10 +700,73 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
     await startPreviewPlayback();
   };
 
+  const handleSeek = async (nextValue) => {
+    const wasPlaying = isPlayingRef.current;
+    const nextElapsedSeconds = Math.max(0, Math.min(plan.sessionDuration, Number(nextValue) || 0));
+    stopTicker();
+    isPlayingRef.current = false;
+    backgroundAudioRef.current.pause();
+    voiceAudioRef.current.pause();
+    elapsedBeforePauseRef.current = nextElapsedSeconds;
+    startMsRef.current = null;
+    setElapsedSeconds(nextElapsedSeconds);
+    clearTrackRuntime('background');
+    clearTrackRuntime('voice');
+    syncTrackPlayback(nextElapsedSeconds, { autoPlay: false });
+    setPreviewMessage(`已定位到 ${formatSeconds(Math.ceil(nextElapsedSeconds))}`);
+
+    if (wasPlaying) {
+      startMsRef.current = performance.now() - nextElapsedSeconds * 1000;
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+      setIsBuffering(true);
+      const playbackResults = await playPreparedAudiosSequentially();
+      if (playbackResults.some((result) => result.status === 'rejected')) {
+        const firstRejected = playbackResults.find((result) => result.status === 'rejected');
+        const rejectionReason = [
+          firstRejected?.reason?.name || '',
+          firstRejected?.reason?.message || ''
+        ].filter(Boolean).join(' / ');
+        setPreviewMessage(`定位后恢复播放失败${rejectionReason ? `：${rejectionReason}` : ''}`);
+        pausePreviewPlayback();
+        return;
+      }
+      startTicker();
+      setPreviewMessage(`已跳转到 ${formatSeconds(Math.ceil(nextElapsedSeconds))} 并继续播放`);
+    }
+  };
+
+  const handleScrubStart = () => {
+    resumeAfterScrubRef.current = isPlayingRef.current;
+    setIsScrubbing(true);
+    if (isPlayingRef.current) {
+      pausePreviewPlayback();
+    }
+  };
+
+  const handleScrubEnd = async (nextValue) => {
+    setIsScrubbing(false);
+    const shouldResume = resumeAfterScrubRef.current;
+    resumeAfterScrubRef.current = false;
+    await handleSeek(nextValue);
+    if (shouldResume) {
+      await startPreviewPlayback();
+    }
+  };
+
   useEffect(() => () => {
     stopTicker();
     clearTrackRuntime('background');
     clearTrackRuntime('voice');
+    plan.segments.forEach((segment) => {
+      (segment.playlist || []).forEach((item) => {
+        if (item.revokeAfterPreview && item.audioUrl?.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(item.audioUrl);
+          } catch {}
+        }
+      });
+    });
   }, [clearTrackRuntime, stopTicker]);
 
   const remainingSeconds = Math.max(0, Math.ceil(plan.sessionDuration - elapsedSeconds));
@@ -436,9 +784,10 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
 
         <div style={{ border: '1px solid #e2e8f0', borderRadius: '14px', padding: '16px', backgroundColor: '#f8fafc', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <div style={{ fontSize: '12px', color: '#64748b' }}>{formatSeconds(Math.ceil(elapsedSeconds))}</div>
             <div style={{ fontSize: '28px', fontWeight: '300', color: '#0f172a' }}>{formatSeconds(remainingSeconds)}</div>
             <div style={{ fontSize: '12px', color: '#64748b' }}>
-              总时长 {formatSeconds(plan.sessionDuration)}
+              {formatSeconds(plan.sessionDuration)}
             </div>
           </div>
           <div style={{ height: '8px', backgroundColor: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', marginBottom: '12px' }}>
@@ -450,8 +799,25 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
               }}
             />
           </div>
+          <input
+            type="range"
+            min="0"
+            max={Math.max(1, Math.ceil(plan.sessionDuration))}
+            step="1"
+            value={Math.max(0, Math.min(Math.ceil(elapsedSeconds), Math.ceil(plan.sessionDuration)))}
+            onMouseDown={handleScrubStart}
+            onTouchStart={handleScrubStart}
+            onChange={(event) => { void handleSeek(event.target.value); }}
+            onMouseUp={(event) => { void handleScrubEnd(event.currentTarget.value); }}
+            onTouchEnd={(event) => { void handleScrubEnd(event.currentTarget.value); }}
+            style={{ width: '100%', marginBottom: '12px' }}
+          />
           <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.6 }}>
-            {isBuffering && isPlaying ? '缓冲中...' : '按当前冥想库、音频库和时间轴配置生成 Final Track 预览。'}
+            {isBuffering && isPlaying
+              ? '缓冲中...'
+              : isScrubbing
+                ? '拖动中，松手后将从新位置继续播放。'
+                : previewMessage || '按当前冥想库、音频库和时间轴配置生成 Final Track 预览。'}
           </div>
         </div>
 
@@ -479,6 +845,9 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
               </div>
               <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
                 {formatSeconds(segment.startSeconds)} - {formatSeconds(segment.endSeconds)} · {segment.playbackMode === 'loop' ? '循环铺满' : '顺序拼接'}
+              </div>
+              <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                本段素材数：{Array.isArray(segment.playlist) ? segment.playlist.length : 0}
               </div>
             </div>
           ))}
@@ -1229,6 +1598,10 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, compositionSett
         audioLibrary,
         compositionSettings
       });
+
+      if (plan?.previewBlockedReason) {
+        throw new Error(plan.previewBlockedReason);
+      }
 
       if (!plan) {
         throw new Error('当前冥想缺少可试听的时间轴或音频配置');

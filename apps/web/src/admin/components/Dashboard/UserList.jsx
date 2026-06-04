@@ -127,9 +127,20 @@ const getRoleLabels = (user) => {
 const getInlineTags = (user) => {
   const roleLabels = getRoleLabels(user);
   const nextTags = [];
+  const seenKeys = new Set();
+
+  const pushTag = (tag) => {
+    const nextKey = String(tag?.key || '').trim();
+    if (!nextKey || seenKeys.has(nextKey)) {
+      return;
+    }
+
+    seenKeys.add(nextKey);
+    nextTags.push(tag);
+  };
 
   if (user.isStudent) {
-    nextTags.push({
+    pushTag({
       key: '学员',
       label: '学员',
       backgroundColor: '#ccfbf1',
@@ -138,7 +149,7 @@ const getInlineTags = (user) => {
   }
 
   roleLabels.forEach((roleLabel) => {
-    nextTags.push({
+    pushTag({
       key: roleLabel,
       label: roleLabel,
       backgroundColor:
@@ -158,7 +169,7 @@ const getInlineTags = (user) => {
       return;
     }
 
-    nextTags.push({
+    pushTag({
       key: `${tag.id || tagName}`,
       label: tagName,
       backgroundColor: `${tag.color || '#666'}20`,
@@ -167,6 +178,41 @@ const getInlineTags = (user) => {
   });
 
   return nextTags;
+};
+
+const UserAvatar = ({ user }) => {
+  const [hasImageError, setHasImageError] = useState(false);
+  const shouldShowImage = Boolean(user.avatar) && !hasImageError;
+
+  if (shouldShowImage) {
+    return (
+      <img
+        src={user.avatar}
+        alt={user.name}
+        onError={() => setHasImageError(true)}
+        style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: '32px',
+        height: '32px',
+        borderRadius: '50%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#e2e8f0',
+        color: '#334155',
+        fontSize: '12px',
+        fontWeight: 700
+      }}
+    >
+      {(user.name || '用').slice(0, 1)}
+    </div>
+  );
 };
 
 const UserList = ({ users, roleView = 'all', onEditUser, onManageTags }) => {
@@ -295,34 +341,11 @@ const UserList = ({ users, roleView = 'all', onEditUser, onManageTags }) => {
               <tr key={user.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
                 <td style={{ padding: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {user.avatar ? (
-                      <img
-                        src={user.avatar}
-                        alt={user.name}
-                        style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '50%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: '#e2e8f0',
-                          color: '#334155',
-                          fontSize: '12px',
-                          fontWeight: 700
-                        }}
-                      >
-                        {(user.name || '用').slice(0, 1)}
-                      </div>
-                    )}
+                    <UserAvatar user={user} />
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <div style={{ fontSize: '14px', fontWeight: 500 }}>{user.name || '未命名用户'}</div>
-                        {getInlineTags(user).map((tag) => (
+                        {getInlineTags(user).map((tag, index) => (
                           <span
                             key={`${user.id}-${tag.key}`}
                             style={{

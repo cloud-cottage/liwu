@@ -6,6 +6,8 @@ import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import DatabaseService, { DEFAULT_MEDITATION_SETTINGS } from '../../services/database.js';
 import {
   DEFAULT_MEDITATION_SESSION_SECONDS,
+  getMeditationAudioMimeType,
+  MEDITATION_TRACK_VOLUMES,
   MEDITATION_TRACK_KEYS,
   buildFallbackMeditationSessionPlan,
   buildMeditationSessionPlan
@@ -75,6 +77,8 @@ const MeditationPlayer = () => {
   const elapsedBeforePauseRef = useRef(0);
   const sessionPersistedRef = useRef(false);
   const listenedSecondsRef = useRef(0);
+  const blobUrlCacheRef = useRef(new Map());
+  const trackLoadTokenRef = useRef({ background: 0, voice: 0 });
   const isPlayingRef = useRef(false);
   const sessionPlanRef = useRef(null);
   const completionHandledRef = useRef(false);
@@ -87,6 +91,26 @@ const MeditationPlayer = () => {
   const getAudioRef = useCallback((trackKey) => (
     trackKey === 'background' ? backgroundAudioRef : voiceAudioRef
   ), []);
+
+  const resolvePlayableAudioSrc = useCallback(async (audioUrl) => {
+    const cache = blobUrlCacheRef.current;
+    if (cache.has(audioUrl)) {
+      return cache.get(audioUrl) || '';
+    }
+
+    const response = await fetch(audioUrl, { method: 'GET' });
+    if (!response.ok && response.status !== 206) {
+      throw new Error(`AUDIO_FETCH_${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const blob = new Blob([arrayBuffer], {
+      type: getMeditationAudioMimeType(audioUrl)
+    });
+    const blobUrl = URL.createObjectURL(blob);
+    cache.set(audioUrl, blobUrl);
+    return blobUrl;
+  }, []);
 
   const getElapsedSeconds = useCallback(() => {
     if (isPlayingRef.current && sessionStartMsRef.current != null) {
@@ -115,12 +139,14 @@ const MeditationPlayer = () => {
 
   const clearTrackRuntime = useCallback((trackKey) => {
     const audio = getAudioRef(trackKey).current;
+    trackLoadTokenRef.current[trackKey] += 1;
     trackRuntimeRef.current[trackKey] = {
       segmentId: '',
       itemIndex: 0,
       completed: false
     };
     audio.pause();
+    audio.currentTime = 0;
     audio.onended = null;
     audio.onerror = null;
     audio.onwaiting = null;
@@ -137,6 +163,7 @@ const MeditationPlayer = () => {
       completed: true
     };
     audio.pause();
+    audio.currentTime = 0;
     audio.onended = null;
     audio.onerror = null;
     audio.onwaiting = null;
@@ -180,6 +207,8 @@ const MeditationPlayer = () => {
 
     const normalizedIndex = Math.max(0, itemIndex % playlist.length);
     const item = playlist[normalizedIndex];
+    const loadToken = trackLoadTokenRef.current[trackKey] + 1;
+    trackLoadTokenRef.current[trackKey] = loadToken;
 
     trackRuntimeRef.current[trackKey] = {
       segmentId: segment.id,
@@ -187,59 +216,78 @@ const MeditationPlayer = () => {
       completed: false
     };
 
-    audio.pause();
-    audio.src = item.audioUrl;
-    audio.onwaiting = () => setIsBuffering(true);
-    audio.oncanplay = () => setIsBuffering(false);
-    audio.onplaying = () => setIsBuffering(false);
-    audio.onended = () => {
-      if (trackRuntimeRef.current[trackKey].segmentId !== segment.id) {
+    void (async () => {
+      let playableSrc = '';
+      try {
+        playableSrc = await resolvePlayableAudioSrc(item.audioUrl);
+      } catch (error) {
+        console.error(`Audio source fetch failed for ${trackKey}:`, error);
+        completeTrackSegment(trackKey, segment.id);
+        setSessionError(error?.message || '音频资源加载失败，请稍后重试');
+        pausePlayback();
         return;
       }
 
-      const elapsedSeconds = getElapsedSeconds();
-      if (elapsedSeconds >= segment.endSeconds) {
-        clearTrackRuntime(trackKey);
+      if (trackLoadTokenRef.current[trackKey] !== loadToken) {
         return;
       }
 
-      if (segment.playbackMode === 'sequence') {
-        if (normalizedIndex + 1 >= playlist.length) {
-          completeTrackSegment(trackKey, segment.id);
+      audio.pause();
+      audio.currentTime = 0;
+      audio.src = playableSrc;
+      audio.volume = MEDITATION_TRACK_VOLUMES[trackKey] ?? 1;
+      audio.onwaiting = () => setIsBuffering(true);
+      audio.oncanplay = () => setIsBuffering(false);
+      audio.onplaying = () => setIsBuffering(false);
+      audio.onended = () => {
+        if (trackRuntimeRef.current[trackKey].segmentId !== segment.id) {
+          return;
+        }
+
+        const elapsedSeconds = getElapsedSeconds();
+        if (elapsedSeconds >= segment.endSeconds) {
+          clearTrackRuntime(trackKey);
+          return;
+        }
+
+        if (segment.playbackMode === 'sequence') {
+          if (normalizedIndex + 1 >= playlist.length) {
+            completeTrackSegment(trackKey, segment.id);
+            return;
+          }
+
+          playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
           return;
         }
 
         playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
-        return;
-      }
+      };
+      audio.onerror = () => {
+        if (segment.playbackMode === 'sequence' && normalizedIndex + 1 < playlist.length) {
+          playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+          return;
+        }
 
-      playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
-    };
-    audio.onerror = () => {
-      if (segment.playbackMode === 'sequence' && normalizedIndex + 1 < playlist.length) {
-        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
-        return;
-      }
+        if (segment.playbackMode === 'loop' && playlist.length > 1) {
+          playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
+          return;
+        }
 
-      if (segment.playbackMode === 'loop' && playlist.length > 1) {
-        playTrackPlaylistItem(trackKey, segment, normalizedIndex + 1);
-        return;
-      }
-
-      completeTrackSegment(trackKey, segment.id);
-    };
-    audio.load();
-
-    if (isPlayingRef.current) {
-      setIsBuffering(true);
-      audio.play().catch((error) => {
-        console.error(`Audio playback failed for ${trackKey}:`, error);
         completeTrackSegment(trackKey, segment.id);
-        setSessionError(error?.message || '音频播放失败，请稍后重试');
-        pausePlayback();
-      });
-    }
-  }, [clearTrackRuntime, completeTrackSegment, getAudioRef, getElapsedSeconds, pausePlayback]);
+      };
+      audio.load();
+
+      if (isPlayingRef.current) {
+        setIsBuffering(true);
+        audio.play().catch((error) => {
+          console.error(`Audio playback failed for ${trackKey}:`, error);
+          completeTrackSegment(trackKey, segment.id);
+          setSessionError(error?.message || '音频播放失败，请稍后重试');
+          pausePlayback();
+        });
+      }
+    })();
+  }, [clearTrackRuntime, completeTrackSegment, getAudioRef, getElapsedSeconds, pausePlayback, resolvePlayableAudioSrc]);
 
   const syncTrackPlayback = useCallback((elapsedSeconds) => {
     const plan = sessionPlanRef.current;
@@ -316,6 +364,31 @@ const MeditationPlayer = () => {
       setTimeLeft(Math.max(0, Math.ceil(sessionDuration - elapsedSeconds)));
       syncTrackPlayback(elapsedSeconds);
 
+      const stillHasPlayableContent = MEDITATION_TRACK_KEYS.some((trackKey) => {
+        const trackSegments = (sessionPlanRef.current?.segments || []).filter((segment) => segment.trackKey === trackKey);
+        const futureSegmentExists = trackSegments.some((segment) => elapsedSeconds < segment.startSeconds);
+        if (futureSegmentExists) {
+          return true;
+        }
+
+        const activeSegment = trackSegments.find((segment) => (
+          elapsedSeconds >= segment.startSeconds &&
+          elapsedSeconds < segment.endSeconds
+        )) || null;
+
+        if (!activeSegment) {
+          return false;
+        }
+
+        const trackRuntime = trackRuntimeRef.current[trackKey];
+        return !(trackRuntime.segmentId === activeSegment.id && trackRuntime.completed);
+      });
+
+      if (!stillHasPlayableContent) {
+        void completePlayback();
+        return;
+      }
+
       if (elapsedSeconds >= sessionDuration) {
         void completePlayback();
       }
@@ -385,6 +458,12 @@ const MeditationPlayer = () => {
       stopTicker();
       clearTrackRuntime('background');
       clearTrackRuntime('voice');
+      blobUrlCacheRef.current.forEach((blobUrl) => {
+        try {
+          URL.revokeObjectURL(blobUrl);
+        } catch {}
+      });
+      blobUrlCacheRef.current.clear();
     };
   }, [clearTrackRuntime, stopTicker]);
 

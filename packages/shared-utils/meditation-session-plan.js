@@ -1,7 +1,34 @@
 export const MEDITATION_TRACK_KEYS = ['background', 'voice'];
 export const MEDITATION_BACKGROUND_TYPES = new Set(['bowl', 'nature']);
 export const DEFAULT_MEDITATION_SESSION_SECONDS = 15 * 60;
+export const DEFAULT_MEDITATION_SESSION_OVERRUN_SECONDS = 2 * 60;
 export const SHANGHAI_TIMEZONE = 'Asia/Shanghai';
+export const MEDITATION_TRACK_VOLUMES = Object.freeze({
+  background: 0.33,
+  voice: 1
+});
+
+export const getMeditationAudioMimeType = (audioUrl = '') => {
+  const normalizedUrl = String(audioUrl || '').toLowerCase();
+
+  if (normalizedUrl.includes('.mp3')) {
+    return 'audio/mpeg';
+  }
+  if (normalizedUrl.includes('.m4a') || normalizedUrl.includes('.aac')) {
+    return 'audio/mp4';
+  }
+  if (normalizedUrl.includes('.wav')) {
+    return 'audio/wav';
+  }
+  if (normalizedUrl.includes('.ogg')) {
+    return 'audio/ogg';
+  }
+  if (normalizedUrl.includes('.opus')) {
+    return 'audio/ogg; codecs="opus"';
+  }
+
+  return 'audio/mpeg';
+};
 
 export const getShanghaiDateKey = (value = new Date()) => new Intl.DateTimeFormat('en-CA', {
   timeZone: SHANGHAI_TIMEZONE,
@@ -97,7 +124,8 @@ export const buildMeditationSessionPlan = ({
   now = new Date(),
   randomFn = Math.random,
   fallbackAudioLibrary = [],
-  defaultSessionSeconds = DEFAULT_MEDITATION_SESSION_SECONDS
+  defaultSessionSeconds = DEFAULT_MEDITATION_SESSION_SECONDS,
+  maxOverrunSeconds = DEFAULT_MEDITATION_SESSION_OVERRUN_SECONDS
 } = {}) => {
   const audioGroups = sortMeditationAudioGroups(audioLibrary?.groups || []);
   const audioItems = (audioLibrary?.items || []).filter((item) => item?.audioUrl);
@@ -220,14 +248,19 @@ export const buildMeditationSessionPlan = ({
     const trackSegments = segments
       .filter((segment) => segment.trackKey === trackKey)
       .sort((left, right) => left.configuredStartSeconds - right.configuredStartSeconds);
+    const trackSoftLimitSeconds = Math.max(
+      defaultSessionSeconds,
+      Number(defaultSessionSeconds || 0) + Math.max(0, Number(maxOverrunSeconds) || 0)
+    );
 
     return trackSegments.map((segment, index) => {
       const startSeconds = Math.max(0, Number(segment.configuredStartSeconds) || 0);
       const nextSegment = trackSegments[index + 1] || null;
       const nextStartSeconds = nextSegment ? Math.max(startSeconds, Number(nextSegment.configuredStartSeconds) || 0) : null;
       const realDurationSeconds = Math.max(1, Number(segment.actualDurationSeconds) || 0);
+      const remainingSoftWindowSeconds = Math.max(0, trackSoftLimitSeconds - startSeconds);
       const durationSeconds = nextStartSeconds == null
-        ? realDurationSeconds
+        ? Math.min(realDurationSeconds, remainingSoftWindowSeconds)
         : Math.max(1, Math.min(realDurationSeconds, nextStartSeconds - startSeconds));
       const endSeconds = startSeconds + durationSeconds;
 
@@ -237,8 +270,16 @@ export const buildMeditationSessionPlan = ({
         durationSeconds,
         endSeconds
       };
-    });
+    }).filter((segment) => segment.durationSeconds > 0);
   }).sort((left, right) => left.startSeconds - right.startSeconds);
+
+  if (correctedSegments.length === 0) {
+    return buildFallbackMeditationSessionPlan({
+      fallbackAudioLibrary,
+      now,
+      defaultSessionSeconds
+    });
+  }
 
   return {
     segments: correctedSegments,

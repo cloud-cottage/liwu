@@ -22,7 +22,8 @@ const RESPONSE_HEADER_BLOCKLIST = new Set([
   'content-length',
   'content-encoding',
   'transfer-encoding',
-  'connection'
+  'connection',
+  'content-disposition'
 ]);
 
 const buildRequestId = () => `cbp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -60,6 +61,32 @@ const isAllowedTarget = (target) => {
   } catch {
     return false;
   }
+};
+
+const inferMediaContentType = (target = '') => {
+  const normalizedTarget = String(target || '').toLowerCase();
+  if (normalizedTarget.includes('.opus')) {
+    return 'audio/ogg; codecs=opus';
+  }
+  if (normalizedTarget.includes('.mp3')) {
+    return 'audio/mpeg';
+  }
+  if (normalizedTarget.includes('.m4a') || normalizedTarget.includes('.aac')) {
+    return 'audio/mp4';
+  }
+  if (normalizedTarget.includes('.wav')) {
+    return 'audio/wav';
+  }
+  if (normalizedTarget.includes('.webp')) {
+    return 'image/webp';
+  }
+  if (normalizedTarget.includes('.png')) {
+    return 'image/png';
+  }
+  if (normalizedTarget.includes('.jpg') || normalizedTarget.includes('.jpeg')) {
+    return 'image/jpeg';
+  }
+  return '';
 };
 
 export default async function handler(req, res) {
@@ -119,6 +146,12 @@ export default async function handler(req, res) {
         res.setHeader(key, value);
       }
     });
+
+    const inferredContentType = inferMediaContentType(rawTarget);
+    if (inferredContentType) {
+      res.setHeader('content-type', inferredContentType);
+      res.setHeader('content-disposition', 'inline');
+    }
 
     const responseBuffer = Buffer.from(await upstreamResponse.arrayBuffer());
     res.send(responseBuffer);
