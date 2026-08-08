@@ -55,8 +55,8 @@ const isAllowedTarget = (target) => {
       targetUrl.hostname.endsWith('.myqcloud.com') ||
       targetUrl.hostname.endsWith('.qcloud.la') ||
       targetUrl.hostname.endsWith('.tcb.qcloud.la') ||
-      targetUrl.hostname.includes('liwu-0gtd91eebd863ccf') ||
-      targetUrl.hostname.includes('-liwu-0gtd91eebd863ccf.')
+      targetUrl.hostname.includes('liwu-d8gek6jjdab1d087c') ||
+      targetUrl.hostname.includes('-liwu-d8gek6jjdab1d087c.')
     );
   } catch {
     return false;

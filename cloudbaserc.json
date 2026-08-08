@@ -1,5 +1,5 @@
 {
-  "envId": "liwu-0gtd91eebd863ccf",
+  "envId": "liwu-d8gek6jjdab1d087c",
   "functionRoot": "cloudfunctions",
   "functions": [
     {
@@ -19,6 +19,12 @@
       "name": "getUserPhone",
       "timeout": 30,
       "memorySize": 128,
+      "runtime": "Nodejs18.15"
+    },
+    {
+      "name": "resolve-user-duplicates",
+      "timeout": 30,
+      "memorySize": 256,
       "runtime": "Nodejs18.15"
     }
   ]

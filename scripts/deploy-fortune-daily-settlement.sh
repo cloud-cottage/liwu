@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_ID="${CLOUDBASE_ENV_ID:-liwu-0gtd91eebd863ccf}"
+ENV_ID="${CLOUDBASE_ENV_ID:-liwu-d8gek6jjdab1d087c}"
 
 cd "$ROOT_DIR"
 

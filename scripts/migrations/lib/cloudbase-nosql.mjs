@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_ENV_ID = process.env.CLOUDBASE_ENV_ID || process.env.TCB_ENV || 'liwu-0gtd91eebd863ccf';
+const DEFAULT_ENV_ID = process.env.CLOUDBASE_ENV_ID || process.env.TCB_ENV || 'liwu-d8gek6jjdab1d087c';
 const DEFAULT_BATCH_SIZE = 200;
 
 export const getEnvId = (argv = process.argv.slice(2)) => {

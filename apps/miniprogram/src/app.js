@@ -1,10 +1,11 @@
 const { initCloudbase } = require('./utils/cloudbase')
+const { DEFAULT_CLOUDBASE_ENV } = require('./utils/shared/database-config')
 const { getLocalProfile } = require('./utils/storage')
 const { applyMiniProgramTheme } = require('./utils/theme')
 
 App({
   globalData: {
-    envId: 'liwu-0gtd91eebd863ccf',
+    envId: DEFAULT_CLOUDBASE_ENV,
     profile: null,
     theme: 'IvoryAndSage',
     themePreset: null

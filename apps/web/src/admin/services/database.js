@@ -300,33 +300,6 @@ const getDocuments = (result, collectionName) => {
 
 const getFirstDocument = (result, collectionName) => getDocuments(result, collectionName)[0] || null;
 
-const unwrapCloudBaseProxyTarget = (value = '') => {
-  try {
-    const targetUrl = new URL(String(value || ''));
-    if (targetUrl.pathname !== '/api/cloudbase-proxy') {
-      return String(value || '');
-    }
-
-    return targetUrl.searchParams.get('target') || String(value || '');
-  } catch {
-    return String(value || '');
-  }
-};
-
-const deriveCloudBaseFileIdFromUrl = (value = '') => {
-  try {
-    const targetUrl = new URL(unwrapCloudBaseProxyTarget(value));
-    const normalizedPath = String(targetUrl.pathname || '').replace(/^\/+/, '');
-    if (!normalizedPath) {
-      return '';
-    }
-
-    return `cloud://${DATABASE_CONFIG.cloudbase.env}/${normalizedPath}`;
-  } catch {
-    return '';
-  }
-};
-
 const buildTempUrlMap = async (fileIds = []) => {
   const normalizedFileIds = [...new Set(fileIds.filter(Boolean))];
   if (normalizedFileIds.length === 0) {
@@ -3596,7 +3569,7 @@ class DatabaseService {
         ...normalizedSettings,
         slides: normalizedSettings.slides.map((slide) => ({
           ...slide,
-          imageUrl: proxyCloudBaseMediaUrl(tempUrlMap.get(slide.fileId) || slide.imageUrl || '')
+          imageUrl: tempUrlMap.get(slide.fileId) || slide.imageUrl || ''
         }))
       };
     } catch (error) {
@@ -3634,17 +3607,13 @@ class DatabaseService {
       }
 
       const normalizedSettings = normalizeUserAvatarOptionsSettings(document);
-      const avatarFileIdMap = new Map(
-        normalizedSettings.avatars.map((avatar) => [avatar.id, avatar.fileId || deriveCloudBaseFileIdFromUrl(avatar.imageUrl)])
-      );
-      const tempUrlMap = await buildTempUrlMap([...avatarFileIdMap.values()]);
+      const tempUrlMap = await buildTempUrlMap(normalizedSettings.avatars.map((avatar) => avatar.fileId));
 
       return {
         ...normalizedSettings,
         avatars: normalizedSettings.avatars.map((avatar) => ({
           ...avatar,
-          fileId: avatarFileIdMap.get(avatar.id) || avatar.fileId || '',
-          imageUrl: proxyCloudBaseMediaUrl(tempUrlMap.get(avatarFileIdMap.get(avatar.id) || '') || avatar.imageUrl || '')
+          imageUrl: tempUrlMap.get(avatar.fileId) || avatar.imageUrl || ''
         }))
       };
     } catch (error) {
@@ -3722,34 +3691,16 @@ class DatabaseService {
 
       const existingDocument = getFirstDocument(existingResult, collections.appSettings);
       const payload = {
-        ...toUserAvatarOptionsPayload({
-          ...settingsData,
-          avatars: normalizeUserAvatarOptionsSettings(settingsData).avatars.map((avatar) => ({
-            ...avatar,
-            fileId: avatar.fileId || deriveCloudBaseFileIdFromUrl(avatar.imageUrl)
-          }))
-        }),
+        ...toUserAvatarOptionsPayload(settingsData),
         updated_at: new Date()
       };
 
       if (existingDocument) {
         await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
-        const normalizedSettings = normalizeUserAvatarOptionsSettings({
+        return normalizeUserAvatarOptionsSettings({
           ...existingDocument,
           ...payload
         });
-        const avatarFileIdMap = new Map(
-          normalizedSettings.avatars.map((avatar) => [avatar.id, avatar.fileId || deriveCloudBaseFileIdFromUrl(avatar.imageUrl)])
-        );
-        const tempUrlMap = await buildTempUrlMap([...avatarFileIdMap.values()]);
-        return {
-          ...normalizedSettings,
-          avatars: normalizedSettings.avatars.map((avatar) => ({
-            ...avatar,
-            fileId: avatarFileIdMap.get(avatar.id) || avatar.fileId || '',
-            imageUrl: proxyCloudBaseMediaUrl(tempUrlMap.get(avatarFileIdMap.get(avatar.id) || '') || avatar.imageUrl || '')
-          }))
-        };
       }
 
       const createResult = await db.collection(collections.appSettings).add({
@@ -3757,22 +3708,10 @@ class DatabaseService {
         created_at: new Date()
       });
 
-      const normalizedSettings = normalizeUserAvatarOptionsSettings({
+      return normalizeUserAvatarOptionsSettings({
         ...payload,
         _id: createResult.id
       });
-      const avatarFileIdMap = new Map(
-        normalizedSettings.avatars.map((avatar) => [avatar.id, avatar.fileId || deriveCloudBaseFileIdFromUrl(avatar.imageUrl)])
-      );
-      const tempUrlMap = await buildTempUrlMap([...avatarFileIdMap.values()]);
-      return {
-        ...normalizedSettings,
-        avatars: normalizedSettings.avatars.map((avatar) => ({
-          ...avatar,
-          fileId: avatarFileIdMap.get(avatar.id) || avatar.fileId || '',
-          imageUrl: proxyCloudBaseMediaUrl(tempUrlMap.get(avatarFileIdMap.get(avatar.id) || '') || avatar.imageUrl || '')
-        }))
-      };
     } catch (error) {
       console.error('Error saving user avatar options settings:', error);
       throw error;
@@ -5236,7 +5175,7 @@ class DatabaseService {
         pointLedgerEntries,
         users: dashboardData.users.map((user) => ({
           ...user,
-          avatar: avatarUrlByIndex.get(user.avatarIndex) || ''
+          avatar: avatarUrlByIndex.get(user.avatarIndex) || user.avatar || ''
         }))
       };
     } catch (error) {

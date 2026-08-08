@@ -1,27 +1,45 @@
 # @liwu/miniprogram
 
-## Open In WeChat DevTools
+微信小程序客户端。
 
-1. If you only need the mini program source, you can open `apps/miniprogram`.
-2. If you need to manage CloudBase functions in DevTools, open the repository root `/Users/kevin/git/liwu` instead. The root [project.config.json](/Users/kevin/git/liwu/project.config.json) points:
-   - `miniprogramRoot` -> `apps/miniprogram/src/`
-   - `cloudfunctionRoot` -> `cloudfunctions/`
-3. Copy `project.private.config.example.json` to `project.private.config.json` for local-only IDE settings.
+## 用微信开发者工具打开
 
-## CloudBase
+1. 仅需小程序源码时，打开 `apps/miniprogram` 目录。
+2. 需同时管理 CloudBase 云函数时，打开**仓库根目录** `/Users/kevin/git/liwu`。根目录 `project.config.json` 配置：
+   - `miniprogramRoot` → `apps/miniprogram/src/`
+   - `cloudfunctionRoot` → `cloudfunctions/`
+3. 复制 `project.private.config.example.json` 为 `project.private.config.json` 存放本地 IDE 配置。
 
-- Current env: `liwu-0gtd91eebd863ccf`
-- The mini program uses `wx.cloud.database()` directly in `src/utils/cloudbase.js`
-- WeChat mini program credentials should be provided via local environment variables:
+## 环境
+
+- CloudBase 环境 ID：`liwu-d8gek6jjdab1d087c`
+- 数据库访问：`src/utils/cloudbase.js`（`wx.cloud.database()`）
+- 微信凭证通过本地环境变量提供：
   - `WECHAT_MINIPROGRAM_APP_ID`
   - `WECHAT_MINIPROGRAM_APP_SECRET`
-- Aware data reads/writes:
-  - `awareness_records`
-  - `app_settings`
 
-## Current Pages
+## 页面结构
 
-- `pages/home`: Home dashboard
-- `pages/aware`: Publish aware tags and view the community tag cloud
-- `pages/profile`: Maintain local profile and inspect aware history
-- `pages/shop`: Reserved workshop page
+底部导航栏四个页面：
+
+| 页面 | 路径 | 说明 |
+|---|---|---|
+| 首页 | `pages/home` | 首页仪表盘 |
+| 工坊 | `pages/shop` | 工坊（预留） |
+| 觉察 | `pages/aware` | 发布觉察标签、查看社群标签云 |
+| 我的 | `pages/profile` | 个人资料与觉察历史 |
+
+另有 `pages/meditation` 冥想页面。
+
+## 数据集合
+
+- `awareness_records` — 觉察记录
+- `app_settings` — 应用设置
+
+## 组件
+
+可复用组件放在 `src/components/` 目录。
+
+## 云函数说明
+
+`apps/miniprogram/cloudfunctions/` 目录仅用于让微信开发者工具识别云开发项目，**实际云函数代码在仓库根目录 `cloudfunctions/`**。
