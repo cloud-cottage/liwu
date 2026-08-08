@@ -18,7 +18,7 @@
         <view class="shop-wallet-value">{{walletBalance}}</view>
       </view>
       <view class="shop-cart-button" bindtap="handleCartTap">
-        <image class="shop-cart-icon" mode="aspectFit" src="/assets/shop/cart.svg" />
+        <image class="shop-cart-icon" mode="aspectFit" src="{{cartIcon}}" />
       </view>
     </view>
   </view>

@@ -3,6 +3,7 @@ import { THEME_PRESETS, getThemePreset } from '@liwu/shared-utils/theme-system.j
 import { uploadImageAsWebp } from '../../utils/imageUpload.js';
 import BadgeSettings from './BadgeSettings.jsx';
 import MeditationSettings from './MeditationSettings.jsx';
+import AiSettings from './AiSettings.jsx';
 
 const ThemeSettings = ({
   settings,
@@ -39,7 +40,10 @@ const ThemeSettings = ({
   ,
   onSavePlatformServiceFee,
   onSaveShopRewardSettings,
-  onSaveShopPartnerPricing
+  onSaveShopPartnerPricing,
+  aiSettings,
+  savingAiSettings,
+  onSaveAiSettings
 }) => {
   const [activeTab, setActiveTab] = useState('home');
   const [draftTheme, setDraftTheme] = useState(settings.theme);
@@ -351,6 +355,7 @@ const ThemeSettings = ({
           { key: 'shop', label: '工坊' },
           { key: 'meditation', label: '冥想' },
           { key: 'awareness', label: '觉察' },
+          { key: 'ai', label: 'AI' },
           { key: 'avatar', label: '我的' },
           { key: 'distribution', label: '版本' }
         ].map((item) => (
@@ -1139,6 +1144,16 @@ const ThemeSettings = ({
             {savingClientDistribution ? '保存中...' : '保存分发设置'}
           </button>
         </div>
+      )}
+
+      {activeTab === 'ai' && (
+        <AiSettings
+          key={aiSettings?.documentId || 'default'}
+          settings={aiSettings || {}}
+          saving={savingAiSettings}
+          error={error}
+          onSave={onSaveAiSettings || (() => {})}
+        />
       )}
     </section>
   );

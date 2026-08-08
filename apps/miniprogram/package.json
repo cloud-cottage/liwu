@@ -4,6 +4,6 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "echo \"Open apps/miniprogram in WeChat DevTools\"",
-    "build": "echo \"Build apps/miniprogram with WeChat DevTools or CI\""
+    "build": "node ../../scripts/build-miniprogram.mjs"
   }
 }

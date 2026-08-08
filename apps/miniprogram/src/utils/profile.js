@@ -2,10 +2,13 @@ const { getLocalProfile, saveLocalProfile } = require('./storage')
 const { listUserTags } = require('./aware')
 const { getCurrentShopProfile } = require('./shop')
 const { getDb } = require('./cloudbase')
-
-const APP_SETTINGS = 'app_settings'
-const BADGE_SETTINGS_KEY = 'badge_system_settings'
-const BADGE_PROFILES = 'badge_profiles'
+const { COLLECTIONS } = require('./shared/database-config')
+const {
+  BADGE_SETTINGS_KEY,
+  BADGE_PROFILE_COLLECTION,
+  normalizeBadgeSettings,
+  flattenBadgeSeries
+} = require('./shared/badge-system')
 
 const formatRelativeTime = (value = '') => {
   const timestamp = new Date(value).getTime()
@@ -53,20 +56,6 @@ const formatStudentExpireAt = (value = '') => {
   return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`
 }
 
-const flattenBadgeSeries = (settings = {}) => {
-  const series = Array.isArray(settings.series) ? settings.series : []
-
-  return series.flatMap((group) => {
-    const levels = Array.isArray(group.levels) ? group.levels : []
-    return levels.map((level) => ({
-      badgeId: level.id || `${group.id}:${level.difficulty || ''}`,
-      displayName: group.seriesName || level.displayName || level.name || '',
-      levelName: level.name || '',
-      summary: group.summary || level.description || ''
-    }))
-  })
-}
-
 const getBadgeSummary = async (userId = '') => {
   if (!userId) {
     return {
@@ -78,8 +67,8 @@ const getBadgeSummary = async (userId = '') => {
   try {
     const db = getDb()
     const [profileResult, settingsResult] = await Promise.all([
-      db.collection(BADGE_PROFILES).where({ user_id: userId }).limit(1).get(),
-      db.collection(APP_SETTINGS).where({ key: BADGE_SETTINGS_KEY }).limit(1).get()
+      db.collection(BADGE_PROFILE_COLLECTION).where({ user_id: userId }).limit(1).get(),
+      db.collection(COLLECTIONS.appSettings).where({ key: BADGE_SETTINGS_KEY }).limit(1).get()
     ])
 
     const badgeProfile = (profileResult.data || [])[0] || {}
@@ -88,7 +77,7 @@ const getBadgeSummary = async (userId = '') => {
     const unlockedBadgeIds = Array.isArray(badgeProfile.unlocked_badge_ids || badgeProfile.unlockedBadgeIds)
       ? [...new Set((badgeProfile.unlocked_badge_ids || badgeProfile.unlockedBadgeIds).filter(Boolean))]
       : []
-    const allBadges = flattenBadgeSeries(badgeSettings)
+    const allBadges = flattenBadgeSeries(normalizeBadgeSettings(badgeSettings))
     const equippedBadge = allBadges.find((badge) => badge.badgeId === equippedBadgeId) || null
 
     return {

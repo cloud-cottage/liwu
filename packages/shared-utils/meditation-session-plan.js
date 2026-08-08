@@ -228,6 +228,7 @@ export const buildMeditationSessionPlan = ({
         playlist: playlist.map((item) => ({
           id: item.id,
           title: item.title || '',
+          fileId: item.fileId || '',
           audioUrl: item.audioUrl,
           duration: Number(item.duration || 0)
         }))

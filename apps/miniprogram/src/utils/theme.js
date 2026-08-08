@@ -1,49 +1,38 @@
-const { getDb } = require('./cloudbase')
+const { getAppSettings } = require('./app-settings-cache')
+const {
+  CLIENT_THEME_SETTINGS_KEY,
+  DEFAULT_CLIENT_THEME_SETTINGS,
+  getThemePreset,
+  normalizeClientThemeSettings
+} = require('./shared/theme-system')
 
-const THEME_SETTINGS_KEY = 'client_theme_settings'
+const toMiniProgramThemePreset = (themeName = DEFAULT_CLIENT_THEME_SETTINGS.theme) => {
+  const preset = getThemePreset(themeName)
+  const miniprogram = preset.miniprogram || {}
+  const pageBackground = miniprogram.pageBackground || '#F3F0EA'
 
-const MINIPROGRAM_THEME_PRESETS = {
-  IvoryAndSage: {
-    name: 'IvoryAndSage',
-    navigationBarBackgroundColor: '#F3F0EA',
+  return {
+    name: preset.name,
+    navigationBarBackgroundColor: pageBackground,
     navigationBarTextStyle: 'black',
-    backgroundColor: '#F3F0EA',
-    pageBackground: '#F3F0EA',
-    textPrimary: '#1F2937'
-  },
-  OrangeGold: {
-    name: 'OrangeGold',
-    navigationBarBackgroundColor: '#F5F5F0',
-    navigationBarTextStyle: 'black',
-    backgroundColor: '#F5F5F0',
-    pageBackground: '#f7f4ef',
-    textPrimary: '#1f2937'
-  },
-  Starbuck2026: {
-    name: 'Starbuck2026',
-    navigationBarBackgroundColor: '#E0F0ED',
-    navigationBarTextStyle: 'black',
-    backgroundColor: '#E0F0ED',
-    pageBackground: '#E0F0ED',
-    textPrimary: '#26334A'
+    backgroundColor: pageBackground,
+    pageBackground,
+    textPrimary: miniprogram.textPrimary || '#353A36'
   }
 }
 
-const getThemePreset = (themeName = 'IvoryAndSage') => (
-  MINIPROGRAM_THEME_PRESETS[themeName] || MINIPROGRAM_THEME_PRESETS.IvoryAndSage
-)
-
 const getThemeSettings = async () => {
   try {
-    const db = getDb()
-    const result = await db.collection('app_settings').where({ key: THEME_SETTINGS_KEY }).limit(1).get()
-    const document = Array.isArray(result && result.data) ? result.data[0] : null
+    const result = await getAppSettings([CLIENT_THEME_SETTINGS_KEY])
+    const document = result[CLIENT_THEME_SETTINGS_KEY] || null
+    const normalized = normalizeClientThemeSettings(document || {})
+
     return {
-      theme: getThemePreset((document && document.theme) || 'IvoryAndSage').name
+      theme: normalized.theme
     }
   } catch (error) {
     return {
-      theme: 'IvoryAndSage',
+      theme: DEFAULT_CLIENT_THEME_SETTINGS.theme,
       error
     }
   }
@@ -51,7 +40,7 @@ const getThemeSettings = async () => {
 
 const applyMiniProgramTheme = async () => {
   const settings = await getThemeSettings()
-  const preset = getThemePreset(settings.theme)
+  const preset = toMiniProgramThemePreset(settings.theme)
 
   try {
     wx.setNavigationBarColor({
@@ -69,8 +58,7 @@ const applyMiniProgramTheme = async () => {
 }
 
 module.exports = {
-  MINIPROGRAM_THEME_PRESETS,
-  getThemePreset,
+  getThemePreset: toMiniProgramThemePreset,
   getThemeSettings,
   applyMiniProgramTheme
 }

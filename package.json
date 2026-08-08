@@ -14,8 +14,13 @@
     "build": "node scripts/build-deploy.mjs",
     "build:app": "npm --workspace @liwu/app run build",
     "build:web": "npm --workspace @liwu/web run build",
-    "build:miniprogram": "npm --workspace @liwu/miniprogram run build",
+    "assets:sync": "node packages/shared-assets/scripts/sync-miniprogram.mjs",
+    "packages:sync": "node scripts/sync-miniprogram-packages.mjs",
+    "miniprogram:sync": "npm run assets:sync && npm run packages:sync",
+    "build:miniprogram": "npm run miniprogram:sync && npm --workspace @liwu/miniprogram run build",
     "build:server": "npm --workspace @liwu/server run build",
+    "audio:transcode-worker": "node scripts/audio-transcode-worker.mjs",
+    "audio:transcode-worker:loop": "node scripts/audio-transcode-worker.mjs --loop",
     "lint": "eslint .",
     "preview": "npm --workspace @liwu/web run preview"
   },
@@ -28,6 +33,7 @@
     "react-router-dom": "^7.13.0"
   },
   "devDependencies": {
+    "@cloudbase/node-sdk": "^3.18.3",
     "@eslint/js": "^9.39.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

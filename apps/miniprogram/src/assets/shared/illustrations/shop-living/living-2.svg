@@ -1,0 +1,12 @@
+<svg width="700" height="700" viewBox="0 0 700 700" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="700" height="700" rx="44" fill="url(#paint0_linear_2_1)"/>
+  <circle cx="140" cy="170" r="88" fill="white" fill-opacity="0.18"/>
+  <circle cx="548" cy="562" r="118" fill="white" fill-opacity="0.14"/>
+  <text x="70" y="564" fill="white" fill-opacity="0.92" font-size="54" font-family="PingFang SC, sans-serif">我的居心地 02</text>
+  <defs>
+    <linearGradient id="paint0_linear_2_1" x1="74" y1="52" x2="618" y2="650" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E1ECD6"/>
+      <stop offset="1" stop-color="#92AB7E"/>
+    </linearGradient>
+  </defs>
+</svg>

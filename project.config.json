@@ -1,40 +1,40 @@
 {
   "miniprogramRoot": "apps/miniprogram/src/",
   "cloudfunctionRoot": "cloudfunctions/",
-  "cloudfunctionTemplateRoot": "apps/miniprogram/cloudfunctionTemplate/",
+  "cloudfunctionTemplateRoot": "cloudfunctions/",
   "cloudbaseRoot": "cloudfunctions/",
-  "projectname": "liwu-monorepo",
+  "projectname": "liwu",
   "appid": "wxd7cdfc220e8b170f",
   "compileType": "miniprogram",
   "setting": {
-    "es6": false,
-    "postcss": false,
-    "compileWorklet": false,
-    "minified": false,
-    "uglifyFileName": false,
-    "uploadWithSourceMap": true,
-    "enhance": false,
-    "packNpmManually": false,
-    "packNpmRelationList": [],
+    "es6": true,
+    "enhance": true,
+    "minified": true,
+    "uglifyFileName": true,
+    "uploadWithSourceMap": false,
     "minifyWXSS": true,
     "minifyWXML": true,
+    "postcss": false,
+    "packNpmManually": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    },
+    "compileWorklet": false,
+    "packNpmRelationList": [],
     "localPlugins": false,
     "disableUseStrict": false,
     "useCompilerPlugins": false,
     "condition": false,
     "swc": false,
-    "disableSWC": true,
-    "babelSetting": {
-      "ignore": [],
-      "disablePlugins": [],
-      "outputPath": ""
-    }
+    "disableSWC": true
   },
+  "libVersion": "3.15.2",
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [],
     "include": []
   },
-  "editorSetting": {},
-  "libVersion": "3.15.2"
+  "editorSetting": {}
 }

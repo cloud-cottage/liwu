@@ -1,481 +1,72 @@
 import { DATABASE_CONFIG } from '../config/database.js';
 import app, { db, ensureAnonymousLogin, proxyCloudBaseMediaUrl } from './cloudbase.js';
+import {
+  normalizeAwarenessTagSettings,
+  toAwarenessTagSettingsPayload
+} from '@liwu/shared-utils/awareness-tag-settings-database.js';
+import {
+  attachTagsToUsers,
+  normalizeCategory,
+  normalizeTag,
+  normalizeUser,
+  toCategoryPayload,
+  toTagPayload,
+  toUserPayload
+} from '@liwu/shared-utils/admin-database-user-helpers.js';
+import {
+  getDocumentId,
+  getDocuments,
+  isMissingCollectionIssue
+} from '@liwu/shared-utils/cloudbase-document-helpers.js';
+import { createBuildTempUrlMap } from '@liwu/shared-utils/database-temp-url.js';
+import {
+  normalizeMeditationAudioLibrary,
+  normalizeMeditationCalendar,
+  normalizeMeditationCompositionSettings,
+  normalizeMeditationLibrary
+} from '@liwu/shared-utils/meditation-database-normalizers.js';
+import {
+  DEFAULT_MEDITATION_AUDIO_LIBRARY,
+  DEFAULT_MEDITATION_CALENDAR,
+  DEFAULT_MEDITATION_COMPOSITION_SETTINGS,
+  DEFAULT_MEDITATION_LIBRARY,
+  getDefaultMeditationAudioGroupId,
+  getDefaultMeditationAudioGroups,
+  MEDITATION_AUDIO_GROUP_TEMPLATES,
+  MEDITATION_AUDIO_LIBRARY_KEY,
+  MEDITATION_AUDIO_LIBRARY_TYPES,
+  MEDITATION_CALENDAR_KEY,
+  MEDITATION_COMPOSITION_SETTINGS_KEY,
+  MEDITATION_LIBRARY_KEY
+} from '@liwu/shared-utils/meditation-audio-library.js';
+import {
+  DEFAULT_MEDITATION_SETTINGS,
+  MEDITATION_SETTINGS_KEY,
+  normalizeMeditationSettings,
+  toMeditationSettingsPayload
+} from '@liwu/shared-utils/meditation-reward-settings.js';
 
 const { collections } = DATABASE_CONFIG;
-const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
-const MEDITATION_AUDIO_LIBRARY_KEY = 'meditation_audio_library';
-const MEDITATION_COMPOSITION_SETTINGS_KEY = 'meditation_composition_settings';
-const MEDITATION_CALENDAR_KEY = 'meditation_calendar';
-const MEDITATION_LIBRARY_KEY = 'meditation_library';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
+const MEDITATION_CALENDAR_OPTIONS = { arraySlots: true };
+const buildTempUrlMap = createBuildTempUrlMap(app);
 
-export const MEDITATION_AUDIO_LIBRARY_TYPES = ['bowl', 'greeting', 'nature', 'breath', 'quote', 'goodbye'];
-export const MEDITATION_AUDIO_GROUP_TEMPLATES = Object.freeze({
-  bowl: Object.freeze([
-    Object.freeze({ id: 'bowl-default', key: 'default', name: '默认音频组' })
-  ]),
-  greeting: Object.freeze([
-    Object.freeze({ id: 'greeting-self-intro', key: 'self_intro', name: '自我介绍' }),
-    Object.freeze({ id: 'greeting-settling', key: 'settling', name: '居心地' }),
-    Object.freeze({ id: 'greeting-posture', key: 'posture', name: '坐姿' }),
-    Object.freeze({ id: 'greeting-breath-guidance', key: 'breath_guidance', name: '呼吸引导' })
-  ]),
-  nature: Object.freeze([
-    Object.freeze({ id: 'nature-default', key: 'default', name: '默认音频组' })
-  ]),
-  breath: Object.freeze([
-    Object.freeze({ id: 'breath-opening', key: 'opening', name: '呼吸开始' }),
-    Object.freeze({ id: 'breath-main', key: 'main', name: '呼吸正文' })
-  ]),
-  quote: Object.freeze([
-    Object.freeze({ id: 'quote-logic', key: 'logic', name: '逻辑' }),
-    Object.freeze({ id: 'quote-reinforcement', key: 'reinforcement', name: '强化' })
-  ]),
-  goodbye: Object.freeze([
-    Object.freeze({ id: 'goodbye-default', key: 'default', name: '默认音频组' })
-  ])
-});
-
-export const getDefaultMeditationAudioGroups = () => MEDITATION_AUDIO_LIBRARY_TYPES.flatMap((type) => (
-  (MEDITATION_AUDIO_GROUP_TEMPLATES[type] || []).map((group, index) => ({
-    ...group,
-    type,
-    sortOrder: index
-  }))
-));
-
-export const getDefaultMeditationAudioGroupId = (type = 'bowl') => {
-  const groups = MEDITATION_AUDIO_GROUP_TEMPLATES[type] || [];
-  return groups[0]?.id || '';
-};
-
-export const DEFAULT_MEDITATION_SETTINGS = {
-  rewardPoints: 50,
-  allowRepeatRewards: true,
-  inviterRewardRate: 0,
-  documentId: null,
-  missingCollection: false
+export {
+  DEFAULT_MEDITATION_AUDIO_LIBRARY,
+  DEFAULT_MEDITATION_CALENDAR,
+  DEFAULT_MEDITATION_COMPOSITION_SETTINGS,
+  DEFAULT_MEDITATION_LIBRARY,
+  DEFAULT_MEDITATION_SETTINGS,
+  getDefaultMeditationAudioGroupId,
+  getDefaultMeditationAudioGroups,
+  MEDITATION_AUDIO_GROUP_TEMPLATES,
+  MEDITATION_AUDIO_LIBRARY_TYPES
 };
 
 export const DEFAULT_AWARENESS_TAG_SETTINGS = {
   documentId: null,
   tagsByKey: {},
   missingCollection: false
-};
-
-export const DEFAULT_MEDITATION_AUDIO_LIBRARY = {
-  documentId: null,
-  groups: getDefaultMeditationAudioGroups(),
-  items: [],
-  missingCollection: false
-};
-
-export const DEFAULT_MEDITATION_COMPOSITION_SETTINGS = {
-  documentId: null,
-  segments: [],
-  missingCollection: false
-};
-
-export const DEFAULT_MEDITATION_CALENDAR = {
-  documentId: null,
-  days: {},
-  missingCollection: false
-};
-
-export const DEFAULT_MEDITATION_LIBRARY = {
-  documentId: null,
-  meditations: [],
-  missingCollection: false
-};
-
-const isMissingCollectionIssue = (value) => {
-  const message = value?.message || '';
-
-  return (
-    value?.code === 'DATABASE_COLLECTION_NOT_EXIST' ||
-    message.includes('DATABASE_COLLECTION_NOT_EXIST') ||
-    message.includes('Db or Table not exist')
-  );
-};
-
-const getDocumentId = (document) => document?._id || document?.id;
-
-const getDocuments = (result, collectionName) => {
-  if (Array.isArray(result?.data)) {
-    return result.data;
-  }
-
-  if (result?.message) {
-    throw new Error(result.message);
-  }
-
-  throw new Error(`CloudBase query failed for collection "${collectionName}"`);
-};
-
-const normalizeCategory = (category) => ({
-  id: getDocumentId(category),
-  name: category.name,
-  color: category.color,
-  description: category.description || ''
-});
-
-const normalizeTag = (tag, categoriesById = new Map()) => {
-  const categoryId = tag.category_id || tag.categoryId || '';
-  const category = categoriesById.get(categoryId);
-
-  return {
-    id: getDocumentId(tag),
-    name: tag.name,
-    categoryId,
-    categoryName: tag.categoryName || category?.name || '',
-    startDate: tag.start_date || tag.startDate || '',
-    endDate: tag.end_date || tag.endDate || '',
-    color: tag.color || category?.color || '#666'
-  };
-};
-
-const normalizeUser = (user) => ({
-  id: getDocumentId(user),
-  uid: Number(user.uid || 0),
-  name: user.name || '',
-  avatar: user.avatar || '',
-  email: user.email || '',
-  phone: user.phone || '',
-  joinDate: user.join_date || user.joinDate || '',
-  lastActive: user.last_active || user.lastActive || '',
-  status: user.status || 'inactive',
-  level: Number(user.level ?? 1),
-  experience: Number(user.experience ?? 0),
-  authUid: user.auth_uid || user.authUid || '',
-  isStudent: Boolean(user.is_student ?? user.isStudent),
-  inviteCode: user.uid ? String(user.uid) : '',
-  inviterUserId: user.inviter_user_id || user.inviterUserId || '',
-  balance: Number(user.balance || 0),
-  bio: user.bio || '',
-  location: user.location || '',
-  age: user.age ?? '',
-  tags: []
-});
-
-const normalizeMeditationSettings = (settings = {}) => ({
-  rewardPoints: Number(settings.reward_points ?? settings.rewardPoints ?? DEFAULT_MEDITATION_SETTINGS.rewardPoints),
-  allowRepeatRewards:
-    settings.allow_repeat_rewards ?? settings.allowRepeatRewards ?? DEFAULT_MEDITATION_SETTINGS.allowRepeatRewards,
-  inviterRewardRate: Math.min(
-    20,
-    Math.max(0, Number(settings.inviter_reward_rate ?? settings.inviterRewardRate ?? DEFAULT_MEDITATION_SETTINGS.inviterRewardRate))
-  ),
-  documentId: getDocumentId(settings) || null,
-  missingCollection: false
-});
-
-const normalizeAwarenessTagSettings = (settings = {}) => ({
-  documentId: getDocumentId(settings) || null,
-  tagsByKey: settings.tags_by_key || settings.tagsByKey || {},
-  missingCollection: false
-});
-
-const normalizeMeditationAudioItem = (item = {}) => ({
-  id: item._id || item.id || '',
-  type: item.type || 'bowl',
-  groupId: item.group_id || item.groupId || '',
-  title: item.title || '',
-  fileId: item.file_id || item.fileId || '',
-  audioUrl: item.audio_url || item.audioUrl || '',
-  duration: Number(item.duration ?? 0),
-  ttsText: item.tts_text || item.ttsText || '',
-  isSSML: Boolean(item.is_ssml ?? item.isSSML ?? false),
-  createdAt: item.created_at || item.createdAt || ''
-});
-
-const normalizeMeditationAudioGroup = (group = {}, fallbackType = 'bowl', fallbackIndex = 0) => {
-  const nextType = group.type || fallbackType || 'bowl';
-  const templateGroups = MEDITATION_AUDIO_GROUP_TEMPLATES[nextType] || [];
-  const templateMatch = templateGroups.find((templateGroup) => templateGroup.id === group.id || templateGroup.key === group.key);
-
-  return {
-    id: group.id || templateMatch?.id || `${nextType}-${fallbackIndex}`,
-    type: nextType,
-    key: group.key || templateMatch?.key || '',
-    name: group.name || templateMatch?.name || '默认音频组',
-    sortOrder: Number(group.sort_order ?? group.sortOrder ?? fallbackIndex)
-  };
-};
-
-const buildNormalizedMeditationAudioGroups = (groups = []) => {
-  const normalizedGroups = [];
-  const seenGroupIds = new Set();
-
-  MEDITATION_AUDIO_LIBRARY_TYPES.forEach((type) => {
-    const rawGroupsForType = Array.isArray(groups)
-      ? groups.filter((group) => (group.type || type) === type)
-      : [];
-
-    const sourceGroups = rawGroupsForType.length > 0
-      ? rawGroupsForType
-      : (MEDITATION_AUDIO_GROUP_TEMPLATES[type] || []).map((group) => ({ ...group, type }));
-
-    sourceGroups
-      .map((group, index) => normalizeMeditationAudioGroup(group, type, index))
-      .sort((left, right) => left.sortOrder - right.sortOrder)
-      .forEach((group, index) => {
-        const normalizedGroup = { ...group, sortOrder: index };
-        if (!seenGroupIds.has(normalizedGroup.id)) {
-          seenGroupIds.add(normalizedGroup.id);
-          normalizedGroups.push(normalizedGroup);
-        }
-      });
-  });
-
-  return normalizedGroups;
-};
-
-const resolveMeditationAudioItemGroupId = (item = {}, groups = []) => {
-  const itemType = item.type || 'bowl';
-  const requestedGroupId = item.groupId || item.group_id || '';
-
-  if (requestedGroupId && groups.some((group) => group.id === requestedGroupId && group.type === itemType)) {
-    return requestedGroupId;
-  }
-
-  return groups.find((group) => group.type === itemType)?.id || getDefaultMeditationAudioGroupId(itemType);
-};
-
-const normalizeMeditationAudioLibrary = (doc = {}) => {
-  const groups = buildNormalizedMeditationAudioGroups(doc.groups);
-
-  return {
-    documentId: getDocumentId(doc) || null,
-    groups,
-    items: Array.isArray(doc.items)
-      ? doc.items.map((item) => {
-        const normalizedItem = normalizeMeditationAudioItem(item);
-        return {
-          ...normalizedItem,
-          groupId: resolveMeditationAudioItemGroupId(normalizedItem, groups)
-        };
-      })
-      : [],
-    missingCollection: false
-  };
-};
-
-const normalizeMeditationSegment = (seg = {}) => ({
-  id: seg.id || '',
-  type: seg.type || 'bowl',
-  groupId: seg.group_id || seg.groupId || getDefaultMeditationAudioGroupId(seg.type || 'bowl'),
-  startSeconds: Number(seg.start_seconds ?? seg.startSeconds ?? 0),
-  durationSeconds: Number(seg.duration_seconds ?? seg.durationSeconds ?? 0),
-  audioItemId: seg.audio_item_id || seg.audioItemId || ''
-});
-
-const normalizeMeditationCompositionSettings = (doc = {}) => ({
-  documentId: getDocumentId(doc) || null,
-  segments: Array.isArray(doc.segments) ? doc.segments.map(normalizeMeditationSegment) : [],
-  missingCollection: false
-});
-
-const normalizeMeditationCalendarDay = (day = {}) => ({
-  morning: Array.isArray(day.morning) ? day.morning : [],
-  noon: Array.isArray(day.noon) ? day.noon : [],
-  afternoon: Array.isArray(day.afternoon) ? day.afternoon : [],
-  evening: Array.isArray(day.evening) ? day.evening : []
-});
-
-const normalizeMeditationCalendar = (doc = {}) => ({
-  documentId: getDocumentId(doc) || null,
-  days: Object.fromEntries(
-    Object.entries(doc.days || {}).map(([dateKey, day]) => [dateKey, normalizeMeditationCalendarDay(day)])
-  ),
-  missingCollection: false
-});
-
-const buildDefaultMeditationGroupSelections = () => Object.fromEntries(
-  getDefaultMeditationAudioGroups().map((group) => [group.id, []])
-);
-
-const aggregateMeditationSectionsFromGroupSelections = (groupSelections = {}) => Object.fromEntries(
-  MEDITATION_AUDIO_LIBRARY_TYPES.map((type) => {
-    const groupIds = (MEDITATION_AUDIO_GROUP_TEMPLATES[type] || []).map((group) => group.id);
-    return [type, groupIds.flatMap((groupId) => Array.isArray(groupSelections[groupId]) ? groupSelections[groupId] : [])];
-  })
-);
-
-const normalizeMeditationGroupSelections = (groupSelections = {}, legacySections = {}) => {
-  const normalizedSelections = buildDefaultMeditationGroupSelections();
-  const hasExplicitGroups = groupSelections && typeof groupSelections === 'object' && Object.keys(groupSelections).length > 0;
-
-  Object.keys(normalizedSelections).forEach((groupId) => {
-    if (hasExplicitGroups && Array.isArray(groupSelections[groupId])) {
-      normalizedSelections[groupId] = [...groupSelections[groupId]];
-    }
-  });
-
-  if (!hasExplicitGroups) {
-    MEDITATION_AUDIO_LIBRARY_TYPES.forEach((type) => {
-      const defaultGroupId = getDefaultMeditationAudioGroupId(type);
-      if (defaultGroupId && Array.isArray(legacySections[type])) {
-        normalizedSelections[defaultGroupId] = [...legacySections[type]];
-      }
-    });
-  }
-
-  return normalizedSelections;
-};
-
-const normalizeMeditationLibraryItem = (item = {}) => ({
-  id: item.id || '',
-  name: item.name || '',
-  groupSelections: normalizeMeditationGroupSelections(
-    item.group_selections || item.groupSelections || item.audio_groups || item.audioGroups,
-    item.sections || {}
-  ),
-  sections: aggregateMeditationSectionsFromGroupSelections(
-    normalizeMeditationGroupSelections(
-      item.group_selections || item.groupSelections || item.audio_groups || item.audioGroups,
-      item.sections || {}
-    )
-  )
-});
-
-const normalizeMeditationLibrary = (doc = {}) => ({
-  documentId: getDocumentId(doc) || null,
-  meditations: Array.isArray(doc.meditations) ? doc.meditations.map(normalizeMeditationLibraryItem) : [],
-  missingCollection: false
-});
-
-const buildTempUrlMap = async (fileIds = []) => {
-  const normalizedFileIds = [...new Set((Array.isArray(fileIds) ? fileIds : []).filter(Boolean))];
-
-  if (normalizedFileIds.length === 0) {
-    return new Map();
-  }
-
-  const tempUrlResult = await app.getTempFileURL({ fileList: normalizedFileIds });
-  return new Map(
-    (tempUrlResult?.fileList || tempUrlResult?.data?.fileList || []).map((item) => [
-      item.fileID || item.fileId,
-      item.tempFileURL || item.download_url || item.tempFileUrl || ''
-    ])
-  );
-};
-
-const toUserPayload = (userData) => {
-  const rest = { ...userData };
-  const joinDate = rest.joinDate;
-  const lastActive = rest.lastActive;
-
-  delete rest.id;
-  delete rest._id;
-  delete rest.tags;
-  delete rest.joinDate;
-  delete rest.lastActive;
-  delete rest.authUid;
-  delete rest.uid;
-  delete rest.isStudent;
-  delete rest.inviteCode;
-  delete rest.inviterUserId;
-  delete rest.balance;
-  delete rest.created_at;
-  delete rest.updated_at;
-
-  return {
-    ...rest,
-    ...(userData.uid !== undefined ? { uid: Math.max(1, Number(userData.uid) || 1) } : {}),
-    ...(joinDate !== undefined ? { join_date: joinDate } : {}),
-    ...(lastActive !== undefined ? { last_active: lastActive } : {}),
-    ...(userData.authUid !== undefined ? { auth_uid: userData.authUid } : {}),
-    ...(userData.isStudent !== undefined ? { is_student: Boolean(userData.isStudent) } : {}),
-    ...(userData.inviterUserId !== undefined ? { inviter_user_id: userData.inviterUserId } : {}),
-    ...(userData.balance !== undefined ? { balance: Math.max(0, Number(userData.balance) || 0) } : {})
-  };
-};
-
-const toCategoryPayload = (categoryData) => {
-  const rest = { ...categoryData };
-  delete rest.id;
-  delete rest._id;
-  delete rest.created_at;
-  delete rest.updated_at;
-  return rest;
-};
-
-const toTagPayload = (tagData) => {
-  const rest = { ...tagData };
-  const categoryId = rest.categoryId;
-  const startDate = rest.startDate;
-  const endDate = rest.endDate;
-
-  delete rest.id;
-  delete rest._id;
-  delete rest.categoryId;
-  delete rest.categoryName;
-  delete rest.startDate;
-  delete rest.endDate;
-  delete rest.assignedDate;
-  delete rest.created_at;
-  delete rest.updated_at;
-
-  return {
-    ...rest,
-    ...(categoryId !== undefined ? { category_id: categoryId } : {}),
-    ...(startDate !== undefined ? { start_date: startDate } : {}),
-    ...(endDate !== undefined ? { end_date: endDate } : {})
-  };
-};
-
-const toMeditationSettingsPayload = (settingsData) => ({
-  key: MEDITATION_SETTINGS_KEY,
-  reward_points: Math.max(0, Number(settingsData.rewardPoints ?? DEFAULT_MEDITATION_SETTINGS.rewardPoints)),
-  allow_repeat_rewards: Boolean(settingsData.allowRepeatRewards),
-  inviter_reward_rate: Math.min(
-    20,
-    Math.max(0, Number(settingsData.inviterRewardRate ?? DEFAULT_MEDITATION_SETTINGS.inviterRewardRate))
-  )
-});
-
-const toAwarenessTagSettingsPayload = (settingsData) => ({
-  key: AWARENESS_TAG_SETTINGS_KEY,
-  tags_by_key: settingsData.tagsByKey || {}
-});
-
-const attachTagsToUsers = (users, tags, categories, userTagLinks) => {
-  const categoriesById = new Map(categories.map((category) => [category.id, category]));
-  const normalizedTags = tags.map((tag) => normalizeTag(tag, categoriesById));
-  const tagsById = new Map(normalizedTags.map((tag) => [tag.id, tag]));
-  const tagsByUserId = new Map();
-
-  for (const link of userTagLinks) {
-    const tag = tagsById.get(link.tag_id);
-    if (!tag) {
-      continue;
-    }
-
-    const userTag = {
-      ...tag,
-      assignedDate: link.assigned_date || link.assignedDate || ''
-    };
-
-    if (!tagsByUserId.has(link.user_id)) {
-      tagsByUserId.set(link.user_id, []);
-    }
-
-    tagsByUserId.get(link.user_id).push(userTag);
-  }
-
-  const normalizedUsers = users.map((user) => {
-    const normalizedUser = normalizeUser(user);
-    return {
-      ...normalizedUser,
-      tags: tagsByUserId.get(normalizedUser.id) || []
-    };
-  });
-
-  return {
-    users: normalizedUsers,
-    tags: normalizedTags,
-    categories: categories.map(normalizeCategory)
-  };
 };
 
 class DatabaseService {
@@ -533,7 +124,7 @@ class DatabaseService {
 
       const existingDocuments = getDocuments(existingResult, collections.appSettings);
       const payload = {
-        ...toAwarenessTagSettingsPayload(settingsData),
+        ...toAwarenessTagSettingsPayload(settingsData, AWARENESS_TAG_SETTINGS_KEY),
         updated_at: new Date()
       };
 
@@ -791,7 +382,7 @@ class DatabaseService {
         return { ...DEFAULT_MEDITATION_CALENDAR };
       }
 
-      return normalizeMeditationCalendar(document);
+      return normalizeMeditationCalendar(document, MEDITATION_CALENDAR_OPTIONS);
     } catch (error) {
       if (isMissingCollectionIssue(error)) {
         return { ...DEFAULT_MEDITATION_CALENDAR, missingCollection: true };
@@ -829,6 +420,20 @@ class DatabaseService {
 
       console.error('Error fetching meditation library:', error);
       throw error;
+    }
+  }
+
+  static async getAudioTempUrl(fileId = '') {
+    if (!fileId) {
+      return '';
+    }
+
+    try {
+      const tempUrlMap = await buildTempUrlMap([fileId]);
+      return proxyCloudBaseMediaUrl(tempUrlMap.get(fileId) || '');
+    } catch (error) {
+      console.error('Error fetching audio temp url:', error);
+      return '';
     }
   }
 

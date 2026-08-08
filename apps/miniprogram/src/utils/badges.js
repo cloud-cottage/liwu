@@ -1,73 +1,36 @@
 const { getDb } = require('./cloudbase')
+const { COLLECTIONS } = require('./shared/database-config')
 const { getCurrentShopProfile } = require('./shop')
-
-const APP_SETTINGS = 'app_settings'
-const BADGE_PROFILES = 'badge_profiles'
-const BADGE_SETTINGS_KEY = 'badge_system_settings'
+const {
+  BADGE_SETTINGS_KEY,
+  BADGE_PROFILE_COLLECTION,
+  BADGE_VISIBLE_GROUPS,
+  BADGE_VISIBLE_GROUP_LABELS,
+  BADGE_DIFFICULTIES,
+  normalizeBadgeSettings,
+  flattenBadgeSeries,
+  formatBadgeBonusText
+} = require('./shared/badge-system')
 
 const TAB_META = {
   growth: {
-    key: 'growth',
-    label: '成长徽章',
+    key: BADGE_VISIBLE_GROUPS.growth,
+    label: BADGE_VISIBLE_GROUP_LABELS[BADGE_VISIBLE_GROUPS.growth],
     description: '记录你在觉察、冥想与云签中的持续投入。'
   },
   builder: {
-    key: 'builder',
-    label: '建设徽章',
+    key: BADGE_VISIBLE_GROUPS.builder,
+    label: BADGE_VISIBLE_GROUP_LABELS[BADGE_VISIBLE_GROUPS.builder],
     description: '记录你对社区同行、护持与共建的投入。'
   }
 }
 
-const DIFFICULTY_ORDER = ['gentle', 'steady', 'resolute', 'radiant']
+const DIFFICULTY_ORDER = BADGE_DIFFICULTIES.map((item) => item.key)
 
-const DIFFICULTY_LABELS = {
-  gentle: '微光',
-  steady: '进阶',
-  resolute: '砥砺',
-  radiant: '稀有'
-}
-
-const normalizeBadgeSeries = (series = {}) => ({
-  id: series.id || '',
-  visibleGroup: series.visibleGroup || 'growth',
-  seriesName: series.seriesName || '',
-  summary: series.summary || '',
-  enabled: series.enabled !== false,
-  levels: Array.isArray(series.levels) ? series.levels.map((level) => ({
-    id: level.id || '',
-    difficulty: level.difficulty || 'gentle',
-    name: level.name || '',
-    threshold: Number(level.threshold || 0),
-    unit: level.unit || '次',
-    bonusType: level.bonusType || 'percent',
-    bonusValue: Number(level.bonusValue || 0),
-    description: level.description || ''
-  })) : []
-})
-
-const flattenBadgeSettings = (settings = {}) => (
-  (Array.isArray(settings.series) ? settings.series : [])
-    .map(normalizeBadgeSeries)
-    .flatMap((series) => (
-      series.levels.map((level) => ({
-        badgeId: level.id || `${series.id}:${level.difficulty}`,
-        seriesId: series.id,
-        visibleGroup: series.visibleGroup,
-        displayName: series.seriesName,
-        seriesName: series.seriesName,
-        summary: series.summary,
-        enabled: series.enabled,
-        difficulty: level.difficulty,
-        difficultyLabel: DIFFICULTY_LABELS[level.difficulty] || level.difficulty,
-        name: level.name,
-        threshold: level.threshold,
-        unit: level.unit,
-        bonusType: level.bonusType,
-        bonusValue: level.bonusValue,
-        description: level.description
-      }))
-    ))
-)
+const DIFFICULTY_LABELS = BADGE_DIFFICULTIES.reduce((labels, item) => {
+  labels[item.key] = item.label
+  return labels
+}, {})
 
 const getBadgeSeriesProgress = (badges = []) => {
   const grouped = {}
@@ -113,14 +76,9 @@ const buildVisibleBadges = (badges = []) => {
   return Object.values(seriesMap).flatMap(getVisibleSeriesBadges)
 }
 
-const formatBadgeBonusText = (badge = {}) => {
-  const bonusValue = Math.max(0, Number(badge.bonusValue || 0))
-  return badge.bonusType === 'fixed' ? `额外 +${bonusValue} 福豆` : `奖励 +${bonusValue}%`
-}
-
 const getOrCreateBadgeProfile = async (userId = '') => {
   const db = getDb()
-  const result = await db.collection(BADGE_PROFILES).where({ user_id: userId }).limit(1).get()
+  const result = await db.collection(BADGE_PROFILE_COLLECTION).where({ user_id: userId }).limit(1).get()
   const existingProfile = (result.data || [])[0] || null
 
   if (existingProfile) {
@@ -136,7 +94,7 @@ const getOrCreateBadgeProfile = async (userId = '') => {
     updated_at: new Date().toISOString()
   }
 
-  const createResult = await db.collection(BADGE_PROFILES).add({ data: payload })
+  const createResult = await db.collection(BADGE_PROFILE_COLLECTION).add({ data: payload })
   return {
     _id: createResult._id || createResult.id || '',
     ...payload
@@ -145,7 +103,7 @@ const getOrCreateBadgeProfile = async (userId = '') => {
 
 const getBadgeSettingsDocument = async () => {
   const db = getDb()
-  const result = await db.collection(APP_SETTINGS).where({ key: BADGE_SETTINGS_KEY }).limit(1).get()
+  const result = await db.collection(COLLECTIONS.appSettings).where({ key: BADGE_SETTINGS_KEY }).limit(1).get()
   return (result.data || [])[0] || { series: [] }
 }
 
@@ -154,18 +112,20 @@ const buildBadgeState = (settingsDocument = {}, profileDocument = {}) => {
     ? [...new Set((profileDocument.unlocked_badge_ids || profileDocument.unlockedBadgeIds).filter(Boolean))]
     : []
   const equippedBadgeId = profileDocument.equipped_badge_id || profileDocument.equippedBadgeId || ''
+  const normalizedSettings = normalizeBadgeSettings(settingsDocument)
 
-  const allBadges = flattenBadgeSettings(settingsDocument)
+  const allBadges = flattenBadgeSeries(normalizedSettings)
     .filter((badge) => badge.enabled !== false)
     .map((badge) => ({
       ...badge,
+      difficultyLabel: DIFFICULTY_LABELS[badge.difficulty] || badge.difficulty,
       earned: unlockedBadgeIds.includes(badge.badgeId),
       equipped: badge.badgeId === equippedBadgeId
     }))
 
   const groupedBadges = {
-    growth: allBadges.filter((badge) => badge.visibleGroup === 'growth'),
-    builder: allBadges.filter((badge) => badge.visibleGroup === 'builder')
+    growth: allBadges.filter((badge) => badge.visibleGroup === BADGE_VISIBLE_GROUPS.growth),
+    builder: allBadges.filter((badge) => badge.visibleGroup === BADGE_VISIBLE_GROUPS.builder)
   }
 
   return {
@@ -222,7 +182,7 @@ const equipBadge = async (badgeId = '') => {
 
   const nextEquippedBadgeId = currentState.equippedBadgeId === badgeId ? '' : badgeId
   const db = getDb()
-  await db.collection(BADGE_PROFILES).doc(badgeProfile._id || badgeProfile.id || '').update({
+  await db.collection(BADGE_PROFILE_COLLECTION).doc(badgeProfile._id || badgeProfile.id || '').update({
     data: {
       equipped_badge_id: nextEquippedBadgeId,
       updated_at: new Date().toISOString()

@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react'
 import { Award, BookOpen, Sparkles, X } from 'lucide-react'
-import dawnGuardianImage from '../assets/badges/dawn-guardian.svg'
-import builderPlaceholderImage from '../assets/badges/builder-placeholder.svg'
-import growthPlaceholderImage from '../assets/badges/growth-placeholder.svg'
+import dawnGuardianImage from '@liwu/shared-assets-package/illustrations/badges/dawn-guardian.svg'
+import builderPlaceholderImage from '@liwu/shared-assets-package/illustrations/badges/builder-placeholder.svg'
+import growthPlaceholderImage from '@liwu/shared-assets-package/illustrations/badges/growth-placeholder.svg'
 import StackPage from '../components/Layout/StackPage.jsx'
 import { useBadgeState } from '../hooks/useBadgeState.js'
 

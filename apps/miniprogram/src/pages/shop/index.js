@@ -9,8 +9,9 @@ const {
   getCurrentShopProfile
 } = require('../../utils/shop')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
-const { getPageMastheadSettings } = require('../../utils/pageMasthead')
+const { getPageMastheadSettings, DEFAULT_PAGE_MASTHEAD_SETTINGS } = require('../../utils/pageMasthead')
 const { bindPhoneFromWechatCode, ensureCanParticipate } = require('../../utils/auth')
+const { resolveMiniProgramIconPath } = require('../../utils/shared/asset-paths')
 
 const PENDING_PRODUCT_STORAGE_KEY = 'liwu_mp_pending_shop_product_id'
 
@@ -77,7 +78,8 @@ Page({
     products: [],
     addresses: [],
     walletBalance: 0,
-    shopSlogan: '适合静心、阅读与日常安住的小器物。',
+    cartIcon: resolveMiniProgramIconPath('cart'),
+    shopSlogan: DEFAULT_PAGE_MASTHEAD_SETTINGS.shopSlogan,
     activeCategoryId: '',
     selectedCategory: null,
     selectedCategoryName: '全部',
@@ -130,7 +132,7 @@ Page({
         addresses,
         requiresPhoneBinding: !profile.phone,
         walletBalance: profile.balance,
-        shopSlogan: mastheadSettings.shopSlogan || '适合静心、阅读与日常安住的小器物。',
+        shopSlogan: mastheadSettings.shopSlogan || DEFAULT_PAGE_MASTHEAD_SETTINGS.shopSlogan,
         selectedCategory,
         ...getCategoryPresentation(selectedCategory)
       })

@@ -1,4 +1,29 @@
-<view class="page-shell home-page-shell">
+<!-- ═══════ 骨架屏（loading 时显示） ═══════ -->
+<view wx:if="{{loading}}" class="page-shell home-page-shell skeleton-shell">
+  <view class="skeleton-masthead">
+    <view class="skeleton-pill skeleton-shimmer"></view>
+    <view class="skeleton-line skeleton-line-short skeleton-shimmer"></view>
+    <view class="skeleton-line skeleton-line-med skeleton-shimmer"></view>
+  </view>
+  <view class="skeleton-hero skeleton-shimmer"></view>
+  <view class="skeleton-card skeleton-shimmer">
+    <view class="skeleton-orb"></view>
+    <view class="skeleton-line skeleton-line-long skeleton-shimmer" style="margin-top: 16rpx;"></view>
+    <view class="skeleton-line skeleton-line-med skeleton-shimmer" style="margin-top: 10rpx;"></view>
+  </view>
+  <view class="skeleton-card skeleton-shimmer">
+    <view class="skeleton-line skeleton-line-long skeleton-shimmer"></view>
+    <view class="skeleton-grid">
+      <view class="skeleton-tile skeleton-shimmer"></view>
+      <view class="skeleton-tile skeleton-shimmer"></view>
+      <view class="skeleton-tile skeleton-shimmer"></view>
+      <view class="skeleton-tile skeleton-shimmer"></view>
+    </view>
+  </view>
+</view>
+
+<!-- ═══════ 真实内容（数据加载完成后显示） ═══════ -->
+<view wx:else class="page-shell home-page-shell">
   <view class="section-card" wx:if="{{requiresPhoneBinding && showPhonePrompt}}">
     <view class="section-title">需要先绑定手机号</view>
     <view class="showcase-empty">你当前以游客身份浏览。绑定手机号后才能参与实际业务，例如发布觉察、下单购买等。</view>

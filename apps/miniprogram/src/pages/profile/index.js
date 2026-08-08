@@ -1,6 +1,7 @@
 const { getProfilePageData, saveLocalProfile } = require('../../utils/profile')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
 const { bindPhoneFromWechatCode } = require('../../utils/auth')
+const { resolveMiniProgramIconPath } = require('../../utils/shared/asset-paths')
 
 const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '').trim()
 const isValidPhone = (value = '') => /^1\d{10}$/.test(normalizePhone(value))
@@ -14,6 +15,8 @@ Page({
     recentTags: [],
     recentWealthEntries: [],
     awareCount: 0,
+    shopToolIcon: resolveMiniProgramIconPath('shop'),
+    addressToolIcon: resolveMiniProgramIconPath('address'),
     form: {
       name: '',
       phone: '',

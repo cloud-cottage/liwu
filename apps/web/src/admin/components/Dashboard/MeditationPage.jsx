@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getAudioTempUrl, uploadAudioFile } from '../../utils/audioUpload.js';
 import { synthesizeSpeech, blobUrlToFile } from '../../utils/ttsService.js';
-import { MEDITATION_AUDIO_LIBRARY_TYPES } from '../../services/database.js';
+import DatabaseService, {
+  MEDITATION_AUDIO_LIBRARY_TYPES,
+  MEDITATION_AUDIO_TRANSCODE_STATUS,
+  resolveMeditationAudioTranscodeProfile
+} from '../../services/database.js';
 import {
   buildMeditationSessionPlan,
   getMeditationAudioMimeType,
@@ -25,8 +29,9 @@ const SESSION_LABELS = {
   afternoon: '下午课',
   evening: '晚课'
 };
-
 const SUB_TABS = [
+  { key: 'paragraph', label: '段落文本库' },
+  { key: 'section-raw', label: '原始音频库' },
   { key: 'library', label: '音频库' },
   { key: 'presets', label: '冥想库' },
   { key: 'composition', label: '冥想设置' },
@@ -859,7 +864,7 @@ const MeditationPreviewDialog = ({ plan, onClose }) => {
 
 // ─── AudioLibrarySection ─────────────────────────────────────────────────────
 
-const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGroup }) => {
+const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGroup, onQueueTranscodeJob }) => {
   const [expanded, setExpanded] = useState(false);
   const [addMode, setAddMode] = useState(null); // 'file' | 'tts'
   const [editingId, setEditingId] = useState(null);
@@ -924,18 +929,45 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
     if (!fileForm.file) { setFileError('请选择音频文件'); return; }
     setFileUploading(true);
     try {
-      const cloudPath = `meditation-audio/${group.type}/${group.id}/${generateId()}-${fileForm.file.name}`;
+      const itemId = generateId();
+      const cloudPath = `meditation-audio-raw/${group.type}/${group.id}/${itemId}-${fileForm.file.name}`;
       const { fileId, audioUrl } = await uploadAudioFile({ file: fileForm.file, cloudPath });
-      const newItem = {
-        id: generateId(),
+      const transcodeProfile = resolveMeditationAudioTranscodeProfile({ type: group.type, isTts: false });
+      const targetCloudPath = `meditation-audio/${group.type}/${group.id}/${itemId}.opus`;
+      const queuedItem = {
+        id: itemId,
         type: group.type,
         groupId: group.id,
         title: fileForm.title.trim(),
-        fileId,
-        audioUrl,
-        duration: Number(fileForm.duration) || 0,
+        fileId: '',
+        audioUrl: '',
+        sourceFileId: fileId,
+        sourceAudioUrl: audioUrl,
+        sourceCloudPath: cloudPath,
+        sourceFileName: fileForm.file.name,
+        duration: 0,
         ttsText: '',
+        transcodeStatus: MEDITATION_AUDIO_TRANSCODE_STATUS.queued,
+        transcodeJobId: '',
+        transcodeError: '',
+        loudnessProfile: transcodeProfile,
+        transcodeUpdatedAt: new Date().toISOString(),
         createdAt: new Date().toISOString()
+      };
+      const job = await onQueueTranscodeJob({
+        itemId,
+        libraryType: group.type,
+        groupId: group.id,
+        sourceFileId: fileId,
+        sourceAudioUrl: audioUrl,
+        sourceCloudPath: cloudPath,
+        sourceFileName: fileForm.file.name,
+        targetCloudPath,
+        transcodeProfile
+      });
+      const newItem = {
+        ...queuedItem,
+        transcodeJobId: job.id || ''
       };
       await onSaveItem(newItem, null);
       setFileForm({ title: '', file: null, duration: '' });
@@ -984,15 +1016,42 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
     try {
       const blobUrl = await synthesizeSpeech(item.ttsText, { isSSML: Boolean(item.isSSML) });
       const file = await blobUrlToFile(blobUrl, `${item.id}.mp3`);
-      const cloudPath = `meditation-audio/${item.type}/${item.groupId || group.id}/${item.id}.mp3`;
+      const cloudPath = `meditation-audio-raw/${item.type}/${item.groupId || group.id}/${item.id}.mp3`;
       const { fileId, audioUrl } = await uploadAudioFile({ file, cloudPath });
-      await onSaveItem({ ...item, fileId, audioUrl }, item.id);
+      const transcodeProfile = resolveMeditationAudioTranscodeProfile({ type: item.type, isTts: true });
+      const targetCloudPath = `meditation-audio/${item.type}/${item.groupId || group.id}/${item.id}.opus`;
+      const job = await onQueueTranscodeJob({
+        itemId: item.id,
+        libraryType: item.type,
+        groupId: item.groupId || group.id,
+        sourceFileId: fileId,
+        sourceAudioUrl: audioUrl,
+        sourceCloudPath: cloudPath,
+        sourceFileName: file.name,
+        targetCloudPath,
+        transcodeProfile,
+        ttsText: item.ttsText || ''
+      });
+      await onSaveItem({
+        ...item,
+        fileId: item.fileId || '',
+        audioUrl: item.audioUrl || '',
+        sourceFileId: fileId,
+        sourceAudioUrl: audioUrl,
+        sourceCloudPath: cloudPath,
+        sourceFileName: file.name,
+        transcodeStatus: MEDITATION_AUDIO_TRANSCODE_STATUS.queued,
+        transcodeJobId: job.id || '',
+        transcodeError: '',
+        loudnessProfile: transcodeProfile,
+        transcodeUpdatedAt: new Date().toISOString()
+      }, item.id);
       URL.revokeObjectURL(blobUrl);
       setItemFeedbackMap((currentMap) => ({
         ...currentMap,
         [item.id]: {
           type: 'success',
-          text: '音频已生成并上传。'
+          text: '音频已生成并进入转码队列。'
         }
       }));
     } catch (err) {
@@ -1030,14 +1089,42 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
     }));
 
     try {
-      const cloudPath = `meditation-audio/${targetItem.type}/${targetItem.groupId || group.id}/${targetItem.id}-${file.name}`;
+      const cloudPath = `meditation-audio-raw/${targetItem.type}/${targetItem.groupId || group.id}/${targetItem.id}-${file.name}`;
       const { fileId, audioUrl } = await uploadAudioFile({ file, cloudPath });
-      await onSaveItem({ ...targetItem, fileId, audioUrl }, targetItem.id);
+      const transcodeProfile = resolveMeditationAudioTranscodeProfile({
+        type: targetItem.type,
+        isTts: Boolean(targetItem.ttsText)
+      });
+      const targetCloudPath = `meditation-audio/${targetItem.type}/${targetItem.groupId || group.id}/${targetItem.id}.opus`;
+      const job = await onQueueTranscodeJob({
+        itemId: targetItem.id,
+        libraryType: targetItem.type,
+        groupId: targetItem.groupId || group.id,
+        sourceFileId: fileId,
+        sourceAudioUrl: audioUrl,
+        sourceCloudPath: cloudPath,
+        sourceFileName: file.name,
+        targetCloudPath,
+        transcodeProfile,
+        ttsText: targetItem.ttsText || ''
+      });
+      await onSaveItem({
+        ...targetItem,
+        sourceFileId: fileId,
+        sourceAudioUrl: audioUrl,
+        sourceCloudPath: cloudPath,
+        sourceFileName: file.name,
+        transcodeStatus: MEDITATION_AUDIO_TRANSCODE_STATUS.queued,
+        transcodeJobId: job.id || '',
+        transcodeError: '',
+        loudnessProfile: transcodeProfile,
+        transcodeUpdatedAt: new Date().toISOString()
+      }, targetItem.id);
       setItemFeedbackMap((currentMap) => ({
         ...currentMap,
         [targetItem.id]: {
           type: 'success',
-          text: '音频已上传。'
+          text: '音频已上传并进入转码队列。'
         }
       }));
     } catch (err) {
@@ -1210,6 +1297,14 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
                     <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px' }}>
                       {item.ttsText ? 'TTS文本' : '音频文件'}
                     </div>
+                    {item.transcodeStatus && item.transcodeStatus !== MEDITATION_AUDIO_TRANSCODE_STATUS.idle && (
+                      <div style={{ fontSize: '11px', color: item.transcodeStatus === MEDITATION_AUDIO_TRANSCODE_STATUS.failed ? '#b91c1c' : '#6366f1', marginTop: '4px' }}>
+                        {item.transcodeStatus === MEDITATION_AUDIO_TRANSCODE_STATUS.queued && '转码排队中'}
+                        {item.transcodeStatus === MEDITATION_AUDIO_TRANSCODE_STATUS.processing && '转码处理中'}
+                        {item.transcodeStatus === MEDITATION_AUDIO_TRANSCODE_STATUS.succeeded && '转码完成'}
+                        {item.transcodeStatus === MEDITATION_AUDIO_TRANSCODE_STATUS.failed && `转码失败${item.transcodeError ? `：${item.transcodeError}` : ''}`}
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                     {item.ttsText && !item.audioUrl && (
@@ -1340,7 +1435,7 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
   );
 };
 
-const AudioLibrarySection = ({ type, groups, items, onSaveItem, onDeleteItem, onRenameGroup }) => {
+const AudioLibrarySection = ({ type, groups, items, onSaveItem, onDeleteItem, onRenameGroup, onQueueTranscodeJob }) => {
   const [expanded, setExpanded] = useState(false);
   const typeGroups = getTypeGroups(groups, type);
   const typeItems = items.filter((item) => item.type === type);
@@ -1373,6 +1468,7 @@ const AudioLibrarySection = ({ type, groups, items, onSaveItem, onDeleteItem, on
               onSaveItem={onSaveItem}
               onDeleteItem={onDeleteItem}
               onRenameGroup={onRenameGroup}
+              onQueueTranscodeJob={onQueueTranscodeJob}
             />
           ))}
         </div>
@@ -1383,7 +1479,8 @@ const AudioLibrarySection = ({ type, groups, items, onSaveItem, onDeleteItem, on
 
 // ─── AudioLibraryTab ──────────────────────────────────────────────────────────
 
-const AudioLibraryTab = ({ library, saving, onUpdate }) => {
+const AudioLibraryTab = ({ library, saving, onUpdate, onQueueTranscodeJob, onRefresh }) => {
+  const [refreshingStatuses, setRefreshingStatuses] = useState(false);
   const handleSaveItem = useCallback(async (item, replacingId) => {
     const currentItems = library.items || [];
     let nextItems;
@@ -1412,9 +1509,71 @@ const AudioLibraryTab = ({ library, saving, onUpdate }) => {
     await onUpdate({ ...library, groups: nextGroups });
   }, [library, onUpdate]);
 
+  const transcodeCounts = (library.items || []).reduce((summary, item) => {
+    const status = item.transcodeStatus || MEDITATION_AUDIO_TRANSCODE_STATUS.idle;
+    if (summary[status] !== undefined) {
+      summary[status] += 1;
+    }
+    return summary;
+  }, {
+    queued: 0,
+    processing: 0,
+    succeeded: 0,
+    failed: 0
+  });
+
+  const hasPendingTranscodes = transcodeCounts.queued > 0 || transcodeCounts.processing > 0;
+
+  const handleRefreshStatuses = useCallback(async () => {
+    if (!onRefresh) {
+      return;
+    }
+
+    setRefreshingStatuses(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshingStatuses(false);
+    }
+  }, [onRefresh]);
+
+  useEffect(() => {
+    if (!hasPendingTranscodes || !onRefresh) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void onRefresh();
+    }, 8000);
+
+    return () => window.clearInterval(intervalId);
+  }, [hasPendingTranscodes, onRefresh]);
+
   return (
     <div>
       <div style={sectionTitleStyle}>六大音频库管理</div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          marginBottom: '14px',
+          padding: '12px 14px',
+          borderRadius: '12px',
+          backgroundColor: hasPendingTranscodes ? '#eff6ff' : '#f8fafc',
+          border: hasPendingTranscodes ? '1px solid #bfdbfe' : '1px solid #e2e8f0'
+        }}
+      >
+        <div style={{ fontSize: '12px', color: '#475569', lineHeight: 1.7 }}>
+          转码状态：排队中 {transcodeCounts.queued} · 处理中 {transcodeCounts.processing} · 已完成 {transcodeCounts.succeeded} · 失败 {transcodeCounts.failed}
+        </div>
+        {onRefresh && (
+          <button style={ghostBtnStyle} onClick={() => { void handleRefreshStatuses(); }} disabled={refreshingStatuses}>
+            {refreshingStatuses ? '刷新中...' : '刷新状态'}
+          </button>
+        )}
+      </div>
       {saving && <div style={{ color: '#6366f1', fontSize: '12px', marginBottom: '12px' }}>保存中...</div>}
       {MEDITATION_AUDIO_LIBRARY_TYPES.map((type) => (
         <AudioLibrarySection
@@ -1425,6 +1584,7 @@ const AudioLibraryTab = ({ library, saving, onUpdate }) => {
           onSaveItem={handleSaveItem}
           onDeleteItem={handleDeleteItem}
           onRenameGroup={handleRenameGroup}
+          onQueueTranscodeJob={onQueueTranscodeJob}
         />
       ))}
     </div>
@@ -2439,17 +2599,536 @@ const MeditationPage = ({
   meditationCompositionSettings,
   meditationCalendar,
   meditationLibrary,
+  meditationParagraphs,
+  meditationSectionRaws,
+  aiSettings,
   savingMeditationAudioLibrary,
   savingMeditationCompositionSettings,
   savingMeditationCalendar,
   savingMeditationLibrary,
   updateMeditationAudioLibrary,
+  queueMeditationAudioTranscodeJob,
   updateMeditationCompositionSettings,
   updateMeditationCalendar,
   updateMeditationLibrary,
+  refreshMeditationSection,
   settingsError
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState('library');
+  const [activeSubTab, setActiveSubTab] = useState('paragraph');
+  const [activeFilter, setActiveFilter] = useState('all');
+
+  // Minimal create form state (P0)
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newText, setNewText] = useState('');
+  const [newType, setNewType] = useState('verse');
+  const [newTags, setNewTags] = useState('');
+
+  // P0 stub state for section-raw (fallback; real from prop if available)
+  const [sectionRawItems, setSectionRawItems] = useState([
+    // (populated from prop via useEffect)
+  ]);
+  const [showSectionCreateForm, setShowSectionCreateForm] = useState(false);
+  const [selectedParagraphIds, setSelectedParagraphIds] = useState([]);
+  const [sectionRawAudioStatus, setSectionRawAudioStatus] = useState({}); // { [id]: { uploading, fileId, audioUrl, error } }
+
+  // load real from prop (prefer over stubs) on mount/after refresh; supports prop or hook data
+  useEffect(() => {
+    if (Array.isArray(meditationSectionRaws)) {
+      setSectionRawItems(meditationSectionRaws);
+    }
+  }, [meditationSectionRaws]);
+
+  const selectedTotalChars = selectedParagraphIds.reduce((sum, pid) => {
+    const data = Array.isArray(meditationParagraphs) ? meditationParagraphs : [];
+    const p = data.find((pp) => (pp._id || pp.id) === pid);
+    return sum + String(p?.text || '').length;
+  }, 0);
+
+  const isDev = import.meta.env?.DEV === true;
+
+  // minimal create handler (P0 tiny follow-up)
+  const handleCreateParagraph = async () => {
+    try {
+      const tags = newTags.split(',').map((t) => t.trim()).filter(Boolean);
+      await DatabaseService.createMedParagraph({
+        text: newText,
+        paragraph_type: newType,
+        tags,
+        usage_count: 0,
+      });
+      setNewText('');
+      setNewTags('');
+      setShowCreateForm(false);
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch (err) {
+      console.error('Failed to create med paragraph:', err);
+    }
+  };
+
+  // P1: AI rewrite (仿写) - creates a rewritten copy with ai_rewritten_from tracking
+  const [rewritingId, setRewritingId] = useState(null);
+  const handleAiRewrite = async (originalParagraph) => {
+    if (!originalParagraph?._id || !originalParagraph?.text) return;
+    setRewritingId(originalParagraph._id);
+    try {
+      // Fetch latest AI settings directly from DB (avoid stale props)
+      const dbAiSettings = await DatabaseService.getAiSettings();
+      let rewrittenText = '';
+      const apiSettings = dbAiSettings || {};
+      if (apiSettings.apiKey && apiSettings.enabled !== false) {
+        try {
+          // Use Vite proxy for DeepSeek to avoid CORS; directly use configured endpoint as fallback
+          const endpoint = apiSettings.apiEndpoint || 'https://api.deepseek.com';
+          const isDefaultDeepSeek = endpoint.includes('api.deepseek.com');
+          const url = isDefaultDeepSeek
+            ? `/api/ai/proxy/v1/chat/completions`
+            : `${endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiSettings.apiKey}`
+            },
+            body: JSON.stringify({
+              model: apiSettings.model || 'deepseek-chat',
+              messages: [
+                { role: 'system', content: '你是一名中文文案改写助手。请用不同的词汇和句式改写下面的文本，要求至少替换20%的用词，变换表达方式但保持原意。改写前后的字数偏差必须在±5字以内。只返回改写后的结果。' },
+                { role: 'user', content: `原文：${originalParagraph.text}` }
+              ],
+              temperature: 0.9,
+              max_tokens: 500
+            })
+          });
+          if (!response.ok) {
+            const errBody = await response.text().catch(() => '');
+            console.error('AI API HTTP error:', response.status, errBody.slice(0, 300));
+            throw new Error(`API ${response.status}: ${errBody.slice(0, 200)}`);
+          }
+          const data = await response.json();
+          rewrittenText = data?.choices?.[0]?.message?.content?.trim() || '';
+        } catch (apiErr) {
+          console.error('AI API call failed:', apiErr.message);
+          setRewritingId(null);
+          return; // cancel the whole operation, don't create duplicate
+        }
+      }
+      if (!rewrittenText || rewrittenText.replace(/\s+/g, '') === originalParagraph.text.replace(/\s+/g, '')) {
+        console.error('AI rewrite failed: returned empty or unchanged text');
+        alert('DeepSeek 返回空或与原文相同。请检查 Console 中 "AI API full response" 日志。');
+        setRewritingId(null);
+        return; // cancel, don't create duplicate
+      }
+      const newParagraph = {
+        text: rewrittenText,
+        paragraph_type: originalParagraph.paragraph_type || 'verse',
+        tags: Array.isArray(originalParagraph.tags) ? [...originalParagraph.tags, 'ai-rewrite'] : ['ai-rewrite'],
+        usage_count: 0,
+        source: 'ai',
+        ai_rewritten_from: originalParagraph._id,
+        created_by: 'admin-ai-rewrite',
+      };
+      await DatabaseService.createMedParagraph(newParagraph);
+      // Increment original paragraph's score
+      await DatabaseService.updateMedParagraph(originalParagraph._id, {
+        usage_count: (originalParagraph.usage_count || 0) + 1,
+      });
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch (err) {
+      console.error('AI rewrite failed:', err);
+    } finally {
+      setRewritingId(null);
+    }
+  };
+
+  // tiny dev seed helper for paragraph tab (hardcoded from test cases doc "0. Data Setup Notes")
+  const handleSeedParagraphs = async () => {
+    const samples = [
+      // 1. intro, usage=0 (0 stars)
+      {
+        text: "欢迎来到理悟冥想空间。",
+        paragraph_type: "intro",
+        tags: ["greeting", "intro"],
+        usage_count: 0,
+        source: "manual",
+        created_by: "test-admin-001",
+      },
+      // 2. intro, usage=2
+      {
+        text: "请保持舒适的姿势，闭上双眼。",
+        paragraph_type: "intro",
+        tags: ["posture"],
+        usage_count: 2,
+        source: "manual",
+        created_by: "test-admin-001",
+      },
+      // 3. breath, usage=5 (mid stars)
+      {
+        text: "慢慢吸气... 感受腹部鼓起... 缓缓呼出... 释放所有压力。",
+        paragraph_type: "breath",
+        tags: ["breathing"],
+        usage_count: 5,
+        source: "manual",
+        created_by: "test-admin-001",
+      },
+      // 4. breath, usage=0
+      {
+        text: "吸气四秒，屏息四秒，呼气六秒。",
+        paragraph_type: "breath",
+        tags: [],
+        usage_count: 0,
+        source: "ai",
+        created_by: "test-admin-001",
+      },
+      // 5. verse, usage=12 (high stars)
+      {
+        text: "心如止水，念随息去。每一呼吸引导你回归当下。",
+        paragraph_type: "verse",
+        tags: ["heart", "verse"],
+        usage_count: 12,
+        source: "manual",
+        created_by: "test-admin-001",
+      },
+      // 6. verse, usage=25 (higher)
+      {
+        text: "在宁静中觉察，在觉察中成长。愿你与这份平静同在。",
+        paragraph_type: "verse",
+        tags: ["wisdom"],
+        usage_count: 25,
+        source: "ai",
+        created_by: "test-admin-001",
+      },
+    ];
+    try {
+      for (const sample of samples) {
+        await DatabaseService.createMedParagraph(sample);
+      }
+      console.log('samples seeded, list updates');
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch (err) {
+      console.error('Failed to seed med paragraphs:', err);
+    }
+  };
+
+  // P0 minimal section-raw handlers (local stub only, no DB, no audio)
+  const toggleSectionCreateForm = () => {
+    setShowSectionCreateForm((s) => {
+      const next = !s;
+      if (!next) setSelectedParagraphIds([]);
+      return next;
+    });
+  };
+
+  const toggleParagraphSelect = (pid) => {
+    if (!pid) return;
+    setSelectedParagraphIds((prev) => {
+      if (prev.includes(pid)) {
+        return prev.filter((id) => id !== pid);
+      }
+      return [...prev, pid];
+    });
+  };
+
+  const handleConfirmCreateSectionRaw = async () => {
+    if (!selectedParagraphIds.length) return;
+    const data = Array.isArray(meditationParagraphs) ? meditationParagraphs : [];
+    const selectedParagraphs = selectedParagraphIds
+      .map((pid) => {
+        const p = data.find((pp) => (pp._id || pp.id) === pid);
+        if (!p) return null;
+        const t = String(p.text || '').trim();
+        return t.length > 60 ? t.slice(0, 60) + '...' : t;
+      })
+      .filter(Boolean);
+    const totalChars = selectedParagraphIds.reduce((sum, pid) => {
+      const p = data.find((pp) => (pp._id || pp.id) === pid);
+      return sum + String(p?.text || '').length;
+    }, 0);
+    const newItem = {
+      id: generateId(),
+      paragraph_ids: [...selectedParagraphIds],
+      word_count_status: totalChars > 0 ? totalChars : '待计算',
+      paragraphs: selectedParagraphs,
+    };
+    try {
+      await DatabaseService.createMedSectionRaw({ paragraph_ids: newItem.paragraph_ids, word_count_status: newItem.word_count_status, created_at: new Date().toISOString() });
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch {
+      console.log('DB createMedSectionRaw attempt (fallback local)');
+      setSectionRawItems((prev) => [newItem, ...prev]);
+    }
+    setShowSectionCreateForm(false);
+    setSelectedParagraphIds([]);
+  };
+
+  // minimal audio upload for section-raw items (reuses existing uploadAudioFile)
+  const handleSectionRawUpload = async (itemId, file) => {
+    if (!itemId || !file) return;
+    setSectionRawAudioStatus((prev) => ({ ...prev, [itemId]: { uploading: true } }));
+    try {
+      const cloudPath = `meditation-audio-raw/section-raw/${itemId}/${Date.now()}-${file.name}`;
+      const { fileId, audioUrl } = await uploadAudioFile({ file, cloudPath });
+      setSectionRawItems((prev) => prev.map((item) =>
+        item.id === itemId ? { ...item, file_id: fileId, audio_url: audioUrl } : item
+      ));
+      // persist audio_id to DB if the item has a real _id
+      const currentItem = Array.isArray(localSectionRaws) ? localSectionRaws.find((r) => (r._id || r.id) === itemId) : null;
+      if (currentItem?._id) {
+        try {
+          await DatabaseService.updateMedSectionRaw(currentItem._id, { file_id: fileId, audio_url: audioUrl });
+          // queue Opus transcode job for this item
+          try {
+            const targetCloudPath = `meditation-audio/section-raw/${itemId}/${Date.now()}.opus`;
+            await DatabaseService.createMeditationAudioTranscodeJob({
+              itemId: currentItem._id,
+              sourceFileId: fileId,
+              sourceFileName: file.name,
+              sourceCloudPath: cloudPath,
+              targetCloudPath,
+              transcode_profile: 'default',
+            });
+            console.log('transcode job queued for section-raw:', currentItem._id);
+          } catch (transcodeErr) {
+            console.log('transcode queue skipped (non-critical):', transcodeErr.message);
+          }
+        } catch (dbErr) {
+          console.log('DB update for audio_id skipped (item may be local stub):', dbErr.message);
+        }
+      }
+      setSectionRawAudioStatus((prev) => ({ ...prev, [itemId]: { uploading: false, fileId, audioUrl, success: true } }));
+    } catch (err) {
+      console.error('section-raw upload failed:', err);
+      setSectionRawAudioStatus((prev) => ({ ...prev, [itemId]: { uploading: false, error: err.message || '上传失败' } }));
+    }
+  };
+
+  // paragraph edit state
+  const [editParagraph, setEditParagraph] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [editType, setEditType] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [polishing, setPolishing] = useState(false);
+  const [editTagInput, setEditTagInput] = useState('');
+  const [addingToSectionRaw, setAddingToSectionRaw] = useState(null);
+  const [sectionRawDropdownOpen, setSectionRawDropdownOpen] = useState(false);
+  const [sectionRawDropdownList, setSectionRawDropdownList] = useState([]);
+  const [appendToSr, setAppendToSr] = useState(null); // section-raw id to append to
+  const [appendSelected, setAppendSelected] = useState([]);
+  const [appending, setAppending] = useState(false);
+
+  // Locked paragraph IDs (those present in any section-raw)
+  const lockedParagraphIds = React.useMemo(() => new Set(
+    (Array.isArray(sectionRawItems) ? sectionRawItems : []).flatMap((sr) =>
+      Array.isArray(sr.paragraph_ids) ? sr.paragraph_ids : []
+    )
+  ), [sectionRawItems]);
+
+  // Load existing section-raws for the dropdown when edit modal opens
+  useEffect(() => {
+    if (editParagraph) {
+      DatabaseService.getMedSectionRaws().then((data) => {
+        setSectionRawDropdownList(
+          (data || []).map((sr) => ({
+            id: sr._id || sr.id,
+            paragraphs: Array.isArray(sr.paragraph_texts) ? sr.paragraph_texts : [],
+          }))
+        );
+      }).catch(() => {});
+    }
+  }, [editParagraph]);
+  const [paragraphTagFilter, setParagraphTagFilter] = useState(null);
+  const [paragraphSortKey, setParagraphSortKey] = useState('score');
+
+  const handleDeleteParagraph = async (p) => {
+    if (!p?._id) return;
+    if (!confirm(`确定删除此段落？\n\n${(p.text || '').slice(0, 80)}`)) return;
+    try {
+      await DatabaseService.deleteMedParagraph(p._id);
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch (err) {
+      console.error('Delete failed:', err);
+      alert('删除失败');
+    }
+  };
+
+  // Lazy load sub-tab data on demand (instead of loading all at once on mount)
+  const [localAudioLibrary, setLocalAudioLibrary] = useState(meditationAudioLibrary);
+  const [localSectionRaws, setLocalSectionRaws] = useState(meditationSectionRaws);
+  const [localCompositionSettings, setLocalCompositionSettings] = useState(meditationCompositionSettings);
+  const [localCalendar, setLocalCalendar] = useState(meditationCalendar);
+  const [localLibrary, setLocalLibrary] = useState(meditationLibrary);
+  useEffect(() => {
+    const load = async () => {
+      try {
+        switch (activeSubTab) {
+          case 'library':
+            if (!localAudioLibrary?.documentId) {
+              const data = await DatabaseService.getMeditationAudioLibrary();
+              setLocalAudioLibrary(data);
+            }
+            break;
+          case 'section-raw':
+            try {
+              const data = await DatabaseService.getMedSectionRaws();
+              setLocalSectionRaws(data || []);
+              // Also update sectionRawItems (the actual render state) with normalized data
+              setSectionRawItems(
+                (data || []).map((item, idx) => ({
+                  id: item._id || item.id || `sr-${idx}`,
+                  paragraph_ids: Array.isArray(item.paragraph_ids) ? item.paragraph_ids : [],
+                  paragraphs: Array.isArray(item.paragraph_texts) ? item.paragraph_texts : [],
+                  word_count_status: item.word_count_status || '',
+                  audio_url: item.audio_url || '',
+                  file_id: item.file_id || '',
+                  transcodeStatus: item.transcode_status || null,
+                  transcodeError: item.transcode_error || null,
+                }))
+              );
+              console.log('Section-raw loaded:', data?.length, 'items');
+            } catch (e) {
+              console.error('Failed to load section-raw:', e.message);
+            }
+            break;
+          case 'composition':
+            if (!localCompositionSettings?.documentId) {
+              const data = await DatabaseService.getMeditationCompositionSettings();
+              setLocalCompositionSettings(data);
+            }
+            break;
+          case 'calendar':
+            if (!localCalendar?.documentId) {
+              const data = await DatabaseService.getMeditationCalendar();
+              setLocalCalendar(data);
+            }
+            break;
+          case 'presets':
+            if (!localLibrary?.documentId) {
+              const data = await DatabaseService.getMeditationLibrary();
+              setLocalLibrary(data);
+            }
+            break;
+        }
+      } catch (e) {
+        console.log('Lazy load skipped for', activeSubTab, e.message);
+      }
+    };
+    load();
+  }, [activeSubTab]);
+
+  const handleOpenEdit = (p) => {
+    setEditParagraph(p);
+    setEditText(p?.text || '');
+    setEditType(p?.paragraph_type || 'verse');
+    setEditTags(Array.isArray(p?.tags) ? p.tags.join(', ') : '');
+  };
+
+  const handleAiPolish = async () => {
+    if (!editText) return;
+    setPolishing(true);
+    try {
+      const dbAiSettings = await DatabaseService.getAiSettings() || {};
+      if (!dbAiSettings.apiKey) { alert('请先在 设置→AI 中配置 API Key'); return; }
+      const endpoint = dbAiSettings.apiEndpoint || 'https://api.deepseek.com';
+      const isDefaultDeepSeek = endpoint.includes('api.deepseek.com');
+      const url = isDefaultDeepSeek ? '/api/ai/proxy/v1/chat/completions' : `${endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dbAiSettings.apiKey}` },
+        body: JSON.stringify({
+          model: dbAiSettings.model || 'deepseek-chat',
+          messages: [
+            { role: 'system', content: '你是一名中文文案润色助手。请对以下文本进行轻微的润色，保持原意、长度和整体结构，只优化用词和表达流畅度，不做大幅修改。只返回润色后的结果。' },
+            { role: 'user', content: `原文：${editText}` }
+          ],
+          temperature: 0.5,
+          max_tokens: 500
+        })
+      });
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      const data = await response.json();
+      const polished = data?.choices?.[0]?.message?.content?.trim();
+      if (polished) setEditText(polished);
+    } catch (err) {
+      console.error('AI polish failed:', err);
+      alert('AI 润色失败：' + err.message);
+    } finally {
+      setPolishing(false);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editParagraph?._id) return;
+    setSavingEdit(true);
+    try {
+      const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean);
+      const updateData = {
+        text: editText,
+        paragraph_type: editType,
+        tags,
+        // manual edit clears AI status
+        source: 'manual',
+        ai_rewritten_from: null,
+      };
+      await DatabaseService.updateMedParagraph(editParagraph._id, updateData);
+      setEditParagraph(null);
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch (err) {
+      console.error('Failed to update paragraph:', err);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleAddToSectionRaw = async (targetId) => {
+    if (!editParagraph?._id) return;
+    setAddingToSectionRaw(targetId || 'new');
+    setSectionRawDropdownOpen(false);
+    try {
+      const text = editText || editParagraph.text || '';
+      if (targetId && targetId !== 'new') {
+        // Append to existing section-raw
+        const existing = sectionRawDropdownList.find((sr) => sr.id === targetId);
+        const existingParagraphs = existing?.paragraphs || [];
+        await DatabaseService.updateMedSectionRaw(targetId, {
+          paragraph_texts: [...existingParagraphs, text],
+        });
+      } else {
+        // Create new section-raw
+        const payload = {
+          paragraph_ids: [editParagraph._id],
+          paragraph_texts: [text],
+          word_count_status: String(text.length),
+          created_by: 'admin-edit-modal',
+        };
+        await DatabaseService.createMedSectionRaw(payload);
+      }
+      setAddingToSectionRaw(null);
+      setEditParagraph(null);
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+      setActiveSubTab('section-raw');
+    } catch (err) {
+      console.error('Failed to add to section-raw:', err);
+      setAddingToSectionRaw(null);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditParagraph(null);
+  };
 
   return (
     <div>
@@ -2469,39 +3148,571 @@ const MeditationPage = ({
       )}
 
       <div style={cardStyle}>
-        {activeSubTab === 'library' && (
-          <AudioLibraryTab
-            library={meditationAudioLibrary}
-            saving={savingMeditationAudioLibrary}
-            onUpdate={updateMeditationAudioLibrary}
-          />
+        {activeSubTab === 'paragraph' && (
+          <div>
+            <div style={sectionTitleStyle}>段落文本库</div>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              {['all', 'intro', 'breath', 'verse'].map((pt) => (
+                <button key={pt} style={pillBtnStyle(activeFilter === pt)} onClick={() => setActiveFilter(pt)}>{pt}</button>
+              ))}
+            </div>
+            {(() => {
+              const data = Array.isArray(meditationParagraphs) ? meditationParagraphs : [];
+              // Build score map: each paragraph gets a score based on usage_count + ai rewrite count
+              const scored = data.map((p) => ({
+                ...p,
+                score: Number(p.usage_count || 0) + Number(p.ai_rewrite_count || 0),
+              }));
+              // Sort by score descending (default)
+              const sortKey = paragraphSortKey || 'score';
+              const sorted = [...scored].sort((a, b) => {
+                if (sortKey === 'score') return (b.score || 0) - (a.score || 0);
+                if (sortKey === 'text') return (a.text || '').localeCompare(b.text || '');
+                return (b.score || 0) - (a.score || 0);
+              });
+              // Filter by type + tag
+              const filtered = sorted.filter((p) => {
+                if (activeFilter !== 'all' && p.paragraph_type !== activeFilter) return false;
+                if (paragraphTagFilter && paragraphTagFilter !== 'all') {
+                  const tags = Array.isArray(p.tags) ? p.tags : [];
+                  if (!tags.includes(paragraphTagFilter)) return false;
+                }
+                return true;
+              });
+              // Compute percentile-based stars
+              const allScores = filtered.map((p) => p.score || 0).sort((a, b) => b - a);
+              const getStars = (score) => {
+                if (!score || allScores.length === 0) return '';
+                const rank = allScores.findIndex((s) => s <= (score || 0));
+                const pct = rank / Math.max(allScores.length, 1);
+                if (pct < 0.2) return '★★★★★';
+                if (pct < 0.4) return '★★★★';
+                if (pct < 0.6) return '★★★';
+                if (pct < 0.8) return '★★';
+                return '★';
+              };
+              // Build unique tag list for filter
+              const allTags = [...new Set(data.flatMap((p) => Array.isArray(p.tags) ? p.tags : []))].sort();
+              return (
+                <>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px', alignItems: 'center' }}>
+                    <select
+                      value={paragraphTagFilter || 'all'}
+                      onChange={(e) => setParagraphTagFilter(e.target.value === 'all' ? null : e.target.value)}
+                      style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', outline: 'none' }}
+                    >
+                      <option value="all">全部标签</option>
+                      {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <select
+                      value={paragraphSortKey || 'score'}
+                      onChange={(e) => setParagraphSortKey(e.target.value)}
+                      style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', outline: 'none' }}
+                    >
+                      <option value="score">按星级排序</option>
+                      <option value="text">按文本排序</option>
+                    </select>
+                    <span style={{ fontSize: '12px', color: '#64748b' }}>{filtered.length} 条 {activeFilter !== 'all' ? `(${activeFilter})` : ''}</span>
+                  </div>
+                  {filtered.length === 0 ? (
+                    <div style={{ padding: '6px 8px', color: '#94a3b8', fontSize: '13px' }}>med_paragraphs data will appear here (seed via CloudBase)</div>
+                  ) : filtered.map((p, index) => {
+                      const text = String(p?.text || '').trim();
+                      const ptype = p?.paragraph_type || '';
+                      const stars = getStars(p.score);
+                      const isLocked = lockedParagraphIds.has(p._id);
+                      return (
+                        <div key={p?._id || index} style={{ display: 'flex', gap: '12px', padding: '6px 8px', borderTop: index > 0 ? '1px solid #f8fafc' : 'none', fontSize: '13px', alignItems: 'center' }}>
+                          <div style={{ flex: 1, cursor: isLocked ? 'default' : 'pointer', wordBreak: 'break-word' }} title={isLocked ? '已加入音频库，不可编辑' : '点击编辑'} onClick={() => !isLocked && handleOpenEdit(p)}>
+                            {p?.source === 'ai' && <span style={{ marginRight: '4px', fontSize: '11px', verticalAlign: 'middle' }}><img src="/icons/partner/ai.svg" style={{ width: '14px', height: '14px', verticalAlign: 'middle' }} alt="AI" /></span>}
+                            {isLocked && <span style={{ marginRight: '4px', fontSize: '12px', verticalAlign: 'middle' }} title="已加入音频库">🔒</span>}
+                            {text.length > 120 ? text.slice(0, 120) + '...' : text}
+                          </div>
+                          <div style={{ color: '#64748b', minWidth: '50px', fontSize: '12px' }}>{ptype}</div>
+                          <div style={{ color: '#f59e0b', minWidth: '60px', fontSize: '12px', whiteSpace: 'nowrap', textAlign: 'center' }}>{stars}</div>
+                          <button
+                            style={{
+                              padding: '2px 8px', fontSize: '11px', borderRadius: '4px',
+                              border: isLocked ? '1px solid #e2e8f0' : '1px solid #818cf8',
+                              background: isLocked ? '#f1f5f9' : '#eef2ff',
+                              color: isLocked ? '#94a3b8' : '#4338ca',
+                              cursor: isLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap'
+                            }}
+                            disabled={rewritingId === p?._id || isLocked}
+                            onClick={() => !isLocked && handleAiRewrite(p)}
+                          >
+                            {rewritingId === p?._id ? '改写中...' : isLocked ? '已锁定 🔒' : 'AI仿写'}
+                          </button>
+                          <button
+                            style={{
+                              padding: '2px 8px', fontSize: '11px', borderRadius: '4px',
+                              border: isLocked ? '1px solid #e2e8f0' : '1px solid #fca5a5',
+                              background: isLocked ? '#f1f5f9' : '#fef2f2',
+                              color: isLocked ? '#94a3b8' : '#dc2626',
+                              cursor: isLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', lineHeight: '1'
+                            }}
+                            onClick={() => !isLocked && handleDeleteParagraph(p)}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      );
+                    })}
+                </>
+              );
+            })()}
+                {/* minimal create for paragraph tab (tiny follow-up) */}
+                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                 style={{
+                   padding: '4px 10px',
+                   fontSize: '12px',
+                   borderRadius: '6px',
+                   border: '1px solid #e2e8f0',
+                   background: '#f8fafc',
+                   color: '#334155',
+                   cursor: 'pointer'
+                 }}
+                 onClick={() => setShowCreateForm((s) => !s)}
+                >
+                 {showCreateForm ? '取消新增' : '新增段落'}
+                </button>
+                {isDev && (
+                  <button
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '12px',
+                      borderRadius: '6px',
+                      border: '1px dashed #64748b',
+                      background: '#f1f5f9',
+                      color: '#475569',
+                      cursor: 'pointer'
+                    }}
+                    onClick={handleSeedParagraphs}
+                    title="Dev only: seed 6 sample med_paragraphs from test cases"
+                  >
+                    Seed sample data (dev)
+                  </button>
+                )}
+                </div>
+                {showCreateForm && (
+                 <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: '#fafafa', padding: '8px', borderRadius: '8px' }}>
+                   <textarea
+                     value={newText}
+                     onChange={(e) => setNewText(e.target.value)}
+                     placeholder="段落文本内容"
+                     style={{ ...inputStyle, minHeight: '48px', fontSize: '12px' }}
+                   />
+                   <select
+                     value={newType}
+                     onChange={(e) => setNewType(e.target.value)}
+                     style={{ ...inputStyle, fontSize: '12px' }}
+                   >
+                     <option value="intro">intro</option>
+                     <option value="breath">breath</option>
+                     <option value="verse">verse</option>
+                   </select>
+                   <input
+                     value={newTags}
+                     onChange={(e) => setNewTags(e.target.value)}
+                     placeholder="tags，逗号分隔 (e.g. calm,focus)"
+                     style={{ ...inputStyle, fontSize: '12px' }}
+                   />
+                   <button
+                     style={{ ...primaryBtnStyle, fontSize: '12px', padding: '4px 10px', alignSelf: 'flex-start' }}
+                     onClick={handleCreateParagraph}
+                   >
+                     提交新增
+                   </button>
+                 </div>
+                )}
+                </div>
+          </div>
         )}
+
+        {activeSubTab === 'section-raw' && (
+          <div>
+            <div style={sectionTitleStyle}>原始音频库</div>
+            <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px' }}>
+              Section-raw 列表
+            </div>
+            {sectionRawItems.length === 0 ? (
+              <div style={{ padding: '6px 8px', color: '#94a3b8', fontSize: '13px' }}>暂无 section-raw</div>
+            ) : sectionRawItems.map((item, idx) => (
+              <div key={item.id || idx} style={{ padding: '6px 8px', borderTop: idx > 0 ? '1px solid #f8fafc' : 'none', fontSize: '13px' }}>
+                <div>IDs: {item.paragraph_ids.join(', ')}</div>
+                 {Array.isArray(item.paragraphs) && item.paragraphs.length > 0 && (
+                   <ol style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 4px 20px', padding: 0 }}>
+                     {item.paragraphs.map((txt, ti) => (
+                       <li key={ti} style={{ opacity: 0.85 }}>{txt}</li>
+                     ))}
+                   </ol>
+                 )}
+                 <div style={{ color: '#64748b' }}>字数状态: {item.word_count_status}</div>
+                 <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', flexWrap: 'wrap' }}>
+                   <button
+                     style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#059669', cursor: 'pointer' }}
+                     onClick={() => setAppendToSr(item.id)}
+                   >
+                     📎 追加段落
+                   </button>
+                   {!item.audio_url && (
+                     <button
+                       style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #c4b5fd', background: '#f5f3ff', color: '#7c3aed', cursor: 'pointer' }}
+                       onClick={async () => {
+                         try {
+                           const text = Array.isArray(item.paragraphs) ? item.paragraphs.join('\n') : '';
+                           if (!text) return;
+                           const blobUrl = await synthesizeSpeech(text, { voice: 'zh-CN' });
+                           const audio = new Audio(blobUrl);
+                           audio.play();
+                         } catch (e) {
+                           console.error('AI listen failed:', e);
+                         }
+                       }}
+                     >
+                       🎧 AI试听
+                     </button>
+                   )}
+                   {item.audio_url ? (
+                     <span style={{ color: '#22c55e' }}>✅ 已上传音频</span>
+                   ) : (
+                     <label style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', cursor: 'pointer', display: 'inline-block' }}>
+                       {sectionRawAudioStatus[item.id]?.uploading ? '上传中...' : '上传音频'}
+                       <input type="file" accept="audio/*" style={{ display: 'none' }} disabled={sectionRawAudioStatus[item.id]?.uploading}
+                         onChange={(e) => {
+                           const f = e.target.files?.[0];
+                           if (f) handleSectionRawUpload(item.id, f);
+                           e.target.value = '';
+                         }}
+                       />
+                     </label>
+                   )}
+                   {sectionRawAudioStatus[item.id]?.error && (
+                     <span style={{ color: '#ef4444' }}>❌ {sectionRawAudioStatus[item.id]?.error}</span>
+                   )}
+                   {item.file_id && !item.audio_url && (
+                     <span style={{ color: '#f59e0b' }}>⏳ 转码中</span>
+                   )}
+                 </div>
+              </div>
+              ))}
+            <div style={{ marginTop: '12px' }}>
+              <button
+                style={{ padding: '4px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#334155', cursor: 'pointer' }}
+                onClick={toggleSectionCreateForm}
+              >
+                {showSectionCreateForm ? '取消新建' : '新建 section-raw'}
+              </button>
+            </div>
+            {showSectionCreateForm && (
+              <div style={{ marginTop: '8px', padding: '8px', background: '#fafafa', borderRadius: '8px', fontSize: '12px' }}>
+                <div>选择段落（stub）:</div>
+                { (meditationParagraphs || []).slice(0,5).map((p, i) => {
+                  const id = p?._id || `p-${i}`;
+                  const checked = selectedParagraphIds.includes(id);
+                  return (
+                    <label key={id} style={{ display: 'block', margin: '2px 0' }}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleParagraphSelect(id)} /> {String(p?.text || '').slice(0,30)}...
+                    </label>
+                  );
+                })}
+
+                <div style={{ margin: '4px 0', color: '#64748b' }}>预计字数: {selectedTotalChars}</div>
+                <button style={{ marginTop: '6px', padding: '3px 8px', fontSize: '11px' }} onClick={handleConfirmCreateSectionRaw}>保存</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Append paragraphs modal */}
+        {appendToSr && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', width: '460px', maxWidth: '94vw', maxHeight: '80vh', overflowY: 'auto' }}>
+              <div style={{ fontSize: '15px', fontWeight: '600', color: '#1e293b', marginBottom: '16px' }}>选择要追加的段落</div>
+              {(meditationParagraphs || []).map((p) => {
+                const pid = p._id || p.id;
+                const isSelected = appendSelected.includes(pid);
+                return (
+                  <label key={pid} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid #f8fafc', fontSize: '13px' }}>
+                    <input type="checkbox" checked={isSelected} onChange={() => {
+                      setAppendSelected((prev) => isSelected ? prev.filter((id) => id !== pid) : [...prev, pid]);
+                    }} style={{ accentColor: '#6366f1' }} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p?.source === 'ai' && '🤖 '}{p?.text?.slice(0, 80) || ''}
+                    </span>
+                    <span style={{ color: '#94a3b8', fontSize: '11px', flexShrink: 0 }}>{p?.paragraph_type}</span>
+                  </label>
+                );
+              })}
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                <button style={{ padding: '7px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', backgroundColor: '#fff', color: '#475569' }}
+                  onClick={() => { setAppendToSr(null); setAppendSelected([]); }}>取消</button>
+                <button style={{ padding: '7px 16px', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '500', cursor: 'pointer', backgroundColor: '#1e293b', color: '#fff' }}
+                  disabled={appending || appendSelected.length === 0}
+                  onClick={async () => {
+                    setAppending(true);
+                    try {
+                      const sr = sectionRawItems.find((s) => s.id === appendToSr);
+                      const existingTexts = sr?.paragraphs || [];
+                      const newTexts = appendSelected.map((pid) => {
+                        const p = (meditationParagraphs || []).find((pp) => (pp._id || pp.id) === pid);
+                        return p?.text || '';
+                      }).filter(Boolean);
+                      await DatabaseService.updateMedSectionRaw(appendToSr, {
+                        paragraph_texts: [...existingTexts, ...newTexts],
+                      });
+                      setAppendToSr(null);
+                      setAppendSelected([]);
+                      if (typeof refreshMeditationSection === 'function') await refreshMeditationSection();
+                    } catch (err) {
+                      console.error('Append failed:', err);
+                    } finally {
+                      setAppending(false);
+                    }
+                  }}
+                >
+                  {appending ? '追加中...' : `追加 ${appendSelected.length} 条`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeSubTab === 'library' && (
+          <React.Fragment>
+          <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
+            ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。新数据请在「段落文本库」和「原始音频库」中管理。
+          </div>
+                <AudioLibraryTab
+                library={localAudioLibrary}
+                saving={savingMeditationAudioLibrary}
+                onUpdate={updateMeditationAudioLibrary}
+                onQueueTranscodeJob={queueMeditationAudioTranscodeJob}
+                onRefresh={refreshMeditationSection}
+                />
+                </React.Fragment>
+                )}
+
         {activeSubTab === 'presets' && (
+          <React.Fragment>
+          <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
+            ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。
+          </div>
           <MeditationPresetsTab
-            meditationLibrary={meditationLibrary}
-            audioLibrary={meditationAudioLibrary}
-            compositionSettings={meditationCompositionSettings}
+            meditationLibrary={localLibrary}
+            audioLibrary={localAudioLibrary}
+            compositionSettings={localCompositionSettings}
             saving={savingMeditationLibrary}
             onUpdate={updateMeditationLibrary}
           />
+          </React.Fragment>
         )}
         {activeSubTab === 'composition' && (
+          <React.Fragment>
+          <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
+            ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。
+          </div>
           <CompositionTab
-            settings={meditationCompositionSettings}
-            library={meditationAudioLibrary}
+            settings={localCompositionSettings}
+            library={localAudioLibrary}
             saving={savingMeditationCompositionSettings}
             onUpdate={updateMeditationCompositionSettings}
           />
+          </React.Fragment>
         )}
         {activeSubTab === 'calendar' && (
+          <React.Fragment>
+          <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
+            ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。
+          </div>
           <CalendarTab
-            calendar={meditationCalendar}
-            meditationLibrary={meditationLibrary}
+            calendar={localCalendar}
+            meditationLibrary={localLibrary}
             saving={savingMeditationCalendar}
             onUpdate={updateMeditationCalendar}
           />
+          </React.Fragment>
         )}
       </div>
+
+      {/* Paragraph edit modal */}
+      {editParagraph && (() => {
+        const allAvailableTags = [...new Set(
+          (Array.isArray(meditationParagraphs) ? meditationParagraphs : [])
+            .flatMap((p) => Array.isArray(p.tags) ? p.tags : [])
+        )].sort();
+        return (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#fff', borderRadius: '16px', padding: '28px',
+            width: '520px', maxWidth: '94vw', maxHeight: '80vh', overflowY: 'auto'
+          }}>
+            <div style={{ fontSize: '16px', fontWeight: '600', color: '#1e293b', marginBottom: '20px' }}>
+              编辑段落
+              {editParagraph.source === 'ai' && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#6366f1', fontWeight: '400' }}>（AI 生成）</span>}
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#64748b', marginBottom: '4px' }}>文本内容</label>
+              {lockedParagraphIds.has(editParagraph._id) ? (
+                <div style={{ padding: '10px 12px', backgroundColor: '#fef9c3', borderRadius: '8px', fontSize: '13px', color: '#713f12', lineHeight: '1.6' }}>
+                  🔒 此段落已加入音频库，不可编辑。如要修改请先从音频库中移除。
+                </div>
+              ) : (
+              <div style={{ position: 'relative' }}>
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                style={{ width: '100%', minHeight: '120px', padding: '10px 12px', fontSize: '13px', border: '1px solid #e2e8f0', borderRadius: '8px', outline: 'none', boxSizing: 'border-box', lineHeight: '1.6', resize: 'vertical' }}
+                placeholder="段落文本内容"
+              />
+              <button
+                style={{ position: 'absolute', bottom: '8px', right: '8px', padding: '3px 8px', border: '1px solid #818cf8', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', backgroundColor: '#eef2ff', color: '#4338ca', whiteSpace: 'nowrap' }}
+                onClick={handleAiPolish}
+                disabled={polishing || !editText}
+              >
+                {polishing ? '润色中...' : 'AI润色'}
+              </button>
+              </div>
+            )}
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#64748b', marginBottom: '4px' }}>类型</label>
+              <select
+                value={editType}
+                onChange={(e) => setEditType(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #e2e8f0', borderRadius: '8px', outline: 'none', boxSizing: 'border-box' }}
+              >
+                <option value="intro">intro</option>
+                <option value="breath">breath</option>
+                <option value="verse">verse</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#64748b', marginBottom: '4px' }}>标签</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', padding: '6px 8px', border: '1px solid #e2e8f0', borderRadius: '8px', minHeight: '32px', alignItems: 'center', marginBottom: '6px' }}>
+                {(editTags ? editTags.split(',').map((t) => t.trim()).filter(Boolean) : []).map((tag, i) => (
+                  <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', backgroundColor: '#eef2ff', color: '#4338ca', borderRadius: '12px', fontSize: '12px', fontWeight: '500' }}>
+                    {tag}
+                    <span style={{ cursor: 'pointer', fontSize: '14px', lineHeight: '1', color: '#6366f1' }} onClick={() => {
+                      const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean);
+                      tags.splice(i, 1);
+                      setEditTags(tags.join(', '));
+                    }}>×</span>
+                  </span>
+                ))}
+                <input
+                  value={editTagInput}
+                  onChange={(e) => setEditTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const val = editTagInput.replace(/,/g, '').trim();
+                      if (val) {
+                        const existing = editTags ? editTags.split(',').map((t) => t.trim()).filter(Boolean) : [];
+                        setEditTags([...existing, val].join(', '));
+                        setEditTagInput('');
+                      }
+                    }
+                  }}
+                  style={{ border: 'none', outline: 'none', fontSize: '12px', flex: '1', minWidth: '80px', padding: '2px 4px' }}
+                  placeholder="输入后回车添加"
+                />
+              </div>
+              {/* Available tags to click */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                {allAvailableTags.map((tag) => {
+                  const currentTags = editTags ? editTags.split(',').map((t) => t.trim()).filter(Boolean) : [];
+                  const isSelected = currentTags.includes(tag);
+                  return (
+                    <span
+                      key={tag}
+                      onClick={() => {
+                        if (isSelected) {
+                          const idx = currentTags.indexOf(tag);
+                          currentTags.splice(idx, 1);
+                        } else {
+                          currentTags.push(tag);
+                        }
+                        setEditTags(currentTags.join(', '));
+                      }}
+                      style={{
+                        padding: '2px 10px', borderRadius: '12px', fontSize: '11px', cursor: 'pointer',
+                        backgroundColor: isSelected ? '#eef2ff' : '#f1f5f9',
+                        color: isSelected ? '#4338ca' : '#64748b',
+                        border: isSelected ? '1px solid #818cf8' : '1px solid #e2e8f0',
+                      }}
+                    >
+                      {tag} {isSelected ? '✓' : '+'}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {editParagraph.source === 'ai' && (
+              <div style={{ padding: '8px 12px', backgroundColor: '#fef9c3', borderRadius: '8px', fontSize: '12px', color: '#713f12', marginBottom: '16px' }}>
+                ⚠️ 编辑后将清除 AI 标记，AI 图标将消失。
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between' }}>
+              <div style={{ position: 'relative' }}>
+                <button
+                  style={{ padding: '7px 16px', border: '1px solid #818cf8', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', backgroundColor: '#eef2ff', color: '#4338ca', whiteSpace: 'nowrap' }}
+                  onClick={() => setSectionRawDropdownOpen(!sectionRawDropdownOpen)}
+                  disabled={addingToSectionRaw !== null}
+                >
+                  {addingToSectionRaw === 'new' ? '新建中...' : addingToSectionRaw ? '追加中...' : '📢 加入音频库 ▾'}
+                </button>
+                {sectionRawDropdownOpen && (
+                  <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: '4px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', border: '1px solid #e2e8f0', minWidth: '240px', zIndex: 10, maxHeight: '300px', overflowY: 'auto' }}>
+                    <div style={{ padding: '8px 12px', fontSize: '12px', fontWeight: '600', color: '#1e293b', borderBottom: '1px solid #f1f5f9', cursor: 'pointer' }} onClick={() => handleAddToSectionRaw('new')}>
+                      ✨ 新建 Section-Raw
+                    </div>
+                    {sectionRawDropdownList.map((sr) => (
+                      <div key={sr.id} style={{ padding: '8px 12px', fontSize: '12px', color: '#475569', cursor: 'pointer', borderBottom: '1px solid #f8fafc', display: 'flex', justifyContent: 'space-between' }}
+                        onClick={() => handleAddToSectionRaw(sr.id)}
+                      >
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {sr.paragraphs?.[0]?.slice(0, 40) || '无内容'}...
+                        </span>
+                        <span style={{ color: '#94a3b8', marginLeft: '8px', flexShrink: 0 }}>{sr.paragraphs?.length || 0}条</span>
+                      </div>
+                    ))}
+                    {sectionRawDropdownList.length === 0 && (
+                      <div style={{ padding: '8px 12px', fontSize: '12px', color: '#94a3b8' }}>暂无已有 Section-Raw</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                style={{ padding: '7px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', backgroundColor: '#fff', color: '#475569' }}
+                onClick={handleCancelEdit}
+              >
+                取消
+              </button>
+              <button
+                style={{ padding: '7px 16px', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '500', cursor: 'pointer', backgroundColor: '#1e293b', color: '#fff' }}
+                onClick={handleSaveEdit}
+                disabled={savingEdit}
+              >
+                {savingEdit ? '保存中...' : '保存编辑'}
+              </button>
+            </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
     </div>
   );
 };

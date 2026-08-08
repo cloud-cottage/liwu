@@ -1,339 +1,116 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { createAuthService, readSession } from '@liwu/auth';
 import { DATABASE_CONFIG } from '../config/database.js';
+import { createAuthResolvers, createEnsureAnonymousLogin } from '@liwu/shared-utils/cloudbase-auth-runtime.js';
+import {
+  createPendingAuthPhoneHelpers,
+  createPendingInviteHelpers,
+  getOrCreateAwarenessAuthorKey,
+  readLocalStorageJSON,
+  readLocalStorageValue,
+  readSessionStorageJSON,
+  removeLocalStorageByPrefix,
+  writeLocalStorageJSON,
+  writeLocalStorageValue,
+  writeSessionStorageJSON
+} from '@liwu/shared-utils/cloudbase-browser-storage.js';
+import {
+  getDocumentId,
+  getFirstDocument,
+  getResponseData,
+  isMissingCollectionIssue,
+  isMissingCollectionResponse
+} from '@liwu/shared-utils/cloudbase-document-helpers.js';
+import {
+  createLoadMergedUserDocument,
+  createSaveCurrentUserProfileBundle
+} from '@liwu/shared-utils/user-bundle.js';
+import { createCloudBaseProxyRuntime } from '@liwu/shared-utils/cloudbase-proxy.js';
+import { createCloudBaseSdk } from '@liwu/shared-utils/cloudbase-sdk-factory.js';
+import {
+  buildShareLinks,
+  createGetAwarenessTagSettings,
+  createResolveAwarenessIdentity,
+  groupAwarenessTags,
+  normalizeAccessType,
+  normalizeAwarenessRecord
+} from '@liwu/shared-utils/cloudbase-awareness-core.js';
+import { createResolveAuthStatus } from '@liwu/shared-utils/cloudbase-auth-status.js';
+import { normalizeCurrentUserProfile } from '@liwu/shared-utils/cloudbase-user-profile.js';
+import { clampInviterRewardRate } from '@liwu/shared-utils/cloudbase-user-identity.js';
+import {
+  MAX_WEALTH_HISTORY_ITEMS,
+  normalizeWealthEntry
+} from '@liwu/shared-utils/cloudbase-wealth-snapshot.js';
+import { MEDITATION_SETTINGS_KEY } from '@liwu/shared-utils/meditation-reward-settings.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
-const PENDING_INVITE_STORAGE_KEY = 'liwu_pending_invite_code';
-const PENDING_AUTH_PHONE_STORAGE_KEY = 'liwu_pending_auth_phone';
-const AWARENESS_AUTHOR_KEY_STORAGE_KEY = 'liwu_awareness_author_key';
-const REWARD_SETTINGS_KEY = 'meditation_rewards';
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
-const MAX_WEALTH_HISTORY_ITEMS = 50;
 const DEFAULT_WECHAT_PROVIDER_ID = wechatProviderId || 'wx_open';
-const CLOUDBASE_PROXY_PATH = '/api/cloudbase-proxy';
-const CLOUDBASE_PROXY_TRACE_KEY = '__liwuCloudBaseProxyTrace';
 
-const isLocalDevHost = (hostname = '') => (
-  hostname === 'localhost' ||
-  hostname === '127.0.0.1' ||
-  hostname === '0.0.0.0'
-);
+const {
+  proxyCloudBaseMediaUrl,
+  installCloudBaseRequestProxy,
+  getLatestCloudBaseProxyTrace
+} = createCloudBaseProxyRuntime({ enableTrace: true });
 
-const shouldUseCloudBaseProxy = () => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
+export { getLatestCloudBaseProxyTrace, proxyCloudBaseMediaUrl };
 
-  return window.location.protocol === 'http:' || window.location.protocol === 'https:';
-};
+const shouldInstallProxy = typeof window === 'undefined' || window.location.hostname !== 'localhost' || typeof __DEV_PROXY__ !== 'undefined';
+if (shouldInstallProxy) {
+  installCloudBaseRequestProxy();
+}
 
-const isCloudBaseApiUrl = (value = '') => {
-  try {
-    const nextUrl = new URL(String(value));
-    return (
-      nextUrl.hostname.endsWith('.tcb-api.tencentcloudapi.com') ||
-      nextUrl.hostname.endsWith('.myqcloud.com') ||
-      nextUrl.hostname.endsWith('.qcloud.la') ||
-      nextUrl.hostname.endsWith('.tcb.qcloud.la') ||
-      nextUrl.hostname.includes('liwu-0gtd91eebd863ccf') ||
-      nextUrl.hostname.includes('-liwu-0gtd91eebd863ccf.')
-    );
-  } catch {
-    return false;
-  }
-};
+const { app, db, auth, command: _ } = createCloudBaseSdk(cloudbase, { env, region, publishableKey });
 
-const buildProxyRequestId = () => `cbreq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-
-const rememberProxyTrace = (trace = {}) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window[CLOUDBASE_PROXY_TRACE_KEY] = {
-    ...trace,
-    recordedAt: Date.now()
-  };
-};
-
-export const getLatestCloudBaseProxyTrace = () => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const trace = window[CLOUDBASE_PROXY_TRACE_KEY] || null;
-  if (!trace?.requestId) {
-    return null;
-  }
-
-  if (Date.now() - Number(trace.recordedAt || 0) > 2 * 60 * 1000) {
-    return null;
-  }
-
-  return trace;
-};
-
-const toProxyUrl = (targetUrl, requestId) => `${CLOUDBASE_PROXY_PATH}?target=${encodeURIComponent(targetUrl)}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}`;
-
-export const proxyCloudBaseMediaUrl = (targetUrl = '') => {
-  if (!targetUrl || typeof window === 'undefined') {
-    return targetUrl || '';
-  }
-
-  return shouldUseCloudBaseProxy() && isCloudBaseApiUrl(targetUrl)
-    ? toProxyUrl(targetUrl)
-    : targetUrl;
-};
-
-const installCloudBaseRequestProxy = () => {
-  if (typeof window === 'undefined' || !shouldUseCloudBaseProxy() || window.__liwuCloudBaseProxyInstalled) {
-    return;
-  }
-
-  const originalOpen = window.XMLHttpRequest.prototype.open;
-  const originalSend = window.XMLHttpRequest.prototype.send;
-  const originalFetch = window.fetch.bind(window);
-
-  window.XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
-    if (typeof url === 'string' && isCloudBaseApiUrl(url)) {
-      const requestId = buildProxyRequestId();
-      this.__liwuCloudBaseRequestId = requestId;
-      this.__liwuCloudBaseTarget = url;
-      rememberProxyTrace({ requestId, target: url, stage: 'request_started', transport: 'xhr' });
-      const nextUrl = toProxyUrl(url, requestId);
-      return originalOpen.call(this, method, nextUrl, ...rest);
-    }
-
-    const nextUrl = url;
-    return originalOpen.call(this, method, nextUrl, ...rest);
-  };
-
-  window.XMLHttpRequest.prototype.send = function patchedSend(...args) {
-    if (this.__liwuCloudBaseRequestId) {
-      this.addEventListener('loadend', () => {
-        rememberProxyTrace({
-          requestId: this.__liwuCloudBaseRequestId,
-          target: this.__liwuCloudBaseTarget || '',
-          stage: this.status >= 400 ? 'response_error' : 'response_finished',
-          transport: 'xhr',
-          status: this.status
-        });
-      }, { once: true });
-    }
-
-    return originalSend.apply(this, args);
-  };
-
-  window.fetch = function patchedFetch(input, init) {
-    const rawUrl = typeof input === 'string'
-      ? input
-      : input instanceof URL
-        ? input.toString()
-        : input?.url;
-
-    if (!rawUrl || !isCloudBaseApiUrl(rawUrl)) {
-      return originalFetch(input, init);
-    }
-
-    const requestId = buildProxyRequestId();
-    rememberProxyTrace({ requestId, target: rawUrl, stage: 'request_started', transport: 'fetch' });
-
-    if (typeof input === 'string' || input instanceof URL) {
-      return originalFetch(toProxyUrl(rawUrl, requestId), init).then((response) => {
-        rememberProxyTrace({
-          requestId,
-          target: rawUrl,
-          stage: response.ok ? 'response_finished' : 'response_error',
-          transport: 'fetch',
-          status: response.status,
-          proxyRequestId: response.headers.get('x-liwu-proxy-request-id') || requestId
-        });
-        return response;
-      });
-    }
-
-    return originalFetch(new Request(toProxyUrl(rawUrl, requestId), input), init).then((response) => {
-      rememberProxyTrace({
-        requestId,
-        target: rawUrl,
-        stage: response.ok ? 'response_finished' : 'response_error',
-        transport: 'fetch',
-        status: response.status,
-        proxyRequestId: response.headers.get('x-liwu-proxy-request-id') || requestId
-      });
-      return response;
-    });
-  };
-
-  window.__liwuCloudBaseProxyInstalled = true;
-};
-
-installCloudBaseRequestProxy();
-
-const app = cloudbase.init({
-  env,
-  ...(region ? { region } : {}),
-  ...(publishableKey ? { publishableKey } : {})
-});
-
-const db = app.database();
-const auth = app.auth({ persistence: 'local' });
-const _ = db.command;
-
-let loginPromise = null;
 let currentProfilePromise = null;
 let currentProfileCache = null;
 
-const isMissingCollectionResponse = (response) => response?.code === 'DATABASE_COLLECTION_NOT_EXIST';
+const { resolveCurrentUser, resolveCurrentSession } = createAuthResolvers(auth);
+const ensureAnonymousLogin = createEnsureAnonymousLogin({ auth, resolveCurrentUser });
+const { rememberPendingInviteCode, clearPendingInviteCode } = createPendingInviteHelpers({
+  queryKeys: ['invite']
+});
+const { rememberPendingAuthPhone, clearPendingAuthPhone } = createPendingAuthPhoneHelpers();
 
-const getResponseData = (response, collectionName) => {
-  if (Array.isArray(response?.data)) {
-    return response.data;
-  }
+const resolveAuthStatus = createResolveAuthStatus({
+  readSession,
+  resolveCurrentUser,
+  resolveCurrentSession,
+  ensureAnonymousLogin
+});
+const getAwarenessTagSettings = createGetAwarenessTagSettings({
+  db,
+  collections,
+  ensureAnonymousLogin,
+  getFirstDocument,
+  isMissingCollectionResponse,
+  settingsKey: AWARENESS_TAG_SETTINGS_KEY
+});
+const loadMergedUserDocument = createLoadMergedUserDocument({
+  db,
+  collections,
+  getFirstDocument,
+  isMissingCollectionIssue
+});
+const saveCurrentUserProfileBundle = createSaveCurrentUserProfileBundle({
+  db,
+  collections,
+  getFirstDocument,
+  isMissingCollectionIssue,
+  dualWriteLegacyUsers: true
+});
 
-  if (response?.data && typeof response.data === 'object') {
-    return [response.data];
-  }
-
-  if (isMissingCollectionResponse(response)) {
-    return [];
-  }
-
-  throw new Error(response?.message || `CloudBase query failed for collection "${collectionName}"`);
-};
-
-const getFirstDocument = (response, collectionName) => getResponseData(response, collectionName)[0] || null;
-
-const getDocumentId = (document) => document?._id || document?.id || '';
-
-const resolveCurrentUser = async () => auth.currentUser || auth.getCurrentUser();
-
-const resolveCurrentSession = async () => {
-  if (typeof auth.getSession !== 'function') {
+const resolveCachedUserProfile = async (userId, lastActiveIso) => {
+  const mergedDocument = await loadMergedUserDocument(userId);
+  if (!mergedDocument) {
     return null;
   }
 
-  try {
-    const sessionResult = await auth.getSession();
-    return sessionResult?.data?.session || null;
-  } catch {
-    return null;
-  }
-};
-
-const rememberPendingInviteCode = () => {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  const inviteCode = new URL(window.location.href).searchParams.get('invite')?.trim();
-  if (inviteCode) {
-    window.localStorage.setItem(PENDING_INVITE_STORAGE_KEY, inviteCode);
-    return inviteCode;
-  }
-
-  return window.localStorage.getItem(PENDING_INVITE_STORAGE_KEY) || '';
-};
-
-const clearPendingInviteCode = () => {
-  if (typeof window !== 'undefined') {
-    window.localStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
-  }
-};
-
-const rememberPendingAuthPhone = (phone = '') => {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  const normalizedPhone = String(phone || '').trim();
-  if (normalizedPhone) {
-    window.sessionStorage.setItem(PENDING_AUTH_PHONE_STORAGE_KEY, normalizedPhone);
-    return normalizedPhone;
-  }
-
-  return window.sessionStorage.getItem(PENDING_AUTH_PHONE_STORAGE_KEY) || '';
-};
-
-const clearPendingAuthPhone = () => {
-  if (typeof window !== 'undefined') {
-    window.sessionStorage.removeItem(PENDING_AUTH_PHONE_STORAGE_KEY);
-  }
-};
-
-const readLocalStorageValue = (key) => {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  return window.localStorage.getItem(key) || '';
-};
-
-const writeLocalStorageValue = (key, value) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(key, value);
-};
-
-const readSessionStorageJSON = (key) => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  try {
-    const rawValue = window.sessionStorage.getItem(key);
-    return rawValue ? JSON.parse(rawValue) : null;
-  } catch {
-    return null;
-  }
-};
-
-const writeSessionStorageJSON = (key, value) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.sessionStorage.setItem(key, JSON.stringify(value));
-};
-
-const readLocalStorageJSON = (key) => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  try {
-    const rawValue = window.localStorage.getItem(key);
-    return rawValue ? JSON.parse(rawValue) : null;
-  } catch {
-    return null;
-  }
-};
-
-const writeLocalStorageJSON = (key, value) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(key, JSON.stringify(value));
-};
-
-const removeLocalStorageByPrefix = (prefix = '') => {
-  if (typeof window === 'undefined' || !prefix) {
-    return;
-  }
-
-  const keysToRemove = [];
-  for (let index = 0; index < window.localStorage.length; index += 1) {
-    const key = window.localStorage.key(index);
-    if (key && key.startsWith(prefix)) {
-      keysToRemove.push(key);
-    }
-  }
-
-  keysToRemove.forEach((key) => {
-    window.localStorage.removeItem(key);
+  return normalizeCurrentUserProfile({
+    ...mergedDocument,
+    last_active: lastActiveIso || mergedDocument.last_active || mergedDocument.lastActive || '',
+    _id: userId
   });
 };
 
@@ -342,390 +119,12 @@ const clearCurrentProfileCache = () => {
   currentProfilePromise = null;
 };
 
-const getOrCreateAwarenessAuthorKey = () => {
-  const existingKey = readLocalStorageValue(AWARENESS_AUTHOR_KEY_STORAGE_KEY);
-  if (existingKey) {
-    return existingKey;
-  }
-
-  const nextKey = `aware_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  writeLocalStorageValue(AWARENESS_AUTHOR_KEY_STORAGE_KEY, nextKey);
-  return nextKey;
-};
-
-const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴';
-
-const parseNaturalNumber = (value = '') => {
-  const normalizedValue = String(value || '').trim();
-  if (!/^\d+$/.test(normalizedValue)) {
-    return 0;
-  }
-
-  const parsedValue = Number(normalizedValue);
-  if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) {
-    return 0;
-  }
-
-  return parsedValue;
-};
-
-const formatNaturalNumber = (value) => String(Math.max(1, Number(value) || 1));
-
-const buildDefaultUserName = (uid = '') => `${DEFAULT_USER_NAME_PREFIX}${formatNaturalNumber(uid)}`;
-
-const getUserUid = (document = {}) => (
-  parseNaturalNumber(document.uid)
-);
-
-const getUserInviteCode = (document = {}) => {
-  const existingUid = getUserUid(document);
-  return existingUid ? formatNaturalNumber(existingUid) : '';
-};
-
-const getNextUserUid = async () => {
-  const usersResult = await db.collection(collections.users).limit(2000).get();
-  const maxUserUid = getResponseData(usersResult, collections.users).reduce((currentMax, document) => (
-    Math.max(currentMax, getUserUid(document))
-  ), 0);
-
-  return Number(formatNaturalNumber(maxUserUid + 1));
-};
-
-const normalizeAccessType = (value) => (value === 'student' ? 'student' : 'public');
-
-const normalizePhone = (value = '') => {
-  const digitsOnlyValue = String(value || '').replace(/[^\d]/g, '');
-
-  if (/^00861\d{10}$/.test(digitsOnlyValue)) {
-    return digitsOnlyValue.slice(4);
-  }
-
-  if (/^861\d{10}$/.test(digitsOnlyValue)) {
-    return digitsOnlyValue.slice(2);
-  }
-
-  return digitsOnlyValue;
-};
-
-const buildPhoneAuthUid = (phoneNumber = '') => {
-  const normalizedPhoneNumber = normalizePhone(phoneNumber);
-  return normalizedPhoneNumber ? `mock_phone_${normalizedPhoneNumber}` : '';
-};
-
-const getAuthProviderLabel = (provider = '') => {
-  const normalizedProvider = String(provider || '').toLowerCase();
-
-  if (!normalizedProvider || normalizedProvider === 'anonymous') {
-    return 'anonymous';
-  }
-
-  if (normalizedProvider.includes('wx') || normalizedProvider.includes('wechat')) {
-    return 'wechat';
-  }
-
-  if (normalizedProvider.includes('phone')) {
-    return 'phone';
-  }
-
-  return normalizedProvider;
-};
-
-const isAnonymousDisplayName = (value = '') => {
-  const normalizedValue = String(value || '').trim().toLowerCase();
-  return !normalizedValue || normalizedValue === 'anonymous' || normalizedValue === 'anon';
-};
-
-
-const clampInviterRewardRate = (value) => {
-  const nextValue = Number(value);
-  if (!Number.isFinite(nextValue)) {
-    return 0;
-  }
-
-  return Math.min(20, Math.max(0, Math.round(nextValue)));
-};
-
-const normalizeWealthEntry = (entry = {}) => ({
-  id: entry.id || `wealth_${Date.now()}`,
-  amount: Number(entry.amount || 0),
-  description: entry.description || '',
-  date: entry.date || new Date().toISOString(),
-  type: entry.type || 'EARN',
-  source: entry.source || '',
-  rewardKey: entry.rewardKey || '',
-  relatedUserId: entry.relatedUserId || ''
-});
-
-const normalizeWealthHistory = (value) => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map(normalizeWealthEntry)
-    .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())
-    .slice(0, MAX_WEALTH_HISTORY_ITEMS);
-};
-
-const normalizeRewardClaims = (value) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-
-  return value;
-};
-
-const normalizeCurrentUserProfile = (document = {}) => ({
-  id: getDocumentId(document),
-  uid: getUserUid(document) || 0,
-  authUid: document.auth_uid || document.authUid || '',
-  name: document.name || buildDefaultUserName(getUserUid(document) || 1),
-  email: document.email || '',
-  phone: document.phone || '',
-  status: document.status || 'active',
-  level: Number(document.level ?? 1),
-  experience: Number(document.experience ?? 0),
-  isStudent: Boolean(document.is_student ?? document.isStudent),
-  inviteCode: getUserInviteCode(document),
-  inviterUserId: document.inviter_user_id || document.inviterUserId || '',
-  balance: Number(document.balance || 0),
-  wealthHistory: normalizeWealthHistory(document.wealth_history || document.wealthHistory),
-  rewardClaims: normalizeRewardClaims(document.reward_claims || document.rewardClaims),
-  joinDate: document.join_date || document.joinDate || '',
-  lastActive: document.last_active || document.lastActive || ''
-});
-
-const getRecordTimestamp = (record = {}) =>
-  record.created_at_client || record.timestamp || record.created_at || record.createdAt || null;
-
-const normalizeAwarenessRecord = (record = {}) => {
-  const content = (record.content || '').trim();
-  const accessType = normalizeAccessType(record.access_type || record.accessType);
-
-  return {
-    id: getDocumentId(record),
-    authorKey: record.author_key || record.authorKey || record.auth_uid || record.user_id || '',
-    userId: record.user_id || record.userId || '',
-    authUid: record.auth_uid || record.authUid || '',
-    userName: record.user_name || record.userName || '匿名用户',
-    content,
-    accessType,
-    tagKey: record.tag_key || `${content}::${accessType}`,
-    timestamp: getRecordTimestamp(record)
-  };
-};
-
-const groupAwarenessTags = (records, countField, tagSettingsByKey = {}) => {
-  const tagMap = new Map();
-
-  records.forEach((record) => {
-    if (!record.content) {
-      return;
-    }
-
-    const existingTag = tagMap.get(record.tagKey) || {
-      key: record.tagKey,
-      content: record.content,
-      accessType: record.accessType,
-      [countField]: 0,
-      lastUsedAt: record.timestamp,
-      lastUserName: record.userName || '匿名用户',
-      description: tagSettingsByKey[record.tagKey]?.description || ''
-    };
-
-    existingTag[countField] += 1;
-
-    if (new Date(record.timestamp || 0).getTime() >= new Date(existingTag.lastUsedAt || 0).getTime()) {
-      existingTag.lastUsedAt = record.timestamp;
-      existingTag.lastUserName = record.userName || '匿名用户';
-    }
-
-    existingTag.description = tagSettingsByKey[record.tagKey]?.description || '';
-
-    tagMap.set(record.tagKey, existingTag);
-  });
-
-  return Array.from(tagMap.values()).sort((left, right) => {
-    if (right[countField] !== left[countField]) {
-      return right[countField] - left[countField];
-    }
-
-    return new Date(right.lastUsedAt || 0).getTime() - new Date(left.lastUsedAt || 0).getTime();
-  });
-};
-
-const getAwarenessTagSettings = async () => {
-  try {
-    await ensureAnonymousLogin();
-    const result = await db
-      .collection(collections.appSettings)
-      .where({ key: AWARENESS_TAG_SETTINGS_KEY })
-      .limit(1)
-      .get();
-
-    if (isMissingCollectionResponse(result)) {
-      return { tagsByKey: {} };
-    }
-
-    const document = getFirstDocument(result, collections.appSettings);
-    return {
-      tagsByKey: document?.tags_by_key || document?.tagsByKey || {}
-    };
-  } catch (error) {
-    console.error('获取觉察标签配置失败:', error);
-    return { tagsByKey: {} };
-  }
-};
-
-const buildShareLinks = ({ title, text, url }) => {
-  const encodedUrl = encodeURIComponent(url);
-  const encodedText = encodeURIComponent(text);
-
-  return {
-    weibo: `https://service.weibo.com/share/share.php?title=${encodedText}&url=${encodedUrl}`,
-    x: `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`,
-    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
-    whatsapp: `https://wa.me/?text=${encodedText}%20${encodedUrl}`,
-    telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
-    linkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
-    native: { title, text, url }
-  };
-};
-
-const normalizeAuthStatus = ({ session, currentUser } = {}) => {
-  const sessionUser = session?.user || null;
-  const provider =
-    sessionUser?.app_metadata?.provider ||
-    sessionUser?.app_metadata?.providers?.[0] ||
-    currentUser?.loginType ||
-    '';
-  const loginMethod = getAuthProviderLabel(provider);
-  const authUid = sessionUser?.id || sessionUser?.sub || currentUser?.uid || '';
-  const phoneNumber = normalizePhone(sessionUser?.phone || sessionUser?.phone_number || currentUser?.phoneNumber || '');
-  const email = sessionUser?.email || currentUser?.email || '';
-  const displayName =
-    sessionUser?.user_metadata?.name ||
-    sessionUser?.user_metadata?.nickName ||
-    sessionUser?.user_metadata?.username ||
-    currentUser?.name ||
-    currentUser?.username ||
-    buildDefaultUserName(authUid);
-  const isAnonymous = Boolean(
-    sessionUser?.is_anonymous ||
-    loginMethod === 'anonymous' ||
-    currentUser?.loginType === 'ANONYMOUS'
-  );
-
-  return {
-    hasSession: Boolean(sessionUser),
-    authUid,
-    phoneNumber,
-    email,
-    displayName: isAnonymousDisplayName(displayName) && isAnonymous ? buildDefaultUserName(authUid) : displayName,
-    provider,
-    loginMethod,
-    isAnonymous,
-    isAuthenticated: Boolean(sessionUser) && !isAnonymous,
-    isMockSession: false
-  };
-};
-
-const resolveAuthStatus = async ({ allowAnonymous = false } = {}) => {
-  const liwuSession = readSession();
-  if (liwuSession?.phone) {
-    return {
-      hasSession: true,
-      authUid: liwuSession.authUid || buildPhoneAuthUid(liwuSession.phone),
-      phoneNumber: liwuSession.phone,
-      displayName: liwuSession.displayName || '',
-      provider: 'phone',
-      loginMethod: 'phone',
-      isAnonymous: false,
-      isAuthenticated: true,
-      isMockSession: false
-    };
-  }
-
-  let currentUser = await resolveCurrentUser().catch(() => null);
-  let session = await resolveCurrentSession();
-
-  if (!currentUser && !session && allowAnonymous) {
-    await ensureAnonymousLogin();
-    currentUser = await resolveCurrentUser().catch(() => null);
-    session = await resolveCurrentSession();
-  }
-
-  return normalizeAuthStatus({ session, currentUser });
-};
-
-const resolveAwarenessIdentity = async () => {
-  const fallbackAuthorKey = getOrCreateAwarenessAuthorKey();
-  let authStatus = {
-    authUid: '',
-    displayName: '',
-    isAuthenticated: false
-  };
-  let currentProfile = null;
-
-  try {
-    authStatus = await resolveAuthStatus({ allowAnonymous: true });
-  } catch (error) {
-    console.error('读取觉察身份状态失败:', error);
-  }
-
-  try {
-    currentProfile = await userProfileService.getCurrentProfile({
-      refresh: false,
-      allowAnonymous: true
-    });
-  } catch (error) {
-    console.error('读取觉察用户档案失败:', error);
-  }
-
-  const authorKey = currentProfile?.authUid || authStatus.authUid || fallbackAuthorKey;
-  const userId = currentProfile?.id || authorKey;
-  const authUid = currentProfile?.authUid || authStatus.authUid || authorKey;
-  const userName =
-    currentProfile?.name ||
-    authStatus.displayName ||
-    buildDefaultUserName(authUid);
-
-  return {
-    authorKey,
-    userId,
-    authUid,
-    userName,
-    isStudent: Boolean(currentProfile?.isStudent),
-    profile: currentProfile
-  };
-};
-
 const updateCurrentProfileCache = (nextProfile) => {
   currentProfileCache = nextProfile;
   return currentProfileCache;
 };
 
-export const ensureAnonymousLogin = async () => {
-  const existingUser = await resolveCurrentUser();
-  if (existingUser) {
-    return existingUser;
-  }
-
-  const existingLoginState = auth.hasLoginState() || await auth.getLoginState();
-  if (existingLoginState) {
-    return resolveCurrentUser();
-  }
-
-  if (!loginPromise) {
-    loginPromise = auth.signInAnonymously()
-      .then(() => resolveCurrentUser())
-      .finally(() => {
-        loginPromise = null;
-      });
-  }
-
-  return loginPromise;
-};
+export { ensureAnonymousLogin };
 
 export const userProfileService = {
   async ensureCurrentProfile(options = {}) {
@@ -749,16 +148,14 @@ export const userProfileService = {
       await ensureAnonymousLogin();
 
       if (session.userId) {
-        const docResult = await db.collection(collections.users).doc(session.userId).get().catch(() => ({ data: [] }));
-        const document = getFirstDocument(docResult, collections.users);
-        if (document) {
-          const nowIso = new Date().toISOString();
-          await db.collection(collections.users).doc(session.userId).update({
-            last_active: nowIso,
-            updated_at: new Date()
-          }).catch(() => {});
+        const nowIso = new Date().toISOString();
+        await db.collection(collections.users).doc(session.userId).update({
+          last_active: nowIso,
+          updated_at: new Date()
+        }).catch(() => {});
 
-          const profile = normalizeCurrentUserProfile({ ...document, last_active: nowIso, _id: session.userId });
+        const profile = await resolveCachedUserProfile(session.userId, nowIso);
+        if (profile) {
           return updateCurrentProfileCache(profile);
         }
       }
@@ -776,8 +173,10 @@ export const userProfileService = {
           updated_at: new Date()
         }).catch(() => {});
 
-        const profile = normalizeCurrentUserProfile({ ...userDoc, last_active: nowIso, _id: docId });
-        return updateCurrentProfileCache(profile);
+        const profile = await resolveCachedUserProfile(docId, nowIso);
+        if (profile) {
+          return updateCurrentProfileCache(profile);
+        }
       }
 
       clearCurrentProfileCache();
@@ -803,15 +202,8 @@ export const userProfileService = {
       updated_at: new Date()
     };
 
-    await db.collection(collections.users).doc(currentProfile.id).update(updatePayload);
-
-    return updateCurrentProfileCache(
-      normalizeCurrentUserProfile({
-        ...currentProfile,
-        ...updatePayload,
-        _id: currentProfile.id
-      })
-    );
+    const { profile } = await saveCurrentUserProfileBundle(currentProfile.id, updatePayload);
+    return updateCurrentProfileCache(profile);
   },
 
   async buildInviteLink({ tagContent } = {}) {
@@ -831,6 +223,12 @@ export const userProfileService = {
     return shareUrl.toString();
   }
 };
+
+const resolveAwarenessIdentity = createResolveAwarenessIdentity({
+  getOrCreateAwarenessAuthorKey,
+  resolveAuthStatus,
+  getCurrentProfile: (options) => userProfileService.getCurrentProfile(options)
+});
 
 export const awarenessService = {
   async getTagMetadata(tagKey) {
@@ -1029,7 +427,7 @@ export const rewardSettingsService = {
       await ensureAnonymousLogin();
       const result = await db
         .collection(collections.appSettings)
-        .where({ key: REWARD_SETTINGS_KEY })
+        .where({ key: MEDITATION_SETTINGS_KEY })
         .limit(1)
         .get();
 

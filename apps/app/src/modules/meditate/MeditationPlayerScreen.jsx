@@ -92,24 +92,47 @@ const MeditationPlayer = () => {
     trackKey === 'background' ? backgroundAudioRef : voiceAudioRef
   ), []);
 
-  const resolvePlayableAudioSrc = useCallback(async (audioUrl) => {
+  const resolvePlayableAudioSrc = useCallback(async (playlistItem = {}) => {
+    const primaryAudioUrl = String(playlistItem.audioUrl || '');
     const cache = blobUrlCacheRef.current;
-    if (cache.has(audioUrl)) {
-      return cache.get(audioUrl) || '';
+    if (primaryAudioUrl && cache.has(primaryAudioUrl)) {
+      return cache.get(primaryAudioUrl) || '';
     }
 
-    const response = await fetch(audioUrl, { method: 'GET' });
-    if (!response.ok && response.status !== 206) {
-      throw new Error(`AUDIO_FETCH_${response.status}`);
-    }
+    const fetchBlobFromUrl = async (candidateUrl) => {
+      const response = await fetch(candidateUrl, { method: 'GET' });
+      if (!response.ok && response.status !== 206) {
+        throw new Error(`AUDIO_FETCH_${response.status}`);
+      }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const blob = new Blob([arrayBuffer], {
-      type: getMeditationAudioMimeType(audioUrl)
-    });
-    const blobUrl = URL.createObjectURL(blob);
-    cache.set(audioUrl, blobUrl);
-    return blobUrl;
+      const arrayBuffer = await response.arrayBuffer();
+      const blob = new Blob([arrayBuffer], {
+        type: getMeditationAudioMimeType(candidateUrl)
+      });
+      const blobUrl = URL.createObjectURL(blob);
+      cache.set(candidateUrl, blobUrl);
+      return blobUrl;
+    };
+
+    try {
+      return await fetchBlobFromUrl(primaryAudioUrl);
+    } catch (error) {
+      const shouldRefreshTempUrl = (
+        error?.message === 'AUDIO_FETCH_403' &&
+        playlistItem.fileId
+      );
+      if (!shouldRefreshTempUrl) {
+        throw error;
+      }
+
+      const refreshedAudioUrl = await DatabaseService.getAudioTempUrl(playlistItem.fileId);
+      if (!refreshedAudioUrl) {
+        throw error;
+      }
+
+      playlistItem.audioUrl = refreshedAudioUrl;
+      return fetchBlobFromUrl(refreshedAudioUrl);
+    }
   }, []);
 
   const getElapsedSeconds = useCallback(() => {
@@ -219,7 +242,7 @@ const MeditationPlayer = () => {
     void (async () => {
       let playableSrc = '';
       try {
-        playableSrc = await resolvePlayableAudioSrc(item.audioUrl);
+      playableSrc = await resolvePlayableAudioSrc(item);
       } catch (error) {
         console.error(`Audio source fetch failed for ${trackKey}:`, error);
         completeTrackSegment(trackKey, segment.id);

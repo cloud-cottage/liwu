@@ -1,4 +1,6 @@
-const ENV_ID = 'liwu-0gtd91eebd863ccf'
+const { DEFAULT_CLOUDBASE_ENV } = require('./shared/database-config')
+
+const ENV_ID = DEFAULT_CLOUDBASE_ENV
 
 let databaseInstance = null
 

@@ -1,5 +1,7 @@
 import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { resolveTabbarIconKey } from '@liwu/shared-assets'
+import { SharedIcon } from '@liwu/shared-assets/react'
 import { appPrimaryTabs } from '../../navigation/tabs.js'
 import styles from './BottomNav.module.css'
 
@@ -16,18 +18,27 @@ const BottomNav = () => {
 
   return (
     <nav className={styles.nav}>
-      {appPrimaryTabs.map(({ key, label, to, icon: Icon }) => (
-        <NavLink
-          key={key}
-          to={to}
-          className={({ isActive }) => `${styles.link} ${(isActive || isTabActive(location.pathname, to)) ? styles.active : ''}`}
-        >
-          <span className={styles.iconWrap}>
-            <Icon size={22} strokeWidth={1.7} />
-          </span>
-          <span className={styles.label}>{label}</span>
-        </NavLink>
-      ))}
+      {appPrimaryTabs.map(({ key, label, to, icon }) => {
+        const tabActive = isTabActive(location.pathname, to)
+
+        return (
+          <NavLink
+            key={key}
+            to={to}
+            end={key === 'home'}
+            className={`${styles.link} ${tabActive ? styles.active : ''}`}
+          >
+            <span className={styles.iconWrap}>
+              <SharedIcon
+                name={resolveTabbarIconKey(icon, tabActive)}
+                size={22}
+                style={{ color: 'currentColor' }}
+              />
+            </span>
+            <span className={styles.label}>{label}</span>
+          </NavLink>
+        )
+      })}
     </nav>
   )
 }

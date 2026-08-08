@@ -1,25 +1,23 @@
 const { getDb } = require('./cloudbase')
+const { COLLECTIONS } = require('./shared/database-config')
+const { resolveShopLivingIllustrationPath } = require('./shared/asset-paths')
+const {
+  SHOP_HOME_LIVING_SETTINGS_KEY,
+  createDefaultShopHomeLivingCards,
+  normalizeShopHomeLivingSettings
+} = require('./shared/shop-home-living-settings')
 const { getLocalProfile } = require('./storage')
-
-const SHOP_CATEGORIES = 'shop_categories'
-const SHOP_PRODUCTS = 'shop_products'
-const SHOP_PRODUCT_SKUS = 'shop_product_skus'
-const SHOP_ORDERS = 'shop_orders'
-const SHOP_ORDER_ITEMS = 'shop_order_items'
-const USER_ADDRESSES = 'user_addresses'
-const USERS = 'users'
-const POINT_LEDGER = 'point_ledger'
-const APP_SETTINGS = 'app_settings'
-const SHOP_HOME_LIVING_SETTINGS_KEY = 'shop_home_living_settings'
+const {
+  getFirstDocument,
+  isMissingCollectionIssue
+} = require('./shared/cloudbase-document-helpers')
+const {
+  createLoadMergedUserDocument,
+  createGetCurrentUserProfileBundle,
+  createSaveCurrentUserProfileBundle
+} = require('./shared/user-bundle')
 const DEFAULT_USER_NAME_PREFIX = '觉醒伙伴'
-const DEFAULT_SHOP_HOME_LIVING_CARDS = Array.from({ length: 6 }, (_, index) => ({
-  id: `shop_living_${index + 1}`,
-  fileId: '',
-  imageUrl: `/assets/shop-living/living-${index + 1}.svg`,
-  productId: '',
-  width: 700,
-  height: 700
-}))
+const DEFAULT_SHOP_HOME_LIVING_CARDS = createDefaultShopHomeLivingCards(resolveShopLivingIllustrationPath)
 
 const resolveProductTypeByCategoryName = (categoryName = '') => (
   String(categoryName || '').trim() === '课程' ? 'service' : 'physical'
@@ -57,6 +55,43 @@ const isSystemGeneratedUserName = (value = '') => {
 const getUserUid = (user = {}) => (
   parseNaturalNumber(user.uid)
 )
+
+const getLoadMergedUserDocument = () => {
+  const db = getDb()
+  return createLoadMergedUserDocument({
+    db,
+    collections: COLLECTIONS,
+    getFirstDocument,
+    isMissingCollectionIssue
+  })
+}
+
+// Bundle-backed save for dual-write (writes to splits + legacy users while dualWriteLegacyUsers=true)
+// Used to route profile/wallet/membership updates (and init) in getOrCreateCurrentUser for profile flow
+const getSaveCurrentUserProfileBundle = () => {
+  const db = getDb()
+  return createSaveCurrentUserProfileBundle({
+    db,
+    collections: COLLECTIONS,
+    getFirstDocument,
+    isMissingCollectionIssue,
+    dualWriteLegacyUsers: true
+  })
+}
+
+// Bundle-backed reader using createLoadMergedUserDocument (via createGetCurrentUserProfileBundle)
+// Returns normalized profile with merged data from user_profiles + user_wallets + user_memberships + ...
+// Used for getCurrentShopProfile / getOrCreateCurrentUser to read profile/wallet/membership fields from bundle
+// (instead of direct fat users doc). Keeps legacy shape for callers.
+const getCurrentUserProfileBundle = () => {
+  const db = getDb()
+  return createGetCurrentUserProfileBundle({
+    db,
+    collections: COLLECTIONS,
+    getFirstDocument,
+    isMissingCollectionIssue
+  })
+}
 
 const normalizeCategory = (category = {}) => ({
   id: category._id || category.id || '',
@@ -133,12 +168,12 @@ const getOrCreateCurrentUser = async () => {
   let existingUser = null
 
   if (profile.authorKey) {
-    const result = await db.collection(USERS).where({ auth_uid: profile.authorKey }).limit(1).get()
+    const result = await db.collection(COLLECTIONS.users).where({ auth_uid: profile.authorKey }).limit(1).get()
     existingUser = (result.data || [])[0] || null
   }
 
   if (!existingUser && profile.phone) {
-    const phoneResult = await db.collection(USERS).where({ phone: profile.phone }).limit(1).get()
+    const phoneResult = await db.collection(COLLECTIONS.users).where({ phone: profile.phone }).limit(1).get()
     existingUser = (phoneResult.data || [])[0] || null
   }
 
@@ -166,7 +201,7 @@ const getOrCreateCurrentUser = async () => {
     }
 
     if (Object.keys(updatePayload).length > 2) {
-      await db.collection(USERS).doc(existingUser._id || existingUser.id || '').update({ data: updatePayload })
+      await db.collection(COLLECTIONS.users).doc(existingUser._id || existingUser.id || '').update({ data: updatePayload })
       existingUser = {
         ...existingUser,
         ...updatePayload
@@ -208,7 +243,7 @@ const getOrCreateCurrentUser = async () => {
     updated_at: now
   }
 
-  const createResult = await db.collection(USERS).add({ data: payload })
+  const createResult = await db.collection(COLLECTIONS.users).add({ data: payload })
   return {
     ...profile,
     id: createResult._id || createResult.id || '',
@@ -224,7 +259,7 @@ const getOrCreateCurrentUser = async () => {
 }
 
 const getNextUserUid = async (dbInstance = getDb()) => {
-  const result = await dbInstance.collection(USERS).limit(2000).get()
+  const result = await dbInstance.collection(COLLECTIONS.users).limit(2000).get()
   const maxUserUid = (result.data || []).reduce((currentMax, user) => (
     Math.max(currentMax, getUserUid(user))
   ), 0)
@@ -234,6 +269,28 @@ const getNextUserUid = async (dbInstance = getDb()) => {
 
 const getCurrentShopProfile = async () => {
   const currentUser = await getOrCreateCurrentUser()
+  if (!currentUser || !currentUser.id) {
+    return currentUser || {}
+  }
+
+  // Use bundle for merged profile data (balance, wealthHistory, isStudent etc. from user_profiles + user_wallets + ...)
+  // Falls back to legacy if bundle fails (during transition)
+  const bundleReader = getCurrentUserProfileBundle()
+  const bundleProfile = await bundleReader(currentUser.id).catch(() => null)
+
+  if (bundleProfile) {
+    return {
+      id: currentUser.id,
+      name: bundleProfile.name || currentUser.name || '',
+      uid: Number(bundleProfile.uid || currentUser.uid || 0),
+      inviteCode: bundleProfile.inviteCode || currentUser.inviteCode || '',
+      phone: bundleProfile.phone || currentUser.phone || '',
+      isStudent: Boolean(bundleProfile.isStudent),
+      studentExpireAt: bundleProfile.studentExpireAt || currentUser.studentExpireAt || '',
+      balance: Number(bundleProfile.balance || 0),
+      wealthHistory: bundleProfile.wealthHistory || currentUser.wealthHistory || []
+    }
+  }
 
   return {
     id: currentUser.id,
@@ -252,7 +309,7 @@ const generateOrderNo = () => `MP${new Date().toISOString().slice(0, 10).replace
 
 const listShopCategories = async () => {
   const db = getDb()
-  const result = await db.collection(SHOP_CATEGORIES).limit(50).get()
+  const result = await db.collection(COLLECTIONS.shopCategories).limit(50).get()
 
   return (result.data || [])
     .map(normalizeCategory)
@@ -262,7 +319,7 @@ const listShopCategories = async () => {
 
 const listShopProducts = async ({ categoryId = '', limit = 100 } = {}) => {
   const db = getDb()
-  const result = await db.collection(SHOP_PRODUCTS).limit(limit).get()
+  const result = await db.collection(COLLECTIONS.shopProducts).limit(limit).get()
 
   return (result.data || [])
     .map(normalizeProduct)
@@ -280,23 +337,10 @@ const listShopProducts = async ({ categoryId = '', limit = 100 } = {}) => {
 const getShopHomeLivingSettings = async () => {
   try {
     const db = getDb()
-    const result = await db.collection(APP_SETTINGS).where({ key: SHOP_HOME_LIVING_SETTINGS_KEY }).limit(1).get()
+    const result = await db.collection(COLLECTIONS.appSettings).where({ key: SHOP_HOME_LIVING_SETTINGS_KEY }).limit(1).get()
     const document = (result.data || [])[0] || {}
-    const rawCards = Array.isArray(document.cards) ? document.cards : []
-    const imageWidth = Number(document.image_width != null ? document.image_width : (document.imageWidth != null ? document.imageWidth : 700))
-    const imageHeight = Number(document.image_height != null ? document.image_height : (document.imageHeight != null ? document.imageHeight : 700))
-    const cards = DEFAULT_SHOP_HOME_LIVING_CARDS.map((fallbackCard, index) => {
-      const currentCard = rawCards[index] || {}
-      return {
-        ...fallbackCard,
-        id: currentCard.id || fallbackCard.id,
-        fileId: currentCard.file_id || currentCard.fileId || '',
-        imageUrl: currentCard.image_url || currentCard.imageUrl || fallbackCard.imageUrl,
-        productId: currentCard.product_id || currentCard.productId || '',
-        width: imageWidth,
-        height: imageHeight
-      }
-    })
+    const normalized = normalizeShopHomeLivingSettings(document, resolveShopLivingIllustrationPath)
+    const { imageWidth, imageHeight, cards } = normalized
 
     const fileList = cards.map((card) => card.fileId).filter(Boolean)
     if (fileList.length === 0) {
@@ -343,8 +387,8 @@ const getShopHomeLivingSettings = async () => {
 const getShopProductDetail = async (productId) => {
   const db = getDb()
   const [productResult, skuResult, categories] = await Promise.all([
-    db.collection(SHOP_PRODUCTS).doc(productId).get(),
-    db.collection(SHOP_PRODUCT_SKUS).where({ product_id: productId, status: 'active' }).limit(50).get(),
+    db.collection(COLLECTIONS.shopProducts).doc(productId).get(),
+    db.collection(COLLECTIONS.shopProductSkus).where({ product_id: productId, status: 'active' }).limit(50).get(),
     listShopCategories()
   ])
 
@@ -358,7 +402,7 @@ const getShopProductDetail = async (productId) => {
 
   if (product.relatedProductId) {
     try {
-      const relatedProductResult = await db.collection(SHOP_PRODUCTS).doc(product.relatedProductId).get()
+      const relatedProductResult = await db.collection(COLLECTIONS.shopProducts).doc(product.relatedProductId).get()
       const relatedProductDocument = relatedProductResult.data || {}
       if (relatedProductDocument._id || relatedProductDocument.id) {
         relatedProduct = normalizeProduct(relatedProductDocument)
@@ -379,7 +423,11 @@ const getShopProductDetail = async (productId) => {
 const listUserAddresses = async () => {
   const db = getDb()
   const currentUser = await getOrCreateCurrentUser()
-  const result = await db.collection(USER_ADDRESSES).where({ user_id: currentUser.id }).limit(20).get()
+  if (!currentUser.id) {
+    return []
+  }
+
+  const result = await db.collection(COLLECTIONS.userAddresses).where({ user_id: currentUser.id }).limit(20).get()
   return (result.data || [])
     .map(normalizeAddress)
     .sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
@@ -410,16 +458,16 @@ const saveUserAddress = async (addressData = {}) => {
   if (payload.is_default) {
     const addresses = await listUserAddresses()
     await Promise.all(addresses.map((address) => (
-      db.collection(USER_ADDRESSES).doc(address.id).update({ data: { is_default: false, updated_at: new Date().toISOString() } })
+      db.collection(COLLECTIONS.userAddresses).doc(address.id).update({ data: { is_default: false, updated_at: new Date().toISOString() } })
     )))
   }
 
   if (addressData.id) {
-    await db.collection(USER_ADDRESSES).doc(addressData.id).update({ data: payload })
+    await db.collection(COLLECTIONS.userAddresses).doc(addressData.id).update({ data: payload })
     return normalizeAddress({ _id: addressData.id, ...payload })
   }
 
-  const result = await db.collection(USER_ADDRESSES).add({ data: { ...payload, created_at: new Date().toISOString() } })
+  const result = await db.collection(COLLECTIONS.userAddresses).add({ data: { ...payload, created_at: new Date().toISOString() } })
   return normalizeAddress({ _id: result._id || result.id || '', ...payload })
 }
 
@@ -494,10 +542,10 @@ const createPointsOrder = async ({ productId, skuId, quantity = 1, addressId = '
     updated_at: now
   }
 
-  const orderResult = await db.collection(SHOP_ORDERS).add({ data: orderPayload })
+  const orderResult = await db.collection(COLLECTIONS.shopOrders).add({ data: orderPayload })
   const orderId = orderResult._id || orderResult.id || ''
 
-  await db.collection(SHOP_ORDER_ITEMS).add({
+  await db.collection(COLLECTIONS.shopOrderItems).add({
     data: {
       order_id: orderId,
       product_id: product.id,
@@ -516,7 +564,7 @@ const createPointsOrder = async ({ productId, skuId, quantity = 1, addressId = '
     }
   })
 
-  await db.collection(POINT_LEDGER).add({
+  await db.collection(COLLECTIONS.pointLedger).add({
     data: {
       user_id: currentUser.id,
       delta: -totalPoints,
@@ -539,12 +587,13 @@ const createPointsOrder = async ({ productId, skuId, quantity = 1, addressId = '
     relatedUserId: currentUser.id
   }
 
-  await db.collection(USERS).doc(currentUser.id).update({
-    data: {
-      balance: nextBalance,
-      wealth_history: [wealthHistoryEntry].concat(currentUser.wealthHistory || []),
-      updated_at: now
-    }
+  // Route wallet/balance + wealthHistory update via bundle save (dual-write to splits + legacy users)
+  // This ensures profile/wallet data (balance, wealthHistory) is written through bundle for A scope.
+  const saveBundle = getSaveCurrentUserProfileBundle()
+  await saveBundle(currentUser.id, {
+    balance: nextBalance,
+    wealth_history: [wealthHistoryEntry].concat(currentUser.wealthHistory || []),
+    updated_at: now
   })
 
   return {
@@ -557,9 +606,13 @@ const createPointsOrder = async ({ productId, skuId, quantity = 1, addressId = '
 const listUserOrders = async () => {
   const db = getDb()
   const currentUser = await getOrCreateCurrentUser()
+  if (!currentUser.id) {
+    return []
+  }
+
   const [ordersResult, itemsResult] = await Promise.all([
-    db.collection(SHOP_ORDERS).where({ user_id: currentUser.id }).limit(100).get(),
-    db.collection(SHOP_ORDER_ITEMS).limit(500).get()
+    db.collection(COLLECTIONS.shopOrders).where({ user_id: currentUser.id }).limit(100).get(),
+    db.collection(COLLECTIONS.shopOrderItems).limit(500).get()
   ])
 
   const itemsByOrderId = {}

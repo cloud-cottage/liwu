@@ -1,6 +1,6 @@
 const { getHomePageData } = require('../../utils/home')
+const { getLocalProfile } = require('../../utils/storage')
 const { openMiniRoute, syncMiniTabBar } = require('../../utils/navigation')
-const { getPageMastheadSettings } = require('../../utils/pageMasthead')
 const { bindPhoneFromWechatCode } = require('../../utils/auth')
 const { requireBoundPhone } = require('../../utils/auth')
 
@@ -25,6 +25,13 @@ Page({
   },
 
   onLoad() {
+    // Phase 0: show skeleton with local profile immediately
+    const localProfile = getLocalProfile()
+    this.setData({
+      profile: localProfile,
+      requiresPhoneBinding: !localProfile.phone
+    })
+    // Phase 1: load remote data (replaces skeleton on completion)
     void this.loadPageData()
     this.startTaglineRotation()
   },
@@ -45,15 +52,12 @@ Page({
     this.setData({ loading: true })
 
     try {
-      const [pageData, mastheadSettings] = await Promise.all([
-        getHomePageData(),
-        getPageMastheadSettings()
-      ])
+      const pageData = await getHomePageData()
       this.setData({
         loading: false,
         profile: pageData.profile,
         requiresPhoneBinding: !pageData.profile.phone,
-        homeSlogan: mastheadSettings.homeSlogan || '礼敬物品，礼赞生命。',
+        homeSlogan: pageData.homeSlogan || '礼敬物品，礼赞生命。',
         slides: (pageData.slides || []).map((slide) => ({
           ...slide,
           hasImage: !!slide.imageUrl,

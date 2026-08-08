@@ -1,9 +1,7 @@
 const { getDb } = require('./cloudbase')
+const { COLLECTIONS } = require('./shared/database-config')
 const { getLocalProfile } = require('./storage')
 const { getCurrentShopProfile } = require('./shop')
-
-const AWARENESS_RECORDS = 'awareness_records'
-const APP_SETTINGS = 'app_settings'
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings'
 const AWARENESS_DISPLAY_SETTINGS_KEY = 'awareness_display_settings'
 const AWARENESS_TAG_REUSE_MAX_LENGTH = 18
@@ -58,7 +56,7 @@ const resolveRelatedProductMap = async (relatedProductIds = []) => {
 
   try {
     const db = getDb()
-    const productsResult = await Promise.all(uniqueIds.map((productId) => db.collection('shop_products').doc(productId).get()))
+    const productsResult = await Promise.all(uniqueIds.map((productId) => db.collection(COLLECTIONS.shopProducts).doc(productId).get()))
     return new Map(
       productsResult
         .map((result) => result.data || {})
@@ -72,7 +70,7 @@ const resolveRelatedProductMap = async (relatedProductIds = []) => {
 
 const getTagSettings = async () => {
   const db = getDb()
-  const result = await db.collection(APP_SETTINGS).where({ key: AWARENESS_TAG_SETTINGS_KEY }).limit(1).get()
+  const result = await db.collection(COLLECTIONS.appSettings).where({ key: AWARENESS_TAG_SETTINGS_KEY }).limit(1).get()
   const document = (result.data || [])[0]
 
   return {
@@ -83,7 +81,7 @@ const getTagSettings = async () => {
 const getAwarenessDisplaySettings = async () => {
   try {
     const db = getDb()
-    const result = await db.collection(APP_SETTINGS).where({ key: AWARENESS_DISPLAY_SETTINGS_KEY }).limit(1).get()
+    const result = await db.collection(COLLECTIONS.appSettings).where({ key: AWARENESS_DISPLAY_SETTINGS_KEY }).limit(1).get()
     const document = (result.data || [])[0] || {}
     return {
       popularTagCount: Math.max(1, Number(document.popular_tag_count != null ? document.popular_tag_count : (document.popularTagCount != null ? document.popularTagCount : DEFAULT_POPULAR_TAG_COUNT)))
@@ -180,7 +178,7 @@ const listRecentRecords = async (limit = 200) => {
   while (records.length < targetLimit) {
     const batchLimit = Math.min(RECORD_BATCH_LIMIT, targetLimit - records.length)
     const result = await db
-      .collection(AWARENESS_RECORDS)
+      .collection(COLLECTIONS.awarenessRecords)
       .orderBy('createdAt', 'desc')
       .skip(offset)
       .limit(batchLimit)
@@ -234,7 +232,7 @@ const getTagDetailByKey = async (tagKey = '') => {
 
   const db = getDb()
   const [recordsResult, settings] = await Promise.all([
-    db.collection(AWARENESS_RECORDS).where({ tag_key: normalizedTagKey }).limit(500).get(),
+    db.collection(COLLECTIONS.awarenessRecords).where({ tag_key: normalizedTagKey }).limit(500).get(),
     getTagSettings()
   ])
 
@@ -260,7 +258,7 @@ const listUserTags = async (limit = 20) => {
   const db = getDb()
   const profile = getLocalProfile()
   const [result, settings] = await Promise.all([
-    db.collection(AWARENESS_RECORDS).where({ author_key: profile.authorKey }).orderBy('createdAt', 'desc').limit(300).get(),
+    db.collection(COLLECTIONS.awarenessRecords).where({ author_key: profile.authorKey }).orderBy('createdAt', 'desc').limit(300).get(),
     getTagSettings()
   ])
 
@@ -299,7 +297,7 @@ const publishAwareTag = async ({ content, accessType = 'public' }) => {
     created_at: db.serverDate()
   }
 
-  const result = await db.collection(AWARENESS_RECORDS).add({ data: payload })
+  const result = await db.collection(COLLECTIONS.awarenessRecords).add({ data: payload })
   return {
     id: result._id || result.id || '',
     ...payload

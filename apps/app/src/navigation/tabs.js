@@ -1,4 +1,3 @@
-import { Home, Sparkles, User, Wind } from 'lucide-react'
 import { appRoutes } from './routes.js'
 
 export const appPrimaryTabs = [
@@ -6,24 +5,24 @@ export const appPrimaryTabs = [
     key: 'home',
     label: '首页',
     to: appRoutes.home,
-    icon: Home
+    icon: 'home'
   },
   {
     key: 'meditate',
     label: '冥想',
     to: appRoutes.meditate,
-    icon: Wind
+    icon: 'meditate'
   },
   {
     key: 'aware',
     label: '觉察',
     to: appRoutes.aware,
-    icon: Sparkles
+    icon: 'aware'
   },
   {
     key: 'profile',
     label: '我的',
     to: appRoutes.profile,
-    icon: User
+    icon: 'profile'
   }
 ]

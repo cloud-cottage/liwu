@@ -1,9 +1,7 @@
 const { getDb } = require('./cloudbase')
+const { COLLECTIONS } = require('./shared/database-config')
+const { MEDITATION_SETTINGS_KEY, normalizeMeditationSettings } = require('./shared/meditation-reward-settings')
 const { getCurrentShopProfile } = require('./shop')
-
-const APP_SETTINGS = 'app_settings'
-const POINT_LEDGER = 'point_ledger'
-const MEDITATION_SETTINGS_KEY = 'meditation_rewards'
 const SESSION_SECONDS = 15 * 60
 const MIN_VALID_MEDITATION_SECONDS = 180
 
@@ -42,25 +40,32 @@ const getMeditationSlotKey = (value = new Date()) => {
 }
 
 const listMeditationEntries = async (userId = '') => {
+  if (!userId) {
+    return []
+  }
+
   const db = getDb()
-  const result = await db.collection(POINT_LEDGER).where({ user_id: userId, biz_type: 'meditation' }).limit(2000).get()
+  const result = await db.collection(COLLECTIONS.pointLedger).where({ user_id: userId, biz_type: 'meditation' }).limit(2000).get()
   return result.data || []
 }
 
 const getMeditationSettings = async () => {
   try {
     const db = getDb()
-    const result = await db.collection(APP_SETTINGS).where({ key: MEDITATION_SETTINGS_KEY }).limit(1).get()
+    const result = await db.collection(COLLECTIONS.appSettings).where({ key: MEDITATION_SETTINGS_KEY }).limit(1).get()
     const document = (result.data || [])[0] || {}
+    const normalized = normalizeMeditationSettings(document)
 
     return {
-      rewardPoints: Math.max(0, Number(document.reward_points != null ? document.reward_points : (document.rewardPoints != null ? document.rewardPoints : 0))),
-      allowRepeatRewards: document.allow_repeat_rewards != null ? document.allow_repeat_rewards : (document.allowRepeatRewards != null ? document.allowRepeatRewards : true)
+      rewardPoints: normalized.rewardPoints,
+      allowRepeatRewards: normalized.allowRepeatRewards
     }
   } catch {
+    const fallback = normalizeMeditationSettings()
+
     return {
-      rewardPoints: 0,
-      allowRepeatRewards: true
+      rewardPoints: fallback.rewardPoints,
+      allowRepeatRewards: fallback.allowRepeatRewards
     }
   }
 }
@@ -100,7 +105,7 @@ const recordMeditationCompletion = async ({ durationSeconds = 0 } = {}) => {
 
   const db = getDb()
   const now = new Date().toISOString()
-  await db.collection(POINT_LEDGER).add({
+  await db.collection(COLLECTIONS.pointLedger).add({
     data: {
       user_id: currentProfile.id,
       delta: 0,

@@ -27,8 +27,10 @@ import TagStatistics from '../admin/components/Dashboard/TagStatistics.jsx'
 import TagManagement from '../admin/components/Dashboard/TagManagement.jsx'
 import DatabaseStatus from '../admin/components/Dashboard/DatabaseStatus.jsx'
 import AwarenessTagSettings from '../admin/components/Dashboard/AwarenessTagSettings.jsx'
+import DataDiagnostic from '../admin/components/Dashboard/DataDiagnostic.jsx'
 import ThemeSettings from '../admin/components/Dashboard/ThemeSettings.jsx'
 import StudentMembershipSettings from '../admin/components/Dashboard/StudentMembershipSettings.jsx'
+import AiSettings from '../admin/components/Dashboard/AiSettings.jsx'
 import MeditationPage from '../admin/components/Dashboard/MeditationPage.jsx'
 import { useDatabase } from '../admin/hooks/useDatabase.js'
 import '../admin/index.css'
@@ -4387,10 +4389,13 @@ const AdminDashboardPanel = ({
   const [fortuneRecordActionFilter, setFortuneRecordActionFilter] = useState('all');
   const [fortuneRecordKeyword, setFortuneRecordKeyword] = useState('');
   const [fortuneUserKeyword, setFortuneUserKeyword] = useState('');
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarState);
   const lastLoadedAdminTabRef = useRef('');
   const activeTab = activeTabOverride ?? internalActiveTab;
   const setActiveTab = onActiveTabChange ?? setInternalActiveTab;
+
+  // Dev bypass removed - now declared earlier
   
   const {
     users,
@@ -4403,6 +4408,8 @@ const AdminDashboardPanel = ({
     awarenessDisplaySettings,
     badgeSettings,
     themeSettings,
+    aiSettings,
+    savingAiSettings,
     brandCarouselSettings,
     userAvatarOptionsSettings,
     clientDistributionSettings,
@@ -4455,6 +4462,7 @@ const AdminDashboardPanel = ({
     updateAwarenessDisplaySettings,
     updateBadgeSettings,
     updateThemeSettings,
+    updateAiSettings,
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
     updateClientDistributionSettings,
@@ -4476,11 +4484,14 @@ const AdminDashboardPanel = ({
     meditationCompositionSettings,
     meditationCalendar,
     meditationLibrary,
+    meditationParagraphs,
+    meditationSectionRaws,
     savingMeditationAudioLibrary,
     savingMeditationCompositionSettings,
     savingMeditationCalendar,
     savingMeditationLibrary,
     updateMeditationAudioLibrary,
+    queueMeditationAudioTranscodeJob,
     updateMeditationCompositionSettings,
     updateMeditationCalendar,
     updateMeditationLibrary,
@@ -4603,6 +4614,14 @@ const AdminDashboardPanel = ({
       await updateThemeSettings(nextSettings);
     } catch (err) {
       console.error('Failed to update theme settings:', err);
+    }
+  };
+
+  const handleSaveAiSettings = async (nextSettings) => {
+    try {
+      return await updateAiSettings(nextSettings);
+    } catch (err) {
+      console.error('Failed to update AI settings:', err);
     }
   };
 
@@ -5225,8 +5244,16 @@ const AdminDashboardPanel = ({
           </div>
         )}
 
+        {/* Loading State - sidebar already shown, show spinner for content */}
+        {loading && !error && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px', color: '#94a3b8', fontSize: '14px' }}>
+            加载中...
+          </div>
+        )}
+
         {/* Overview Tab */}
-        {!loading && !error && activeTab === 'overview' && (
+        {activeTab === 'overview' && (
+          <React.Fragment>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '24px', marginBottom: '32px' }}>
             <OverviewCard title="用户">
               <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '24px', alignItems: 'center' }}>
@@ -5302,10 +5329,24 @@ const AdminDashboardPanel = ({
               </div>
             </OverviewCard>
           </div>
+
+          {showDiagnostic && (
+            <DataDiagnostic onClose={() => setShowDiagnostic(false)} />
+          )}
+
+          <div style={{ marginTop: '12px' }}>
+            <button
+              style={{ padding: '6px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', backgroundColor: '#f8fafc', color: '#475569' }}
+              onClick={() => setShowDiagnostic((s) => !s)}
+            >
+              {showDiagnostic ? '关闭数据诊断' : '🔍 数据诊断'}
+            </button>
+          </div>
+          </React.Fragment>
         )}
 
         {/* Users Tab */}
-        {!loading && !error && activeTab === 'users' && (
+        {activeTab === 'users' && (
           <div style={{ display: 'grid', gap: '20px' }}>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               {[
@@ -5403,7 +5444,7 @@ const AdminDashboardPanel = ({
           </div>
         )}
 
-        {!loading && !error && activeTab === 'shop' && (
+        {activeTab === 'shop' && (
           <ShopManagement
             categories={shopCategories}
             products={shopProducts}
@@ -5426,7 +5467,7 @@ const AdminDashboardPanel = ({
           />
         )}
 
-        {!loading && !error && activeTab === 'fortune' && (
+        {activeTab === 'fortune' && (
           <div style={{ display: 'grid', gap: '20px' }}>
             <div
               style={{
@@ -5927,65 +5968,73 @@ const AdminDashboardPanel = ({
           </div>
         )}
 
-        {!loading && !error && activeTab === 'meditation' && (
+        {activeTab === 'meditation' && (
           <MeditationPage
             meditationAudioLibrary={meditationAudioLibrary}
             meditationCompositionSettings={meditationCompositionSettings}
             meditationCalendar={meditationCalendar}
             meditationLibrary={meditationLibrary}
+            meditationParagraphs={meditationParagraphs}
+            meditationSectionRaws={meditationSectionRaws}
+            aiSettings={aiSettings}
             savingMeditationAudioLibrary={savingMeditationAudioLibrary}
             savingMeditationCompositionSettings={savingMeditationCompositionSettings}
             savingMeditationCalendar={savingMeditationCalendar}
             savingMeditationLibrary={savingMeditationLibrary}
             updateMeditationAudioLibrary={updateMeditationAudioLibrary}
+            queueMeditationAudioTranscodeJob={queueMeditationAudioTranscodeJob}
             updateMeditationCompositionSettings={updateMeditationCompositionSettings}
             updateMeditationCalendar={updateMeditationCalendar}
             updateMeditationLibrary={updateMeditationLibrary}
+            refreshMeditationSection={() => loadAdminSection('meditation', { force: true })}
             settingsError={settingsError}
           />
         )}
 
-        {!loading && !error && activeTab === 'settings' && (
+        {activeTab === 'settings' && (
           <ThemeSettings
-            key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
-            settings={themeSettings}
-            awarenessDisplaySettings={awarenessDisplaySettings}
-            brandCarouselSettings={brandCarouselSettings}
-            userAvatarOptionsSettings={userAvatarOptionsSettings}
-            clientDistributionSettings={clientDistributionSettings}
-            pageMastheadSettings={pageMastheadSettings}
-            meditationSettings={meditationSettings}
-            badgeSettings={badgeSettings}
-            platformServiceFeeSettings={platformServiceFeeSettings}
-            shopRewardSettings={shopRewardSettings}
-            shopPartnerPricingSettings={shopPartnerPricingSettings}
-            error={settingsError}
-            saving={savingThemeSettings}
-            savingAwarenessDisplay={savingAwarenessDisplaySettings}
-            savingCarousel={savingBrandCarouselSettings}
-            savingAvatarOptions={savingUserAvatarOptionsSettings}
-            savingClientDistribution={savingClientDistributionSettings}
-            savingPageMasthead={savingPageMastheadSettings}
-            savingMeditationSettings={savingMeditationSettings}
-            savingBadgeSettings={savingBadgeSettings}
-            savingPlatformServiceFee={savingPlatformServiceFeeSettings}
-            savingShopRewardSettings={savingShopRewardSettings}
-            savingShopPartnerPricing={savingShopPartnerPricingSettings}
-            onSave={handleSaveThemeSettings}
-            onSaveAwarenessDisplay={handleSaveAwarenessDisplaySettings}
-            onSaveBrandCarousel={handleSaveBrandCarouselSettings}
-            onSaveUserAvatarOptions={handleSaveUserAvatarOptionsSettings}
-            onSaveClientDistribution={handleSaveClientDistributionSettings}
-            onSavePageMasthead={handleSavePageMastheadSettings}
-            onSaveMeditationSettings={handleSaveMeditationSettings}
-            onSaveBadgeSettings={handleSaveBadgeSettings}
-            onSavePlatformServiceFee={handleSavePlatformServiceFeeSettings}
-            onSaveShopRewardSettings={updateShopRewardSettings}
-            onSaveShopPartnerPricing={handleSaveShopPartnerPricingSettings}
-          />
+                key={`${themeSettings.documentId || 'default'}-${themeSettings.theme}`}
+                settings={themeSettings}
+                awarenessDisplaySettings={awarenessDisplaySettings}
+                brandCarouselSettings={brandCarouselSettings}
+                userAvatarOptionsSettings={userAvatarOptionsSettings}
+                clientDistributionSettings={clientDistributionSettings}
+                pageMastheadSettings={pageMastheadSettings}
+                meditationSettings={meditationSettings}
+                badgeSettings={badgeSettings}
+                platformServiceFeeSettings={platformServiceFeeSettings}
+                shopRewardSettings={shopRewardSettings}
+                shopPartnerPricingSettings={shopPartnerPricingSettings}
+                error={settingsError}
+                saving={savingThemeSettings}
+                savingAwarenessDisplay={savingAwarenessDisplaySettings}
+                savingCarousel={savingBrandCarouselSettings}
+                savingAvatarOptions={savingUserAvatarOptionsSettings}
+                savingClientDistribution={savingClientDistributionSettings}
+                savingPageMasthead={savingPageMastheadSettings}
+                savingMeditationSettings={savingMeditationSettings}
+                savingBadgeSettings={savingBadgeSettings}
+                savingPlatformServiceFee={savingPlatformServiceFeeSettings}
+                savingShopRewardSettings={savingShopRewardSettings}
+                savingShopPartnerPricing={savingShopPartnerPricingSettings}
+                onSave={handleSaveThemeSettings}
+                onSaveAwarenessDisplay={handleSaveAwarenessDisplaySettings}
+                onSaveBrandCarousel={handleSaveBrandCarouselSettings}
+                onSaveUserAvatarOptions={handleSaveUserAvatarOptionsSettings}
+                onSaveClientDistribution={handleSaveClientDistributionSettings}
+                onSavePageMasthead={handleSavePageMastheadSettings}
+                onSaveMeditationSettings={handleSaveMeditationSettings}
+                onSaveBadgeSettings={handleSaveBadgeSettings}
+                onSavePlatformServiceFee={handleSavePlatformServiceFeeSettings}
+                onSaveShopRewardSettings={updateShopRewardSettings}
+                onSaveShopPartnerPricing={handleSaveShopPartnerPricingSettings}
+                aiSettings={aiSettings}
+                savingAiSettings={savingAiSettings}
+                onSaveAiSettings={handleSaveAiSettings}
+              />
         )}
 
-        {!loading && !error && activeTab === 'awareness' && (
+        {activeTab === 'awareness' && (
           <AwarenessTagSettings
             key={awarenessTagSettings.documentId || 'default'}
             tags={awarenessTagOverview}

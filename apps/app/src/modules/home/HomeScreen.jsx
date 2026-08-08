@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import PageMasthead from '../../components/Layout/PageMasthead.jsx';
 import { brandCarouselSettingsService, pageMastheadSettingsService, shopService } from '../../services/cloudbase';
-import carouselImageOne from '../../assets/home/carousel-1.svg';
-import carouselImageTwo from '../../assets/home/carousel-2.svg';
-import carouselImageThree from '../../assets/home/carousel-3.svg';
-import carouselImageFour from '../../assets/home/carousel-4.svg';
+import carouselImageOne from '@liwu/shared-assets-package/illustrations/carousel/carousel-1.svg';
+import carouselImageTwo from '@liwu/shared-assets-package/illustrations/carousel/carousel-2.svg';
+import carouselImageThree from '@liwu/shared-assets-package/illustrations/carousel/carousel-3.svg';
+import carouselImageFour from '@liwu/shared-assets-package/illustrations/carousel/carousel-4.svg';
 
 const CAROUSEL_ITEMS = [
   {

@@ -36,11 +36,11 @@
 
       <view class="profile-tools">
         <view class="profile-tool profile-tool-iconed" bindtap="handleGoShop">
-          <image class="profile-tool-icon" mode="aspectFit" src="/assets/tabbar-custom/shop.svg" />
+          <image class="profile-tool-icon" mode="aspectFit" src="{{shopToolIcon}}" />
           <view class="profile-tool-label">工坊</view>
         </view>
         <view class="profile-tool profile-tool-iconed" bindtap="handleGoAddresses">
-          <image class="profile-tool-icon" mode="aspectFit" src="/assets/profile/address.svg" />
+          <image class="profile-tool-icon" mode="aspectFit" src="{{addressToolIcon}}" />
           <view class="profile-tool-label">地址</view>
         </view>
       </view>

@@ -1,0 +1,30 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="builderBg" x1="24" y1="24" x2="232" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#DCE7F8"/>
+    </linearGradient>
+    <linearGradient id="pillar" x1="128" y1="64" x2="128" y2="214" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6B8CC9"/>
+      <stop offset="1" stop-color="#39588D"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="128" y1="48" x2="128" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF0AA"/>
+      <stop offset="1" stop-color="#F6BF52"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="10" width="236" height="236" rx="52" fill="url(#builderBg)"/>
+  <circle cx="128" cy="84" r="24" fill="url(#sun)"/>
+  <path d="M78 192H178" stroke="#35507C" stroke-width="10" stroke-linecap="round"/>
+  <path d="M88 188V112C88 90 106 72 128 72C150 72 168 90 168 112V188" stroke="url(#pillar)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M108 188V122" stroke="#E9F0FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M128 188V110" stroke="#E9F0FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M148 188V122" stroke="#E9F0FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M84 116H172" stroke="#4C6B9F" stroke-width="10" stroke-linecap="round"/>
+  <path d="M72 210H184" stroke="#35507C" stroke-width="14" stroke-linecap="round"/>
+
+  <path d="M58 70L61 78L69 81L61 84L58 92L55 84L47 81L55 78L58 70Z" fill="#9DB7E6"/>
+  <path d="M198 58L201 66L209 69L201 72L198 80L195 72L187 69L195 66L198 58Z" fill="#9DB7E6"/>
+  <path d="M196 128L199 136L207 139L199 142L196 150L193 142L185 139L193 136L196 128Z" fill="#9DB7E6"/>
+</svg>

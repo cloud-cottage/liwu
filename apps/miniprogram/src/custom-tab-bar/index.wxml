@@ -9,10 +9,9 @@
     >
       <view class="tabbar-indicator"></view>
       <view class="tabbar-icon-slot">
-        <image
-          class="tabbar-icon-image {{item.iconClass}}"
-          mode="aspectFit"
-          src="{{item.icon}}"
+        <view
+          class="tabbar-icon-mask {{item.iconClass}}"
+          style="mask-image: url('{{selectedPath === item.pagePath ? item.activeIcon : item.icon}}'); -webkit-mask-image: url('{{selectedPath === item.pagePath ? item.activeIcon : item.icon}}');"
         />
       </view>
       <view class="tabbar-label">{{item.text}}</view>

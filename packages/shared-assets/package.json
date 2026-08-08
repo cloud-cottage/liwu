@@ -1,0 +1,14 @@
+{
+  "name": "@liwu/shared-assets",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./registry": "./src/registry.js",
+    "./react": "./src/react/index.js",
+    "./icons/*": "./icons/*",
+    "./illustrations/*": "./illustrations/*",
+    "./brand/*": "./brand/*"
+  }
+}

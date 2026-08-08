@@ -18,7 +18,8 @@ import DatabaseService, {
   DEFAULT_SHOP_HOME_LIVING_SETTINGS,
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
   DEFAULT_THEME_SETTINGS,
-  DEFAULT_USER_AVATAR_OPTIONS
+  DEFAULT_USER_AVATAR_OPTIONS,
+  DEFAULT_AI_SETTINGS
 } from '../services/database.js';
 import { getLatestCloudBaseProxyTrace } from '../services/cloudbase.js';
 
@@ -105,6 +106,8 @@ export const useDatabase = () => {
   const [awarenessDisplaySettings, setAwarenessDisplaySettings] = useState(DEFAULT_AWARENESS_DISPLAY);
   const [badgeSettings, setBadgeSettings] = useState(DEFAULT_BADGE_SETTINGS);
   const [themeSettings, setThemeSettings] = useState(DEFAULT_THEME_SETTINGS);
+  const [aiSettings, setAiSettings] = useState(DEFAULT_AI_SETTINGS);
+  const [savingAiSettings, setSavingAiSettings] = useState(false);
   const [brandCarouselSettings, setBrandCarouselSettings] = useState(DEFAULT_BRAND_CAROUSEL);
   const [userAvatarOptionsSettings, setUserAvatarOptionsSettings] = useState(DEFAULT_USER_AVATAR_OPTIONS);
   const [clientDistributionSettings, setClientDistributionSettings] = useState(DEFAULT_CLIENT_DISTRIBUTION_SETTINGS);
@@ -120,6 +123,8 @@ export const useDatabase = () => {
   const [meditationCompositionSettings, setMeditationCompositionSettings] = useState(DEFAULT_MEDITATION_COMPOSITION_SETTINGS);
   const [meditationCalendar, setMeditationCalendar] = useState(DEFAULT_MEDITATION_CALENDAR);
   const [meditationLibrary, setMeditationLibrary] = useState(DEFAULT_MEDITATION_LIBRARY);
+  const [meditationParagraphs, setMeditationParagraphs] = useState([]);
+  const [meditationSectionRaws, setMeditationSectionRaws] = useState([]);
   const [savingMeditationAudioLibrary, setSavingMeditationAudioLibrary] = useState(false);
   const [savingMeditationCompositionSettings, setSavingMeditationCompositionSettings] = useState(false);
   const [savingMeditationCalendar, setSavingMeditationCalendar] = useState(false);
@@ -237,6 +242,23 @@ export const useDatabase = () => {
       setPartnerBrandInvites(nextPartnerBrandWorkspace.invites || []);
       setLoadedSections((current) => ({ ...current, overview: true }));
 
+      // === 全局配置：在所有 Tab 之间共享，应用启动时一次性加载 ===
+      const loadGlobalSettings = async () => {
+        const [
+          globalAiSettings,
+          globalTheme,
+          globalMeditation,
+        ] = await Promise.allSettled([
+          DatabaseService.getAiSettings(),
+          DatabaseService.getThemeSettings(),
+          DatabaseService.getMeditationSettings(),
+        ]);
+        if (globalAiSettings.status === 'fulfilled') setAiSettings(globalAiSettings.value);
+        if (globalTheme.status === 'fulfilled') setThemeSettings(globalTheme.value);
+        if (globalMeditation.status === 'fulfilled') setMeditationSettings(globalMeditation.value);
+      };
+      loadGlobalSettings().catch((e) => console.error('Global settings load error:', e));
+
       const partialFailureLabels = [
         dashboardDataResult.status === 'rejected' ? '总览与用户' : '',
         awarenessTagOverviewResult.status === 'rejected' ? '觉察统计' : '',
@@ -269,6 +291,7 @@ export const useDatabase = () => {
       setSystemFortuneSettings(DEFAULT_SYSTEM_FORTUNE);
       setShopPartnerPricingSettings(DEFAULT_SHOP_PARTNER_PRICING);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
+      setAiSettings(DEFAULT_AI_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -461,7 +484,8 @@ export const useDatabase = () => {
           homeLiving,
           platformFee,
           shopReward,
-          shopPricing
+          shopPricing,
+          aiSettingsResult
         ] = await Promise.all([
           runWithRetry(() => DatabaseService.getMeditationSettings()),
           runWithRetry(() => DatabaseService.getAwarenessDisplaySettings()),
@@ -474,7 +498,8 @@ export const useDatabase = () => {
           runWithRetry(() => DatabaseService.getShopHomeLivingSettings()),
           runWithRetry(() => DatabaseService.getPlatformServiceFeeSettings()),
           runWithRetry(() => DatabaseService.getShopRewardSettings()),
-          runWithRetry(() => DatabaseService.getShopPartnerPricingSettings())
+          runWithRetry(() => DatabaseService.getShopPartnerPricingSettings()),
+          runWithRetry(() => DatabaseService.getAiSettings())
         ]);
 
         setMeditationSettings(meditation);
@@ -489,6 +514,7 @@ export const useDatabase = () => {
         setPlatformServiceFeeSettings(platformFee);
         setShopRewardSettings(shopReward);
         setShopPartnerPricingSettings(shopPricing);
+        setAiSettings(aiSettingsResult);
       }
 
       if (section === 'awareness') {
@@ -503,17 +529,12 @@ export const useDatabase = () => {
       }
 
       if (section === 'meditation') {
-        const [audioLibrary, compositionSettings, calendar, library] = await Promise.all([
-          runWithRetry(() => DatabaseService.getMeditationAudioLibrary()),
-          runWithRetry(() => DatabaseService.getMeditationCompositionSettings()),
-          runWithRetry(() => DatabaseService.getMeditationCalendar()),
-          runWithRetry(() => DatabaseService.getMeditationLibrary())
+        // 不再预加载全部数据，让 MeditationPage 按子 Tab 按需加载
+        // 只加载轻量的段落数据（paragraphs Tab 默认激活）
+        const [paragraphs] = await Promise.allSettled([
+          runWithRetry(() => DatabaseService.getMedParagraphs()),
         ]);
-
-        setMeditationAudioLibrary(audioLibrary);
-        setMeditationCompositionSettings(compositionSettings);
-        setMeditationCalendar(calendar);
-        setMeditationLibrary(library);
+        setMeditationParagraphs(paragraphs.status === 'fulfilled' ? paragraphs.value || [] : []);
       }
 
       setLoadedSections((current) => ({ ...current, [section]: true }));
@@ -554,6 +575,7 @@ export const useDatabase = () => {
       setShopRewardSettings(DEFAULT_SHOP_REWARD);
       setShopPartnerPricingSettings(DEFAULT_SHOP_PARTNER_PRICING);
       setStudentMembershipSettings(DEFAULT_STUDENT_MEMBERSHIP_SETTINGS);
+      setAiSettings(DEFAULT_AI_SETTINGS);
       setAwarenessTagOverview([]);
       setShopCategories([]);
       setShopProducts([]);
@@ -758,6 +780,22 @@ export const useDatabase = () => {
       throw err;
     } finally {
       setSavingThemeSettings(false);
+    }
+  };
+
+  const updateAiSettings = async (settingsData) => {
+    try {
+      setSavingAiSettings(true);
+      setSettingsError(null);
+      const savedSettings = await DatabaseService.saveAiSettings(settingsData);
+      setAiSettings(savedSettings);
+      return savedSettings;
+    } catch (err) {
+      console.error('Error updating AI settings:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingAiSettings(false);
     }
   };
 
@@ -1072,6 +1110,17 @@ export const useDatabase = () => {
     }
   };
 
+  const queueMeditationAudioTranscodeJob = async (jobData) => {
+    try {
+      setSettingsError(null);
+      return await DatabaseService.createMeditationAudioTranscodeJob(jobData);
+    } catch (err) {
+      console.error('Error queueing meditation audio transcode job:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    }
+  };
+
   const updateMeditationCompositionSettings = async (data) => {
     try {
       setSavingMeditationCompositionSettings(true);
@@ -1164,6 +1213,8 @@ export const useDatabase = () => {
     meditationCompositionSettings,
     meditationCalendar,
     meditationLibrary,
+    meditationParagraphs,
+    meditationSectionRaws,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
@@ -1201,6 +1252,7 @@ export const useDatabase = () => {
     updateAwarenessDisplaySettings,
     updateBadgeSettings,
     updateThemeSettings,
+    updateAiSettings,
     updateShopRewardSettings,
     updateBrandCarouselSettings,
     updateUserAvatarOptionsSettings,
@@ -1219,6 +1271,7 @@ export const useDatabase = () => {
     saveShopProduct,
     updateShopOrderStatus,
     updateMeditationAudioLibrary,
+    queueMeditationAudioTranscodeJob,
     updateMeditationCompositionSettings,
     updateMeditationCalendar,
     updateMeditationLibrary,

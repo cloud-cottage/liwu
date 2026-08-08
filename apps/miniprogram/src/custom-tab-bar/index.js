@@ -1,3 +1,5 @@
+const { resolveMiniProgramTabbarIconPath } = require('../utils/shared/asset-paths')
+
 Component({
   data: {
     selectedPath: '/pages/home/index',
@@ -6,28 +8,32 @@ Component({
         key: 'home',
         pagePath: '/pages/home/index',
         text: '首页',
-        icon: '/assets/tabbar-custom/home.svg',
+        icon: resolveMiniProgramTabbarIconPath('home', false),
+        activeIcon: resolveMiniProgramTabbarIconPath('home', true),
         iconClass: 'tabbar-icon-home'
       },
       {
         key: 'shop',
         pagePath: '/pages/shop/index',
         text: '工坊',
-        icon: '/assets/tabbar-custom/shop.svg',
+        icon: resolveMiniProgramTabbarIconPath('shop', false),
+        activeIcon: resolveMiniProgramTabbarIconPath('shop', true),
         iconClass: 'tabbar-icon-shop'
       },
       {
         key: 'aware',
         pagePath: '/pages/aware/index',
         text: '觉察',
-        icon: '/assets/tabbar-custom/aware.svg',
+        icon: resolveMiniProgramTabbarIconPath('aware', false),
+        activeIcon: resolveMiniProgramTabbarIconPath('aware', true),
         iconClass: 'tabbar-icon-aware'
       },
       {
         key: 'profile',
         pagePath: '/pages/profile/index',
         text: '我的',
-        icon: '/assets/tabbar-custom/profile.svg',
+        icon: resolveMiniProgramTabbarIconPath('profile', false),
+        activeIcon: resolveMiniProgramTabbarIconPath('profile', true),
         iconClass: 'tabbar-icon-profile'
       }
     ]

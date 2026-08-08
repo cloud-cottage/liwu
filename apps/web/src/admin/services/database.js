@@ -199,6 +199,50 @@ export const DEFAULT_SHOP_REWARD = {
   ...DEFAULT_SHOP_REWARD_SETTINGS
 };
 
+export const AI_SETTINGS_KEY = 'ai_settings';
+export const DEFAULT_AI_SETTINGS = {
+  documentId: null,
+  provider: 'deepseek',
+  apiEndpoint: 'https://api.deepseek.com',
+  apiKey: '',
+  model: 'deepseek-chat',
+  enabled: true,
+  missingCollection: false
+};
+
+export const normalizeAiSettings = (doc = {}) => ({
+  documentId: getDocumentId(doc) || null,
+  provider: doc.provider || DEFAULT_AI_SETTINGS.provider,
+  apiEndpoint: doc.apiEndpoint || DEFAULT_AI_SETTINGS.apiEndpoint,
+  apiKey: doc.apiKey || '',
+  model: doc.model || DEFAULT_AI_SETTINGS.model,
+  enabled: doc.enabled !== false,
+  missingCollection: false
+});
+
+export const toAiSettingsPayload = (data = {}) => ({
+  key: AI_SETTINGS_KEY,
+  provider: data.provider || DEFAULT_AI_SETTINGS.provider,
+  apiEndpoint: data.apiEndpoint || DEFAULT_AI_SETTINGS.apiEndpoint,
+  apiKey: data.apiKey || '',
+  model: data.model || DEFAULT_AI_SETTINGS.model,
+  enabled: data.enabled !== false,
+});
+
+export const MEDITATION_AUDIO_TRANSCODE_STATUS = Object.freeze({
+  idle: 'idle',
+  queued: 'queued',
+  processing: 'processing',
+  succeeded: 'succeeded',
+  failed: 'failed'
+});
+
+export const resolveMeditationAudioTranscodeProfile = ({ type, isTts = false } = {}) => {
+  if (isTts) return 'tts_simple';
+  if (type === 'nature') return 'nature';
+  return 'default';
+};
+
 export const MEDITATION_AUDIO_LIBRARY_TYPES = ['bowl', 'greeting', 'nature', 'breath', 'quote', 'goodbye'];
 export const MEDITATION_AUDIO_GROUP_TEMPLATES = Object.freeze({
   bowl: Object.freeze([
@@ -3494,6 +3538,49 @@ class DatabaseService {
     }
   }
 
+  static async getAiSettings() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db
+        .collection(collections.appSettings)
+        .where({ key: AI_SETTINGS_KEY })
+        .limit(1)
+        .get();
+      if (isMissingCollectionIssue(result)) return { ...DEFAULT_AI_SETTINGS, missingCollection: true };
+      const documents = getDocuments(result, collections.appSettings);
+      return documents.length > 0 ? normalizeAiSettings(documents[0]) : { ...DEFAULT_AI_SETTINGS };
+    } catch (error) {
+      console.error('Error fetching AI settings:', error);
+      return { ...DEFAULT_AI_SETTINGS };
+    }
+  }
+
+  static async saveAiSettings(settingsData) {
+    try {
+      await ensureAnonymousLogin();
+      const existingResult = await db
+        .collection(collections.appSettings)
+        .where({ key: AI_SETTINGS_KEY })
+        .limit(1)
+        .get();
+      if (isMissingCollectionIssue(existingResult)) {
+        throw new Error('CloudBase 已连接，但缺少集合 app_settings。请先创建该集合并配置前端可读写权限。');
+      }
+      const existingDocuments = getDocuments(existingResult, collections.appSettings);
+      const payload = { ...toAiSettingsPayload(settingsData), updated_at: new Date() };
+      if (existingDocuments.length > 0) {
+        const existingDocument = existingDocuments[0];
+        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        return normalizeAiSettings({ ...existingDocument, ...payload });
+      }
+      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      return normalizeAiSettings({ ...payload, _id: createResult.id });
+    } catch (error) {
+      console.error('Error saving AI settings:', error);
+      throw error;
+    }
+  }
+
   static async saveAwarenessDisplaySettings(settingsData) {
     try {
       await ensureAnonymousLogin();
@@ -5124,6 +5211,160 @@ class DatabaseService {
       return normalizeMeditationLibrary({ ...payload, _id: createResult.id });
     } catch (error) {
       console.error('Error saving meditation library:', error);
+      throw error;
+    }
+  }
+
+  // Basic support for med_paragraphs collection (new schema per meditation.admin.spec.md)
+  // Fields: _id, text, tags, category, paragraph_type, created_at, updated_at, created_by, usage_count, source, ai_rewritten_from
+  static async getMedParagraphs() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection('med_paragraphs').limit(1000).get();
+      if (isMissingCollectionIssue(result)) {
+        return [];
+      }
+      return getDocuments(result) || [];
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return [];
+      }
+      console.error('Error fetching med_paragraphs:', error);
+      throw error;
+    }
+  }
+
+  static async createMedParagraph(data) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const payload = {
+        text: data?.text || '',
+        tags: Array.isArray(data?.tags) ? data.tags : [],
+        category: data?.category || '',
+        paragraph_type: data?.paragraph_type || 'verse',
+        usage_count: typeof data?.usage_count === 'number' ? data.usage_count : 0,
+        source: data?.source || 'manual',
+        ai_rewritten_from: data?.ai_rewritten_from || null,
+        created_at: now,
+        updated_at: now,
+        created_by: data?.created_by || '',
+        ...(data || {})
+      };
+      const result = await db.collection('med_paragraphs').add(payload);
+      return { ...payload, _id: result.id };
+    } catch (error) {
+      console.error('Error creating med paragraph:', error);
+      throw error;
+    }
+  }
+
+  static async updateMedParagraph(id, data) {
+    try {
+      await ensureAnonymousLogin();
+      const payload = {
+        ...data,
+        updated_at: new Date().toISOString()
+      };
+      await db.collection('med_paragraphs').doc(id).update(payload);
+      return { _id: id, ...payload };
+    } catch (error) {
+      console.error('Error updating med paragraph:', error);
+      throw error;
+    }
+  }
+
+  static async deleteMedParagraph(id) {
+    try {
+      await ensureAnonymousLogin();
+      await db.collection('med_paragraphs').doc(id).remove();
+      return { id };
+    } catch (error) {
+      console.error('Error deleting med paragraph:', error);
+      throw error;
+    }
+  }
+
+  // Basic support for med_section_raws (P0 stub per meditation.admin.spec.md)
+  // Fields: _id, section_type, paragraph_ids (array ordered), target_char_count, current_char_count,
+  // word_count_status ('ok'|'slightly_over'|'over'|'slightly_under'|'under' or stub '计算中'),
+  // audio_id (optional), created_at, updated_at, created_by
+  static async getMedSectionRaws() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection('med_section_raws').limit(1000).get();
+      if (isMissingCollectionIssue(result)) {
+        return [];
+      }
+      return getDocuments(result) || [];
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return [];
+      }
+      console.error('Error fetching med_section_raws:', error);
+      throw error;
+    }
+  }
+
+  static async createMedSectionRaw(data) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const payload = {
+        section_type: data?.section_type || 'sec-stub',
+        paragraph_ids: Array.isArray(data?.paragraph_ids) ? data.paragraph_ids : [],
+        target_char_count: typeof data?.target_char_count === 'number' ? data.target_char_count : 0,
+        current_char_count: typeof data?.current_char_count === 'number' ? data.current_char_count : 0,
+        word_count_status: data?.word_count_status || '计算中',
+        audio_id: data?.audio_id || null,
+        created_at: now,
+        updated_at: now,
+        created_by: data?.created_by || 'stub-admin',
+        ...(data || {})
+      };
+      const result = await db.collection('med_section_raws').add(payload);
+      return { ...payload, _id: result.id };
+    } catch (error) {
+      console.error('Error creating med section raw:', error);
+      throw error;
+    }
+  }
+
+  static async updateMedSectionRaw(id, data) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const payload = { ...data, updated_at: now };
+      await db.collection('med_section_raws').doc(id).update(payload);
+      return { _id: id, ...payload };
+    } catch (error) {
+      console.error('Error updating med section raw:', error);
+      throw error;
+    }
+  }
+
+  static async createMeditationAudioTranscodeJob(jobData) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const payload = {
+        status: 'queued',
+        item_id: jobData.itemId || '',
+        source_file_id: jobData.sourceFileId || '',
+        source_file_name: jobData.sourceFileName || 'audio.bin',
+        source_cloud_path: jobData.sourceCloudPath || '',
+        target_cloud_path: jobData.targetCloudPath || '',
+        transcode_profile: jobData.transcodeProfile || 'default',
+        attempt_count: 0,
+        error_message: '',
+        created_at: now,
+        updated_at: now,
+        ...(jobData || {})
+      };
+      const result = await db.collection('audio_transcode_jobs').add(payload);
+      return { ...payload, _id: result.id, id: result.id };
+    } catch (error) {
+      console.error('Error creating audio transcode job:', error);
       throw error;
     }
   }
