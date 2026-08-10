@@ -1547,9 +1547,9 @@ class DatabaseService {
     try {
       await ensureAnonymousLogin();
 
-      const usersResult = await db.collection(collections.users).limit(2000).get();
-      const brandsResult = await db.collection(collections.partnerBrands).limit(500).get().catch(() => ({ data: [] }));
-      const productsResult = await db.collection(collections.shopProducts).limit(2000).get();
+      const usersResult = await db.collection(collections.users).limit(500).get();
+      const brandsResult = await db.collection(collections.partnerBrands).limit(100).get().catch(() => ({ data: [] }));
+      const productsResult = await db.collection(collections.shopProducts).limit(200).get();
 
       const users = getDocuments(usersResult, collections.users);
       const brands = getDocuments(brandsResult, collections.partnerBrands);
@@ -1598,13 +1598,13 @@ class DatabaseService {
     try {
       await ensureAnonymousLogin();
 
-      const usersResult = await db.collection(collections.users).limit(2000).get();
-      const brandsResult = await db.collection(collections.partnerBrands).limit(500).get().catch(() => ({ data: [] }));
-      const membersResult = await db.collection(collections.partnerBrandMembers).limit(5000).get().catch(() => ({ data: [] }));
-      const invitesResult = await db.collection(collections.partnerBrandInvites).limit(5000).get().catch(() => ({ data: [] }));
-      const productsResult = await db.collection(collections.shopProducts).limit(2000).get();
-      const subOrdersResult = await db.collection(collections.partnerSubOrders).limit(5000).get().catch(() => ({ data: [] }));
-      const pointLedgerResult = await db.collection(collections.pointLedger).limit(5000).get().catch(() => ({ data: [] }));
+      const usersResult = await db.collection(collections.users).limit(500).get();
+      const brandsResult = await db.collection(collections.partnerBrands).limit(100).get().catch(() => ({ data: [] }));
+      const membersResult = await db.collection(collections.partnerBrandMembers).limit(500).get().catch(() => ({ data: [] }));
+      const invitesResult = await db.collection(collections.partnerBrandInvites).limit(500).get().catch(() => ({ data: [] }));
+      const productsResult = await db.collection(collections.shopProducts).limit(200).get();
+      const subOrdersResult = await db.collection(collections.partnerSubOrders).limit(500).get().catch(() => ({ data: [] }));
+      const pointLedgerResult = await db.collection(collections.pointLedger).limit(500).get().catch(() => ({ data: [] }));
 
       const users = getDocuments(usersResult, collections.users);
       const brands = getDocuments(brandsResult, collections.partnerBrands);

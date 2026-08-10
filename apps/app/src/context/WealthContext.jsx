@@ -5,6 +5,7 @@ import { badgeService, wealthService } from '../services/cloudbase';
 
 const WealthContext = createContext();
 const WALLET_SYNC_INTERVAL_MS = 15000;
+const WALLET_SYNC_MAX_INTERVAL_MS = 5 * 60 * 1000; // 最大 5 分钟
 const REWARD_MODAL_MARKER_KEY = 'wealth_reward_toast_marker';
 const MEDITATION_TIMEZONE = 'Asia/Shanghai';
 const MEDITATION_MIN_VALID_SECONDS = 180;
@@ -345,32 +346,61 @@ export const WealthProvider = ({ children }) => {
 
   useEffect(() => {
     let disposed = false;
+    let failures = 0;
+    let timerId = null;
 
-    const syncOnce = async () => {
-      await syncWalletFromCloud({ refresh: true });
+    const scheduleNext = () => {
+      if (disposed) return;
+      const delay = failures === 0
+        ? WALLET_SYNC_INTERVAL_MS
+        : Math.min(WALLET_SYNC_INTERVAL_MS * Math.pow(2, failures), WALLET_SYNC_MAX_INTERVAL_MS);
+      timerId = window.setTimeout(syncWithBackoff, delay);
     };
 
-    void syncOnce();
+    const syncWithBackoff = async () => {
+      if (disposed) return;
+      try {
+        const wallet = await wealthService.getCurrentWallet({ refresh: true });
+        if (wallet) {
+          setBalance(wallet.balance);
+          setHistory(wallet.history);
+          processRewardHistoryUpdate(wallet.history);
+        } else {
+          setBalance(0);
+          setHistory([]);
+          setRewardModalQueue([]);
+          removeSessionValue(REWARD_MODAL_MARKER_KEY);
+        }
+        failures = 0; // 成功后重置
+      } catch (error) {
+        failures += 1;
+        const msg = error?.message || '';
+        if (msg.includes('LimitExceeded') || msg.includes('EXCEED_REQUEST_LIMIT')) {
+          console.warn('CloudBase 限流，退避中 (failures=' + failures + ')');
+        } else {
+          console.error('同步云端福豆失败:', msg);
+        }
+      }
+      scheduleNext();
+    };
+
+    // 首次立即同步
+    void syncWithBackoff();
 
     const handleFocus = () => {
-      if (!disposed) {
-        void syncWalletFromCloud({ refresh: true });
+      if (!disposed && failures === 0) {
+        void syncWithBackoff();
       }
     };
 
     window.addEventListener('focus', handleFocus);
-    const timerId = window.setInterval(() => {
-      if (!disposed) {
-        void syncWalletFromCloud({ refresh: true });
-      }
-    }, WALLET_SYNC_INTERVAL_MS);
 
     return () => {
       disposed = true;
       window.removeEventListener('focus', handleFocus);
-      window.clearInterval(timerId);
+      window.clearTimeout(timerId);
     };
-  }, [syncWalletFromCloud]);
+  }, [processRewardHistoryUpdate]);
 
   const addWealth = useCallback(async (amount, description, options = {}) => {
     try {
