@@ -1732,14 +1732,18 @@ class DatabaseService {
   static async getShopManagementData() {
     try {
       await ensureAnonymousLogin();
-      await this.dedupeStore102Brands();
-      await this.ensureAllProductsAssignedToStore102();
+      // dedupe/ensure 只首次运行
+      if (!DatabaseService._brandsChecked) {
+        DatabaseService._brandsChecked = true;
+        await this.dedupeStore102Brands().catch(() => {});
+        await this.ensureAllProductsAssignedToStore102().catch(() => {});
+      }
       const [categoriesResult, productsResult, skusResult, ordersResult, orderItemsResult] = await Promise.all([
         db.collection(collections.shopCategories).limit(200).get(),
-        db.collection(collections.shopProducts).limit(500).get(),
-        db.collection(collections.shopProductSkus).limit(1000).get(),
-        db.collection(collections.shopOrders).limit(1000).get(),
-        db.collection(collections.shopOrderItems).limit(2000).get()
+        db.collection(collections.shopProducts).limit(200).get(),
+        db.collection(collections.shopProductSkus).limit(200).get(),
+        db.collection(collections.shopOrders).limit(200).get(),
+        db.collection(collections.shopOrderItems).limit(200).get()
       ]);
 
       const normalizedCategories = getDocuments(categoriesResult, collections.shopCategories)
