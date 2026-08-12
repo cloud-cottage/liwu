@@ -66,8 +66,9 @@ const createApp = (envId, accessKey) => {
 
 const stripSystemFields = (doc) => {
   const cleaned = { ...doc };
-  delete cleaned._id;
-  delete cleaned._openid;
+  // IMPORTANT: keep _openid so migrated documents retain their original ownership.
+  // Deleting _openid causes CloudBase to assign a new _openid (the API key's identity),
+  // which breaks frontend read/write permissions that rely on anonymous user auth.
   return cleaned;
 };
 

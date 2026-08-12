@@ -4698,11 +4698,7 @@ const AdminDashboardPanel = ({
   };
 
   const handleUpdateShopOrderStatus = async (orderId, nextStatus) => {
-    try {
-      await updateShopOrderStatus(orderId, nextStatus);
-    } catch (err) {
-      console.error('Failed to update shop order status:', err);
-    }
+    await updateShopOrderStatus(orderId, nextStatus);
   };
 
   const handleUpdatePartnerSubOrderStatus = async (subOrderId, nextStatus) => {
@@ -5451,6 +5447,7 @@ const AdminDashboardPanel = ({
             skus={shopSkus}
             orders={shopOrders}
             orderItems={shopOrderItems}
+            users={users}
             partnerOrders={partnerOrders}
             partnerSubOrders={partnerSubOrders}
             partnerUsers={partnerUsers}

@@ -102,6 +102,11 @@ export const createCloudBaseProxyRuntime = ({
       return originalOpen.call(this, method, url, ...rest)
     }
 
+    // Inject x-liwu-admin header for partner admin pages,
+    // so the Vercel proxy knows to elevate these requests with the admin API key.
+    const isAdminPage = typeof window !== 'undefined'
+      && window.location.pathname.startsWith('/partner')
+
     if (enableTrace && originalSend) {
       window.XMLHttpRequest.prototype.send = function patchedSend(...args) {
         if (this.__liwuCloudBaseRequestId) {
@@ -116,7 +121,16 @@ export const createCloudBaseProxyRuntime = ({
           }, { once: true })
         }
 
+        if (isAdminPage) {
+          try { this.setRequestHeader('x-liwu-admin', '1') } catch (_) { /* ignore */ }
+        }
         return originalSend.apply(this, args)
+      }
+    } else if (isAdminPage) {
+      const originalSendAdmin = window.XMLHttpRequest.prototype.send
+      window.XMLHttpRequest.prototype.send = function patchedSendAdmin(...args) {
+        try { this.setRequestHeader('x-liwu-admin', '1') } catch (_) { /* ignore */ }
+        return originalSendAdmin.apply(this, args)
       }
     }
 

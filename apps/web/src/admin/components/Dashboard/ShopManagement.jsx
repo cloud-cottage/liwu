@@ -210,6 +210,7 @@ const ShopManagement = ({
   skus,
   orders,
   orderItems,
+  users = [],
   partnerOrders,
   partnerSubOrders,
   partnerUsers,
@@ -242,6 +243,8 @@ const ShopManagement = ({
   const [updatingPartnerSubOrderId, setUpdatingPartnerSubOrderId] = useState('');
   const [adminSection, setAdminSection] = useState('overview');
   const [adjustingBrandId, setAdjustingBrandId] = useState('');
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [orderError, setOrderError] = useState('');
 
   useEffect(() => {
     setLivingCardsDraft(normalizeLivingCards(shopHomeLivingSettings));
@@ -347,6 +350,22 @@ const ShopManagement = ({
 
     return nextMap;
   }, [orderItems]);
+
+  const userUidById = useMemo(() => {
+    const nextMap = new Map();
+    users.forEach((user) => {
+      if (user.id && user.uid) {
+        nextMap.set(user.id, user.uid);
+      }
+    });
+    return nextMap;
+  }, [users]);
+
+  const resolveUserUid = (userId) => {
+    if (!userId) return '未知';
+    const uid = userUidById.get(userId);
+    return uid !== undefined ? String(uid) : userId;
+  };
 
   const filteredPartnerOrders = useMemo(() => (
     selectedPartnerStatus === 'all'
@@ -716,8 +735,13 @@ const ShopManagement = ({
 
   const handleOrderStatusUpdate = async (orderId, nextStatus) => {
     setUpdatingOrderId(orderId);
+    setOrderError('');
     try {
       await onUpdateOrderStatus(orderId, nextStatus);
+    } catch (err) {
+      const message = err?.message || String(err);
+      setOrderError(`操作失败：${message}`);
+      console.error('Order status update failed:', err);
     } finally {
       setUpdatingOrderId('');
     }
@@ -1404,6 +1428,38 @@ const ShopManagement = ({
           >
             <h3 style={{ margin: '0 0 16px', fontSize: '20px', color: '#111827' }}>订单列表</h3>
 
+            {orderError && (
+              <div style={{
+                marginBottom: '16px',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                backgroundColor: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#b91c1c',
+                fontSize: '13px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span>{orderError}</span>
+                <button
+                  type="button"
+                  onClick={() => setOrderError('')}
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    color: '#b91c1c',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    padding: '2px 6px'
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {orders.length === 0 ? (
               <div style={{ color: '#94a3b8', fontSize: '14px' }}>当前还没有工坊订单。</div>
             ) : (
@@ -1422,7 +1478,7 @@ const ShopManagement = ({
                       <div>
                         <div style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a' }}>{order.orderNo}</div>
                         <div style={{ marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
-                          用户：{order.userId} · 创建时间：{order.createdAt || '未知'}
+                          用户：{resolveUserUid(order.userId)} · 创建时间：{order.createdAt || '未知'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -1439,6 +1495,22 @@ const ShopManagement = ({
                         >
                           {statusLabelMap[order.status] || order.status}
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => setEditingOrder(order)}
+                          style={{
+                            border: '1px solid #e5e7eb',
+                            borderRadius: '10px',
+                            backgroundColor: '#fff',
+                            color: '#0f172a',
+                            padding: '6px 10px',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          编辑
+                        </button>
                         {renderOrderActions(order, updatingOrderId, handleOrderStatusUpdate)}
                       </div>
                     </div>
@@ -1641,6 +1713,18 @@ const ShopManagement = ({
           onSave={handleSaveProduct}
         />
       )}
+
+      {editingOrder !== null && (
+        <OrderEditor
+          order={editingOrder}
+          orderItems={orderItemsByOrderId.get(editingOrder.id) || []}
+          statusLabels={statusLabelMap}
+          updatingOrderId={updatingOrderId}
+          resolveUserUid={resolveUserUid}
+          onClose={() => setEditingOrder(null)}
+          onUpdateStatus={(nextStatus) => handleOrderStatusUpdate(editingOrder.id || editingOrder.orderNo, nextStatus)}
+        />
+      )}
     </div>
   );
 };
@@ -1710,6 +1794,20 @@ const renderOrderActions = (order, updatingOrderId, onUpdate) => {
           退款
         </button>
       </>
+    );
+  }
+
+  // Terminal states: show reopen actions
+  if (order.status === 'completed' || order.status === 'refunded' || order.status === 'cancelled') {
+    return (
+      <button
+        type="button"
+        style={{ ...buttonStyle, color: '#9a3412', borderColor: '#fed7aa', backgroundColor: '#fff7ed' }}
+        disabled={updatingOrderId === actionOrderId}
+        onClick={() => onUpdate(actionOrderId, 'processing')}
+      >
+        重新打开
+      </button>
     );
   }
 
@@ -2304,3 +2402,176 @@ const FilterButton = ({ active, onClick, children }) => (
 );
 
 export default ShopManagement;
+
+const OrderEditor = ({ order, orderItems, statusLabels, updatingOrderId, onClose, onUpdateStatus, resolveUserUid }) => {
+  const orderId = order.id || order.orderNo;
+  const isUpdating = updatingOrderId === orderId;
+  const [localError, setLocalError] = React.useState('');
+
+  const handleStatusUpdate = async (nextStatus) => {
+    setLocalError('');
+    try {
+      await onUpdateStatus(nextStatus);
+    } catch (err) {
+      setLocalError(err?.message || String(err));
+    }
+  };
+
+  const detailRows = [
+    { label: '订单编号', value: order.orderNo || '未设置' },
+    { label: '用户 ID', value: resolveUserUid ? resolveUserUid(order.userId) : (order.userId || '未知') },
+    { label: '订单类型', value: order.orderType || '未知' },
+    { label: '当前状态', value: statusLabels[order.status] || order.status || '未知' },
+    { label: '总额', value: `${order.totalPoints || 0} 福豆 · ¥${Number(order.totalCash || 0).toFixed(2)}` },
+    { label: '已发返豆', value: `${(order.rewardPointsAwarded || 0) + (order.badgeBonusPointsAwarded || 0)} 福豆` },
+    { label: '创建时间', value: order.createdAt || '未知' },
+    { label: '支付时间', value: order.paidAt || '未支付' }
+  ];
+
+  const statusOptions = [
+    { key: 'pending_payment', label: '待支付' },
+    { key: 'paid', label: '已支付' },
+    { key: 'processing', label: '处理中' },
+    { key: 'shipped', label: '已发货' },
+    { key: 'completed', label: '已完成' },
+    { key: 'cancelled', label: '已取消' },
+    { key: 'refunded', label: '已退款' }
+  ];
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        zIndex: 120
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '600px',
+          maxHeight: '85vh',
+          overflowY: 'auto',
+          backgroundColor: '#fff',
+          borderRadius: '20px',
+          boxShadow: '0 24px 80px rgba(15, 23, 42, 0.22)',
+          padding: '28px'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+              订单详情
+            </div>
+            <h3 style={{ margin: 0, fontSize: '24px', color: '#111827' }}>{order.orderNo || '编辑订单'}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              color: '#64748b',
+              fontSize: '14px',
+              fontWeight: 700
+            }}
+          >
+            关闭
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gap: '12px', marginBottom: '24px' }}>
+          {detailRows.map((row) => (
+            <div
+              key={row.label}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '12px 16px',
+                borderRadius: '12px',
+                backgroundColor: '#f8fafc',
+                border: '1px solid #e5e7eb'
+              }}
+            >
+              <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>{row.label}</span>
+              <span style={{ fontSize: '14px', color: '#0f172a', fontWeight: 700 }}>{row.value}</span>
+            </div>
+          ))}
+        </div>
+
+        {orderItems.length > 0 && (
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827', marginBottom: '10px' }}>订单商品</div>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {orderItems.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    borderRadius: '12px',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #e5e7eb',
+                    padding: '12px 14px'
+                  }}
+                >
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a' }}>{item.productName}</div>
+                  <div style={{ marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
+                    {item.skuName || '默认规格'} · x{item.quantity} · {item.subtotalPoints} 福豆 · ¥{Number(item.subtotalCash || 0).toFixed(2)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '18px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>修改状态</div>
+
+          {localError && (
+            <div style={{
+              marginBottom: '12px',
+              padding: '10px 14px',
+              borderRadius: '10px',
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#b91c1c',
+              fontSize: '13px'
+            }}>
+              {localError}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {statusOptions.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                disabled={isUpdating || order.status === option.key}
+                onClick={() => handleStatusUpdate(option.key)}
+                style={{
+                  border: order.status === option.key ? '1px solid #111827' : '1px solid #dbe4ee',
+                  borderRadius: '10px',
+                  padding: '10px 14px',
+                  backgroundColor: order.status === option.key ? '#111827' : '#fff',
+                  color: order.status === option.key ? '#fff' : '#334155',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: isUpdating || order.status === option.key ? 'default' : 'pointer',
+                  opacity: order.status === option.key ? 1 : (isUpdating ? 0.5 : 1)
+                }}
+              >
+                {option.label}{order.status === option.key ? ' ✓' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

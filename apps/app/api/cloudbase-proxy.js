@@ -5,6 +5,26 @@ export const config = {
   }
 };
 
+const ADMIN_API_KEY = process.env.CLOUDBASE_ADMIN_API_KEY || '';
+
+const DB_WRITE_URL_PATTERNS = [
+  '/documents',
+  '/update',
+  '/add',
+  '/remove',
+  '/set',
+];
+
+const isDbWriteOperation = (target, method) => {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
+  try {
+    const url = new URL(target);
+    return DB_WRITE_URL_PATTERNS.some((p) => url.pathname.includes(p));
+  } catch {
+    return false;
+  }
+};
+
 const REQUEST_HEADER_BLOCKLIST = new Set([
   'host',
   'connection',
@@ -123,6 +143,16 @@ export default async function handler(req, res) {
     const requestBody = ['GET', 'HEAD'].includes(req.method)
       ? undefined
       : await readRawBody(req);
+
+    // Inject admin API key for database write operations.
+    // Only elevate requests that carry the x-liwu-admin header (set by
+    // the partner admin panel), so regular user writes stay scoped to
+    // their own _openid and don't get unintended admin privileges.
+    const isWrite = isDbWriteOperation(rawTarget, req.method);
+    const isAdminRequest = req.headers['x-liwu-admin'] === '1';
+    if (ADMIN_API_KEY && isWrite && isAdminRequest) {
+      upstreamHeaders.set('x-cloudbase-credentials', ADMIN_API_KEY);
+    }
 
     const upstreamResponse = await fetch(rawTarget, {
       method: req.method,
