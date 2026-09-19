@@ -25,3 +25,10 @@ dist-ssr
 *.sw?
 .vercel
 apps/miniprogram/project.private.config.json
+
+# 数据导出/转储（含用户数据，禁止入库）
+scripts/migrations/exports/
+audit-full.json
+audit-report.json
+resolve-duplicates-result-*.json
+*.export.json
