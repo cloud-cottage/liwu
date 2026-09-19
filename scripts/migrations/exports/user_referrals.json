@@ -1,0 +1,20 @@
+[
+  {
+    "_id": "6a09ba48ef28305b825446ee",
+    "_openid": "A0fteXBNcG6nyDtHvRWyCw",
+    "user_id": "84b9419e69e5ea3300020fd0148c6e4a",
+    "inviter_user_id": "237f5a9269e33fc20000a88d129bf701",
+    "source": "legacy_users_field",
+    "created_at": "2026-04-20T08:56:18.264Z",
+    "updated_at": "2026-05-17T12:53:12.978Z"
+  },
+  {
+    "_id": "6a09ba58ef28305b82546a0d",
+    "_openid": "A0fteXBNcG6nyDtHvRWyCw",
+    "user_id": "b695df2969e5ea2b000209a132e41423",
+    "inviter_user_id": "237f5a9269e33fc20000a88d129bf701",
+    "source": "legacy_users_field",
+    "created_at": "2026-04-20T08:56:10.699Z",
+    "updated_at": "2026-05-17T12:53:28.930Z"
+  }
+]

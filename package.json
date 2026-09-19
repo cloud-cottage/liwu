@@ -33,6 +33,7 @@
     "react-router-dom": "^7.13.0"
   },
   "devDependencies": {
+    "@cloudbase/cli": "^3.7.3",
     "@cloudbase/node-sdk": "^3.18.3",
     "@eslint/js": "^9.39.1",
     "@types/react": "^19.2.5",

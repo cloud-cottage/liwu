@@ -1,0 +1,18 @@
+[
+  {
+    "_id": "74370cd26a0ed7e60000dd5b0fc73fa4",
+    "created_at": "2026-05-21T10:01:08.021Z",
+    "_openid": "UhgIddRjgIGEa-rDXbmPXg",
+    "user_id": "ecdcb60c69dfa04200012f10189293b6",
+    "receiver_name": "季先生",
+    "phone": "16601061656",
+    "province": "北京",
+    "detail_address": "管庄 1-1-1",
+    "postal_code": "",
+    "label": "北京地址",
+    "updated_at": "2026-05-21T10:00:55.661Z",
+    "city": "北京",
+    "district": "朝阳",
+    "is_default": true
+  }
+]

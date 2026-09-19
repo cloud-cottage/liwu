@@ -1,0 +1,1049 @@
+[
+  {
+    "_id": "eecf6b8e69dd6e4a00399846321fad86",
+    "reward_points": 18,
+    "updated_at": "2026-04-23T11:29:53.213Z",
+    "_openid": "vZzlL5Qf9knfjuAGlrI-Eg",
+    "allow_repeat_rewards": false,
+    "created_at": "2026-04-13T22:29:31.768Z",
+    "key": "meditation_rewards",
+    "inviter_reward_rate": 20
+  },
+  {
+    "_id": "b4adb6ac69e1bf2b0000b78d388783ab",
+    "key": "awareness_tag_settings",
+    "tags_by_key": {
+      "做瑜伽::public": {
+        "description": "",
+        "rewardPoints": 1,
+        "relatedProductId": ""
+      },
+      "积福::public": {
+        "description": "",
+        "rewardPoints": 0,
+        "relatedProductId": ""
+      },
+      "平静情绪::public": {
+        "description": "",
+        "rewardPoints": 0,
+        "relatedProductId": ""
+      },
+      "丰盛之雨::public": {
+        "description": "",
+        "rewardPoints": 0,
+        "relatedProductId": "84b9419e69e23a9f0000475f2a141639"
+      },
+      "健康日课::public": {
+        "description": "",
+        "rewardPoints": 0,
+        "relatedProductId": ""
+      },
+      "关系日课::public": {
+        "description": "",
+        "rewardPoints": 0,
+        "relatedProductId": ""
+      },
+      "财富日课::public": {
+        "description": "",
+        "rewardPoints": 0,
+        "relatedProductId": ""
+      },
+      "33天改写潜::public": {
+        "description": "《33天改写金钱潜意识》是景月老师 2025 年创作的一本实操手册。",
+        "rewardPoints": 1,
+        "relatedProductId": ""
+      },
+      "33天改写金钱潜意识::public": {
+        "description": "《33天改写金钱潜意识》是景月老师 2025 年创作的一本实操手册。",
+        "rewardPoints": 2,
+        "relatedProductId": ""
+      },
+      "谢谢你我爱你::public": {
+        "description": "谢谢你，我爱你！",
+        "rewardPoints": 0,
+        "relatedProductId": ""
+      },
+      "书写清理::public": {
+        "description": "",
+        "rewardPoints": 1,
+        "relatedProductId": ""
+      },
+      "海底轮疗愈::public": {
+        "description": "",
+        "rewardPoints": 1,
+        "relatedProductId": "84b9419e69e23a9f0000475f2a141639"
+      },
+      "合十礼::public": {
+        "description": "",
+        "rewardPoints": 1,
+        "relatedProductId": ""
+      },
+      "33天改写金钱潜意识::student": {
+        "description": "《33天改写金钱潜意识》是景月老师 2025 年创作的一本财富日课手册。",
+        "rewardPoints": 2,
+        "relatedProductId": "84b9419e69e23a9f0000475f2a141639"
+      },
+      "金钱灵气疗愈冥想::student": {
+        "description": "金钱灵气疗愈冥想是金钱灵气学员内部课程。",
+        "rewardPoints": 7,
+        "relatedProductId": ""
+      },
+      "清理书写::public": {
+        "description": "清理书写是一种对烦恼进行清理的有效方式。具体方式是把对应的内容写在本子上，而后撕掉。景月老师于 2025 年设计《清理书写本》（工坊有售），推荐大家使用。",
+        "rewardPoints": 2,
+        "relatedProductId": "84b9419e69e23a9f0000475f2a141639"
+      },
+      "静下来喝杯茶::public": {
+        "description": "",
+        "relatedProductId": "84b9419e69e23aa50000476873c446f0",
+        "rewardPoints": 0
+      },
+      "涂精油啦::public": {
+        "description": "",
+        "relatedProductId": "84b9419e69e23a9f0000475f2a141639",
+        "rewardPoints": 0
+      }
+    },
+    "updated_at": "2026-04-25T23:45:35.985Z",
+    "created_at": "2026-04-17T05:03:39.336Z",
+    "_openid": "b8V9gLzEvqn5bzAf4blsvw"
+  },
+  {
+    "_id": "770cbe3f69e5f598000216b848330f15",
+    "key": "client_theme_settings",
+    "theme": "IvoryAndSage",
+    "updated_at": "2026-05-05T04:38:47.621Z",
+    "created_at": "2026-04-20T09:44:55.464Z",
+    "_openid": "vniBY_RUJVn2k6vRK7gTFg",
+    "show_debug_card": true
+  },
+  {
+    "_id": "b695df2969e6e63c00029cb6553a5fe5",
+    "created_at": "2026-04-21T02:51:36.505Z",
+    "_openid": "a0VXmUYPBlAQHWkgAh6_4w",
+    "key": "brand_carousel_settings",
+    "slides": [
+      {
+        "id": "brand_slide_1",
+        "caption": "最珍贵的财富，是此刻内心的宁静。",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/brand-carousel/brand_slide_1-1776763269677.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/brand-carousel/brand_slide_1-1776763269677.webp?sign=4ebb4a8d1dd3581c428724cb56494314&t=1776763273"
+      },
+      {
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/brand-carousel/brand_slide_2-1776763278986.webp?sign=d7a4b28e70a48135c0b35692703d38d2&t=1776763283",
+        "id": "brand_slide_2",
+        "caption": "礼敬物品，安住当下。",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/brand-carousel/brand_slide_2-1776763278986.webp"
+      },
+      {
+        "id": "brand_slide_3",
+        "caption": "每一次安住，都是与自己重新相认。",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/brand-carousel/brand_slide_3-1776763463996.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/brand-carousel/brand_slide_3-1776763463996.webp?sign=50e71e4c3fca2bb4668b363f9a83a148&t=1776763469"
+      },
+      {
+        "id": "brand_slide_4",
+        "caption": "365 天每日冥想，每天四个时段，不同的问候。",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/brand-carousel/brand_slide_4-1776763483216.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/brand-carousel/brand_slide_4-1776763483216.webp?sign=732004334affc4d1db612bafb4294abe&t=1776763490"
+      }
+    ],
+    "updated_at": "2026-04-27T01:18:39.823Z"
+  },
+  {
+    "_id": "f084f1ab69e953b9000262965102bdac",
+    "key": "awareness_mock_library",
+    "lexicon": [
+      "合十礼",
+      "观呼吸",
+      "安住",
+      "安安静静待着",
+      "清空一下",
+      "心里没什么事",
+      "念头干干净净",
+      "简简单单最美",
+      "放轻松",
+      "观内在理人生",
+      "向内看",
+      "照见",
+      "归于平静",
+      "松肩",
+      "定心安神精油",
+      "喝热水",
+      "八段锦",
+      "静坐",
+      "我不生气",
+      "静心书法",
+      "安静一下",
+      "谢谢自己",
+      "谢谢你我爱你",
+      "书法日课",
+      "清理书写"
+    ],
+    "updated_at": "2026-04-24T22:19:34.503Z",
+    "created_at": "2026-04-22T23:03:21.077Z",
+    "_openid": "vniBY_RUJVn2k6vRK7gTFg"
+  },
+  {
+    "_id": "5f7e498d69e9ecce00003f0e27c5964a",
+    "created_at": "2026-04-23T09:56:28.382Z",
+    "_openid": "vniBY_RUJVn2k6vRK7gTFg",
+    "key": "user_avatar_options",
+    "avatar_options": [
+      {
+        "id": "avatar_01",
+        "index": 1,
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/user-avatar-options/avatar_01-1777955908772.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/user-avatar-options/avatar_01-1777955908772.webp?sign=67980ccdc95262508fa04c4ff6acd004&t=1777955911"
+      },
+      {
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/user-avatar-options/avatar_02-1776938171936.webp?sign=67a8d75560c475d9fb7e9b872ea3ef04&t=1776938174",
+        "id": "avatar_02",
+        "index": 2,
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/user-avatar-options/avatar_02-1776938171936.webp"
+      },
+      {
+        "index": 3,
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/user-avatar-options/avatar_03-1776939844639.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/user-avatar-options/avatar_03-1776939844639.webp?sign=1466ba122e099f591a82ab94c0a34819&t=1776939847",
+        "id": "avatar_03"
+      },
+      {
+        "id": "avatar_04",
+        "index": 4,
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/user-avatar-options/avatar_04-1776939892958.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/user-avatar-options/avatar_04-1776939892958.webp?sign=294c6e1af243b05649ec236a5fbc76a5&t=1776939896"
+      },
+      {
+        "id": "avatar_05",
+        "index": 5,
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/user-avatar-options/avatar_05-1776939859489.webp",
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/user-avatar-options/avatar_05-1776939859489.webp?sign=e9cbb4d70b633dd1757aeb80512f068b&t=1776939862"
+      },
+      {
+        "image_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/liwu/user-avatar-options/avatar_06-1776939876112.webp?sign=686a20088152f22705698d618ea0ff63&t=1776939879",
+        "id": "avatar_06",
+        "index": 6,
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/liwu/user-avatar-options/avatar_06-1776939876112.webp"
+      },
+      {
+        "id": "avatar_07",
+        "index": 7,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "image_url": "",
+        "id": "avatar_08",
+        "index": 8,
+        "file_id": ""
+      },
+      {
+        "id": "avatar_09",
+        "index": 9,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_10",
+        "index": 10,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_11",
+        "index": 11,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_12",
+        "index": 12,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_13",
+        "index": 13,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_14",
+        "index": 14
+      },
+      {
+        "id": "avatar_15",
+        "index": 15,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_16",
+        "index": 16,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "index": 17,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_17"
+      },
+      {
+        "id": "avatar_18",
+        "index": 18,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_19",
+        "index": 19,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_20",
+        "index": 20,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "image_url": "",
+        "id": "avatar_21",
+        "index": 21,
+        "file_id": ""
+      },
+      {
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_22",
+        "index": 22
+      },
+      {
+        "id": "avatar_23",
+        "index": 23,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "index": 24,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_24"
+      },
+      {
+        "image_url": "",
+        "id": "avatar_25",
+        "index": 25,
+        "file_id": ""
+      },
+      {
+        "index": 26,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_26"
+      },
+      {
+        "id": "avatar_27",
+        "index": 27,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_28",
+        "index": 28,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_29",
+        "index": 29,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_30",
+        "index": 30,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_31",
+        "index": 31,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_32",
+        "index": 32,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_33",
+        "index": 33,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_34",
+        "index": 34,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_35",
+        "index": 35,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "id": "avatar_36",
+        "index": 36,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_37",
+        "index": 37
+      },
+      {
+        "image_url": "",
+        "id": "avatar_38",
+        "index": 38,
+        "file_id": ""
+      },
+      {
+        "index": 39,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_39"
+      },
+      {
+        "id": "avatar_40",
+        "index": 40,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_41",
+        "index": 41
+      },
+      {
+        "index": 42,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_42"
+      },
+      {
+        "image_url": "",
+        "id": "avatar_43",
+        "index": 43,
+        "file_id": ""
+      },
+      {
+        "image_url": "",
+        "id": "avatar_44",
+        "index": 44,
+        "file_id": ""
+      },
+      {
+        "id": "avatar_45",
+        "index": 45,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "index": 46,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_46"
+      },
+      {
+        "id": "avatar_47",
+        "index": 47,
+        "file_id": "",
+        "image_url": ""
+      },
+      {
+        "index": 48,
+        "file_id": "",
+        "image_url": "",
+        "id": "avatar_48"
+      }
+    ],
+    "updated_at": "2026-05-05T04:38:53.677Z"
+  },
+  {
+    "_id": "779808a169ebe9ee000341597582c0d2",
+    "key": "awareness_display_settings",
+    "popular_tag_count": 55,
+    "updated_at": "2026-04-25T11:03:38.429Z",
+    "created_at": "2026-04-24T22:08:46.461Z",
+    "_openid": "vniBY_RUJVn2k6vRK7gTFg"
+  },
+  {
+    "_id": "5f7e498d69eeb8930006718023360331",
+    "created_at": "2026-04-27T01:14:58.941Z",
+    "_openid": "-Zd5QTjDZfQPJXDyJ7doEg",
+    "key": "meditation_composition_settings",
+    "segments": [
+      {
+        "type": "bowl",
+        "group_id": "bowl-default",
+        "start_seconds": 300,
+        "duration_seconds": 30,
+        "audio_item_id": "",
+        "id": "1777252497626-gvoi2"
+      },
+      {
+        "type": "greeting",
+        "group_id": "greeting-self-intro",
+        "start_seconds": 320,
+        "duration_seconds": 130,
+        "audio_item_id": "",
+        "id": "1777253584483-z6dp0"
+      },
+      {
+        "start_seconds": 450,
+        "duration_seconds": 150,
+        "audio_item_id": "",
+        "id": "1777276602604-prtrp",
+        "type": "breath",
+        "group_id": "breath-opening"
+      },
+      {
+        "duration_seconds": 30,
+        "audio_item_id": "",
+        "id": "1777276645382-0wxit",
+        "type": "goodbye",
+        "group_id": "goodbye-default",
+        "start_seconds": 870
+      },
+      {
+        "audio_item_id": "",
+        "id": "1777276751309-48cu0",
+        "type": "nature",
+        "group_id": "nature-default",
+        "start_seconds": 0,
+        "duration_seconds": 300
+      },
+      {
+        "audio_item_id": "",
+        "id": "1777289236993-rhz8b",
+        "type": "quote",
+        "group_id": "quote-logic",
+        "start_seconds": 600,
+        "duration_seconds": 270
+      },
+      {
+        "audio_item_id": "",
+        "id": "1780404173610-an9lu",
+        "type": "nature",
+        "group_id": "nature-default",
+        "start_seconds": 1200,
+        "duration_seconds": 120
+      }
+    ],
+    "updated_at": "2026-07-02T06:07:43.592Z"
+  },
+  {
+    "_id": "dc17167d69eebbdb000680c83ab353c1",
+    "updated_at": "2026-06-03T01:23:22.452Z",
+    "created_at": "2026-04-27T01:28:58.446Z",
+    "_openid": "-Zd5QTjDZfQPJXDyJ7doEg",
+    "key": "meditation_audio_library",
+    "items": [
+      {
+        "duration": 0,
+        "tts_text": "",
+        "created_at": "2026-06-02T07:44:11.541Z",
+        "id": "1780386251541-1v5z4",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/bowl/1780386216116-rv16y-bowl1.opus",
+        "is_ssml": false,
+        "type": "bowl",
+        "group_id": "bowl-default",
+        "title": "颂钵",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/bowl/1780386216116-rv16y-bowl1.opus?sign=424a3716e780adcf0403b835800ff30c&t=1780447499"
+      },
+      {
+        "id": "1780399463274-4g1yc",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/goodbye/1780399463274-4g1yc.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/goodbye/1780399463274-4g1yc.mp3?sign=c75a8c245c987aeb07ec68a01eb9aefd&t=1780447499",
+        "is_ssml": false,
+        "created_at": "2026-06-02T11:24:23.275Z",
+        "type": "goodbye",
+        "group_id": "goodbye-default",
+        "title": "早课的时光总是充满生机。现在，请带着这份",
+        "duration": 0,
+        "tts_text": "早课的时光总是充满生机。现在，请带着这份刚刚唤醒的清明与安定，去迎接属于你的崭新一天吧。愿你今天的每一步，都走得从容而坚定。早安，我们下次见。"
+      },
+      {
+        "tts_text": "午课结束了，愿这份片刻的安宁，能抚平你内心的褶皱。接下来的下午时光，愿你依然保持这份从容与专注。午安，期待下次与你相遇。",
+        "is_ssml": false,
+        "created_at": "2026-06-02T11:25:03.605Z",
+        "id": "1780399503605-xjbno",
+        "type": "goodbye",
+        "title": "午课结束了，愿这份片刻的安宁，能抚平你内",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/goodbye/1780399503605-xjbno.mp3",
+        "duration": 0,
+        "group_id": "goodbye-default",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/goodbye/1780399503605-xjbno.mp3?sign=02dbfc03bf0a7f0e9ea10c39c747427c&t=1780447499"
+      },
+      {
+        "type": "goodbye",
+        "title": "夜色渐深，我们的晚间陪伴也接近尾声。愿你",
+        "duration": 0,
+        "tts_text": "夜色渐深，我们的晚间陪伴也接近尾声。愿你把今天所有的烦恼都留在此刻，带着轻松与安宁进入梦乡。晚安，祝你有个好梦。",
+        "created_at": "2026-06-02T11:26:08.137Z",
+        "id": "1780399568137-ukn3i",
+        "group_id": "goodbye-default",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/goodbye/1780399568137-ukn3i.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/goodbye/1780399568137-ukn3i.mp3?sign=42cbde51ded2e9ada2811d26955b5532&t=1780447499",
+        "is_ssml": false
+      },
+      {
+        "type": "goodbye",
+        "group_id": "goodbye-default",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/goodbye/1780399616549-0sem1.mp3",
+        "tts_text": "我们的下午冥想告一段落。希望这份练习，能帮你理清纷乱的思绪。接下来，请放松心情，去迎接一天中温柔的收尾时光吧。祝你傍晚愉快。",
+        "is_ssml": false,
+        "created_at": "2026-06-02T11:26:56.549Z",
+        "id": "1780399616549-0sem1",
+        "title": "我们的下午冥想告一段落。希望这份练习，能",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/goodbye/1780399616549-0sem1.mp3?sign=f23431665e2000c7852c7995ddb10696&t=1780447499",
+        "duration": 0
+      },
+      {
+        "duration": 260,
+        "is_ssml": false,
+        "created_at": "2026-06-02T23:14:03.855Z",
+        "type": "nature",
+        "tts_text": "",
+        "id": "1780442043855-l2hd2",
+        "group_id": "nature-default",
+        "title": "大海波涛",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/nature/nature-default/1780442019215-by3xr-gentle-ocean-waves-crashing-on_060226.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/nature/nature-default/1780442019215-by3xr-gentle-ocean-waves-crashing-on_060226.mp3?sign=8d27a503020b1aa619aa1463297fca11&t=1780447499"
+      },
+      {
+        "duration": 0,
+        "tts_text": "<speak>\n  首先，请找到一个让你感到最舒服的空间。<break time=\"1000ms\"/>然后为这个空间添加一点属于自己的能量——比如点一缕香薰，或燃一支香。<break time=\"1500ms\"/>让清雅的香气带走杂念，留下安宁；<break time=\"800ms\"/>让细微的芬芳，温柔地唤醒沉睡的意识。<break time=\"2000ms\"/>\n\n</speak>",
+        "is_ssml": true,
+        "created_at": "2026-06-02T23:15:15.432Z",
+        "group_id": "greeting-settling",
+        "title": "\n  首先，请找到一个让你感到最舒服的空",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/greeting/greeting-settling/1780442115432-ndzix.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/greeting/greeting-settling/1780442115432-ndzix.mp3?sign=8c67d257a202bf36d7c1fe7ef4f2e277&t=1780447499",
+        "id": "1780442115432-ndzix",
+        "type": "greeting"
+      },
+      {
+        "type": "greeting",
+        "group_id": "greeting-posture",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/greeting/greeting-posture/1780442160611-9ggja.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/greeting/greeting-posture/1780442160611-9ggja.mp3?sign=19f8a202eca2d14a53995dad6b910e89&t=1780447499",
+        "duration": 0,
+        "title": "\n  接下来，请将双脚自然收拢在身前，双",
+        "tts_text": "<speak>\n  接下来，请将双脚自然收拢在身前，双膝安稳地<phoneme alphabet=\"py\" ph=\"luo4\">落</phoneme>向地面，坐骨稳稳地沉下去。<break time=\"1500ms\"/>可以在臀下垫一块折叠的毯子或冥想垫，让髋部略高于膝盖，这样脊柱会更容易自然挺立，不费力。<break time=\"1000ms\"/>双手轻轻搭在膝盖上，掌心向上。<break time=\"2000ms\"/>\n现在，请感受一下盘坐带来的稳定感。<break time=\"1000ms\"/>双脚不再向外寻求支撑，而是被身体温柔地收摄回来；左右两侧的重量均匀分布，像一棵树，静静扎根大地。<break time=\"2500ms\"/>\n\n</speak>",
+        "is_ssml": true,
+        "created_at": "2026-06-02T23:16:00.611Z",
+        "id": "1780442160611-9ggja"
+      },
+      {
+        "duration": 0,
+        "tts_text": "<speak>\n  让我们一起做三个深呼吸。<break time=\"1000ms\"/>吸气时，感觉气息从鼻腔进入，沿着胸腔、腹腔，轻轻沉落；<break time=\"2000ms\"/>呼气时，骨盆、腰椎、肩胛一带多余的力道，随之缓缓卸下。<break time=\"2000ms\"/>如果思绪还在飘荡，那是正常的——你只需注意到它，然后像整理衣角一样，温柔地把注意力带回盘坐中那自然的起伏感。<break time=\"2500ms\"/>\n\n就这样安坐，你不需要赶去任何地方，也不需要完成任何任务。<break time=\"1500ms\"/>此刻，你已经完整地在这里了。<break time=\"2000ms\"/>\n\n</speak>",
+        "is_ssml": true,
+        "id": "1780442205613-tkbhc",
+        "created_at": "2026-06-02T23:16:45.613Z",
+        "type": "greeting",
+        "group_id": "greeting-breath-guidance",
+        "title": "\n  让我们一起做三个深呼吸。吸气时，感",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/greeting/greeting-breath-guidance/1780442205613-tkbhc.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/greeting/greeting-breath-guidance/1780442205613-tkbhc.mp3?sign=5f1aaee593e6cf6b2a962d1e8beadb81&t=1780447499"
+      },
+      {
+        "is_ssml": false,
+        "created_at": "2026-06-02T23:17:17.481Z",
+        "id": "1780442237481-8vpo0",
+        "type": "breath",
+        "title": "接下来，让我们来做三分钟的呼吸练习。\n我",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/breath/breath-opening/1780442237481-8vpo0.mp3?sign=973c038d4a572d22997094140feb87dd&t=1780447499",
+        "group_id": "breath-opening",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/breath/breath-opening/1780442237481-8vpo0.mp3",
+        "duration": 0,
+        "tts_text": "接下来，让我们来做三分钟的呼吸练习。\n我们要做的，只是感受自己的呼吸，听到自己的呼吸声。\n如果中间有念头飘过，就只是温柔地看到它，然后继续回到一呼一吸上。\n我们开始啦。"
+      },
+      {
+        "tts_text": "呼气，吐出焦虑。吸气，吸入安定。\n呼气，吐出焦虑。吸气，吸入安定。\n呼气，吐出焦虑。吸气，吸入安定。\n把烦恼呼出去，把宁静吸进来。\n把烦恼呼出去，把宁静吸进来。\n把烦恼呼出去，把宁静吸进来。\n呼气，放下沉重。吸气，接纳平和。\n呼气，放下沉重。吸气，接纳平和。\n呼气，放下沉重。吸气，接纳平和。\n呼出纷乱，吸入清明。\n呼出纷乱，吸入清明。\n呼出纷乱，吸入清明。\n焦虑正在消散，内心正在归位。\n焦虑正在消散，内心正在归位。\n焦虑正在消散，内心正在归位。\n安住在呼吸里，身体放松，内心安定。\n安住在呼吸里，身体放松，内心安定。\n安住在呼吸里，身体放松，内心安定。",
+        "is_ssml": false,
+        "type": "breath",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/breath/breath-main/1780442300311-0tb6g.mp3?sign=e43df8d1968175750c3e36e723b6e44b&t=1780447499",
+        "created_at": "2026-06-02T23:18:20.311Z",
+        "id": "1780442300311-0tb6g",
+        "group_id": "breath-main",
+        "title": "呼气，吐出焦虑。吸气，吸入安定。\n呼气，",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/breath/breath-main/1780442300311-0tb6g.mp3",
+        "duration": 0
+      },
+      {
+        "duration": 0,
+        "is_ssml": true,
+        "created_at": "2026-06-02T23:20:22.881Z",
+        "type": "quote",
+        "title": "\n  我的一位朋友告诉我，她遇到了烦恼。",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/quote/quote-logic/1780442422881-7xrtn.mp3",
+        "tts_text": "<speak>\n  我的一位朋友告诉我，她遇到了烦恼。现在，让我们尝试换一个视角，<break time=\"1000ms\"/>把心灵的镜头，缓缓拉远。<break time=\"2000ms\"/>\n想象你正站在时间的长河之上，俯瞰着此刻正在经历的这件事。<break time=\"2000ms\"/>\n请轻轻地问她：<break time=\"1000ms\"/>\n这件事，放在一周之后，还那么重要吗？<break time=\"3000ms\"/>\n如果把它放在一年之后呢？<break time=\"3000ms\"/>\n当四季轮转，当新的故事发生，此刻的波澜，是否已经归于平静？<break time=\"3000ms\"/>\n再试着把它放在十年之后。<break time=\"2000ms\"/>\n站在未来的那个路口回望，<break time=\"1000ms\"/>你会发现，绝大多数当下的烦恼，<break time=\"1000ms\"/>都会缩小成记忆里，一个微不足道的小点。<break time=\"3000ms\"/>\n它只是漫长生命画卷中，一抹淡淡的底色。<break time=\"1500ms\"/>\n它不再能阻挡去路，也不再能惊扰内心。<break time=\"2500ms\"/>\n既然放在时间的尺度里，它如此渺小，<break time=\"1000ms\"/>那么此刻，也请允许自己，轻轻地放下它。<break time=\"2000ms\"/>\n深呼吸，<break time=\"1000ms\"/>把目光投向更辽阔的远方。<break time=\"3000ms\"/>\n\n</speak>",
+        "id": "1780442422881-7xrtn",
+        "group_id": "quote-logic",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/quote/quote-logic/1780442422881-7xrtn.mp3?sign=3c004862334b15d28f2603cc39a82893&t=1780447499"
+      },
+      {
+        "duration": 0,
+        "is_ssml": true,
+        "created_at": "2026-06-02T23:22:35.686Z",
+        "id": "1780442555686-hfq53",
+        "type": "quote",
+        "group_id": "quote-reinforcement",
+        "title": "\n  现在，请跟随我的声音，让这几句话，",
+        "tts_text": "<speak>\n  现在，请跟随我的声音，让这几句话，缓缓沉入你的心底。<break time=\"2000ms\"/>\n把此刻的烦恼，放在十年的光阴里，它不过是一粒微尘。<break time=\"2000ms\"/>\n把此刻的烦恼，放在十年的光阴里，它不过是一粒微尘。<break time=\"2000ms\"/>\n把此刻的烦恼，放在十年的光阴里，它不过是一粒微尘。<break time=\"3000ms\"/>\n站在未来的路口回望，当下的焦虑，只是生命长河里的一朵小小浪花。<break time=\"2500ms\"/>\n站在未来的路口回望，当下的焦虑，只是生命长河里的一朵小小浪花。<break time=\"2500ms\"/>\n站在未来的路口回望，当下的焦虑，只是生命长河里的一朵小小浪花。<break time=\"3000ms\"/>\n拉长时间的镜头，你会发现，眼前的困难，其实渺小得不值一提。<break time=\"2500ms\"/>\n拉长时间的镜头，你会发现，眼前的困难，其实渺小得不值一提。<break time=\"2500ms\"/>\n拉长时间的镜头，你会发现，眼前的困难，其实渺小得不值一提。<break time=\"3000ms\"/>\n当岁月流转，今天让你彻夜难眠的事，终将变成云淡风轻的过往。<break time=\"2500ms\"/>\n当岁月流转，今天让你彻夜难眠的事，终将变成云淡风轻的过往。<break time=\"2500ms\"/>\n当岁月流转，今天让你彻夜难眠的事，终将变成云淡风轻的过往。<break time=\"3000ms\"/>\n用一生的尺度去丈量，此刻的纠结，不过是一个微不足道的瞬间。<break time=\"2500ms\"/>\n用一生的尺度去丈量，此刻的纠结，不过是一个微不足道的瞬间。<break time=\"2500ms\"/>\n用一生的尺度去丈量，此刻的纠结，不过是一个微不足道的瞬间。<break time=\"3000ms\"/>\n未来的你早已释怀，现在的你，也请允许自己轻轻放下。<break time=\"2500ms\"/>\n未来的你早已释怀，现在的你，也请允许自己轻轻放下。<break time=\"2500ms\"/>\n未来的你早已释怀，现在的你，也请允许自己轻轻放下。<break time=\"3000ms\"/>\n</speak>",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/quote/quote-reinforcement/1780442555686-hfq53.mp3",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/quote/quote-reinforcement/1780442555686-hfq53.mp3?sign=c77bfcfaee0d6013125bb074e3af48e4&t=1780447499"
+      },
+      {
+        "id": "1780449777627-58rdt",
+        "type": "greeting",
+        "file_id": "cloud://liwu-0gtd91eebd863ccf.6c69-liwu-0gtd91eebd863ccf-1400600646/meditation-audio/greeting/greeting-self-intro/1780449777627-58rdt.mp3",
+        "is_ssml": true,
+        "created_at": "2026-06-03T01:22:57.627Z",
+        "group_id": "greeting-self-intro",
+        "title": "\n  亲爱的伙伴，早上好，我是景月，你的",
+        "audio_url": "https://6c69-liwu-0gtd91eebd863ccf-1400600646.tcb.qcloud.la/meditation-audio/greeting/greeting-self-intro/1780449777627-58rdt.mp3?sign=bebb05e8b9b7211cf345302948e19a46&t=1780449795",
+        "duration": 0,
+        "tts_text": "<speak>\n  亲爱的伙伴，早上好，我是景月，你的理悟陪伴者。<break time=\"800ms\"/>\n当你听到我的声音，就意味着我们即将迎来美好的一天。我邀请你，和我一起准备今天的早课。<break time=\"1500ms\"/>\n\n</speak>"
+      }
+    ],
+    "groups": [
+      {
+        "id": "bowl-default",
+        "type": "bowl",
+        "key": "default",
+        "name": "默认音频组",
+        "sort_order": 0
+      },
+      {
+        "sort_order": 0,
+        "id": "greeting-self-intro",
+        "type": "greeting",
+        "key": "self_intro",
+        "name": "自我介绍"
+      },
+      {
+        "key": "settling",
+        "name": "居心地",
+        "sort_order": 1,
+        "id": "greeting-settling",
+        "type": "greeting"
+      },
+      {
+        "id": "greeting-posture",
+        "type": "greeting",
+        "key": "posture",
+        "name": "坐姿",
+        "sort_order": 2
+      },
+      {
+        "id": "greeting-breath-guidance",
+        "type": "greeting",
+        "key": "breath_guidance",
+        "name": "呼吸引导",
+        "sort_order": 3
+      },
+      {
+        "key": "default",
+        "name": "默认音频组",
+        "sort_order": 0,
+        "id": "nature-default",
+        "type": "nature"
+      },
+      {
+        "name": "呼吸开始",
+        "sort_order": 0,
+        "id": "breath-opening",
+        "type": "breath",
+        "key": "opening"
+      },
+      {
+        "id": "breath-main",
+        "type": "breath",
+        "key": "main",
+        "name": "呼吸正文",
+        "sort_order": 1
+      },
+      {
+        "id": "quote-logic",
+        "type": "quote",
+        "key": "logic",
+        "name": "逻辑",
+        "sort_order": 0
+      },
+      {
+        "type": "quote",
+        "key": "reinforcement",
+        "name": "强化",
+        "sort_order": 1,
+        "id": "quote-reinforcement"
+      },
+      {
+        "key": "default",
+        "name": "默认音频组",
+        "sort_order": 0,
+        "id": "goodbye-default",
+        "type": "goodbye"
+      }
+    ]
+  },
+  {
+    "_id": "884eab3c69f955d40009fc574d3ac56f",
+    "_openid": "6rUFZJN0djRtpv45M8QWDQ",
+    "key": "page_masthead_settings",
+    "home_slogan": "礼敬物品，礼赞生命。",
+    "awareness_slogan": "把此刻命名清楚，再安静地把它交还给自己。",
+    "shop_slogan": "用福豆兑换适合静心、阅读与日常安住的小器物。",
+    "meditation_slogan": "当下即是献礼。",
+    "updated_at": "2026-05-08T07:13:04.296Z",
+    "created_at": "2026-05-05T02:28:36.052Z"
+  },
+  {
+    "_id": "0274fd6869fd8d06000fb22514ce64d0",
+    "_openid": "6rUFZJN0djRtpv45M8QWDQ",
+    "key": "shop_partner_pricing_settings",
+    "tiers": [
+      {
+        "discountRate": 0.95,
+        "threshold": 0
+      },
+      {
+        "threshold": 6000,
+        "discountRate": 0.82
+      },
+      {
+        "threshold": 12500,
+        "discountRate": 0.79
+      },
+      {
+        "discountRate": 0.77,
+        "threshold": 25000
+      },
+      {
+        "threshold": 66000,
+        "discountRate": 0.75
+      }
+    ],
+    "updated_at": "2026-05-08T07:13:06.862Z",
+    "created_at": "2026-05-08T07:13:06.862Z"
+  },
+  {
+    "_id": "0274fd686a03ab2c0017414627693f81",
+    "_openid": "UhgIddRjgIGEa-rDXbmPXg",
+    "key": "system_fortune_settings",
+    "system_beans_balance": 89445,
+    "updated_at": "2026-07-16T20:00:04.692Z",
+    "created_at": "2026-05-12T22:35:20.990Z"
+  },
+  {
+    "_id": "ce9aa9886a1f818a000080d17172d763",
+    "_openid": "UhgIddRjgIGEa-rDXbmPXg",
+    "key": "meditation_library",
+    "meditations": [
+      {
+        "id": "1780449670968-lngoh",
+        "name": "早晨",
+        "group_selections": {
+          "goodbye-default": [
+            "1780399463274-4g1yc"
+          ],
+          "bowl-default": [
+            "1780386251541-1v5z4"
+          ],
+          "greeting-settling": [
+            "1780442115432-ndzix"
+          ],
+          "greeting-posture": [
+            "1780442160611-9ggja"
+          ],
+          "breath-opening": [
+            "1780442237481-8vpo0"
+          ],
+          "quote-logic": [
+            "1780442422881-7xrtn"
+          ],
+          "quote-reinforcement": [
+            "1780442555686-hfq53"
+          ],
+          "greeting-self-intro": [
+            "1777253336540-ctxi0",
+            "1780449777627-58rdt"
+          ],
+          "greeting-breath-guidance": [
+            "1780442205613-tkbhc"
+          ],
+          "nature-default": [
+            "1780442043855-l2hd2"
+          ],
+          "breath-main": [
+            "1780442300311-0tb6g"
+          ]
+        },
+        "sections": {
+          "bowl": [
+            "1780386251541-1v5z4"
+          ],
+          "greeting": [
+            "1777253336540-ctxi0",
+            "1780449777627-58rdt",
+            "1780442115432-ndzix",
+            "1780442160611-9ggja",
+            "1780442205613-tkbhc"
+          ],
+          "nature": [
+            "1780442043855-l2hd2"
+          ],
+          "breath": [
+            "1780442237481-8vpo0",
+            "1780442300311-0tb6g"
+          ],
+          "quote": [
+            "1780442422881-7xrtn",
+            "1780442555686-hfq53"
+          ],
+          "goodbye": [
+            "1780399463274-4g1yc"
+          ]
+        }
+      },
+      {
+        "id": "1781230221071-cv5e1",
+        "name": "测试-先自然5分钟",
+        "group_selections": {
+          "greeting-posture": [
+            "1780442160611-9ggja"
+          ],
+          "nature-default": [
+            "1780442043855-l2hd2"
+          ],
+          "quote-reinforcement": [
+            "1780442555686-hfq53"
+          ],
+          "goodbye-default": [
+            "1780399503605-xjbno"
+          ],
+          "greeting-self-intro": [
+            "1780449777627-58rdt"
+          ],
+          "greeting-settling": [
+            "1780442115432-ndzix"
+          ],
+          "greeting-breath-guidance": [
+            "1780442205613-tkbhc"
+          ],
+          "breath-opening": [
+            "1780442237481-8vpo0"
+          ],
+          "breath-main": [
+            "1780442300311-0tb6g"
+          ],
+          "quote-logic": [
+            "1780442422881-7xrtn"
+          ],
+          "bowl-default": [
+            "1780386251541-1v5z4"
+          ]
+        },
+        "sections": {
+          "bowl": [
+            "1780386251541-1v5z4"
+          ],
+          "greeting": [
+            "1780449777627-58rdt",
+            "1780442115432-ndzix",
+            "1780442160611-9ggja",
+            "1780442205613-tkbhc"
+          ],
+          "nature": [
+            "1780442043855-l2hd2"
+          ],
+          "breath": [
+            "1780442237481-8vpo0",
+            "1780442300311-0tb6g"
+          ],
+          "quote": [
+            "1780442422881-7xrtn",
+            "1780442555686-hfq53"
+          ],
+          "goodbye": [
+            "1780399503605-xjbno"
+          ]
+        }
+      }
+    ],
+    "updated_at": "2026-06-12T02:10:21.185Z",
+    "created_at": "2026-06-03T01:21:12.721Z"
+  },
+  {
+    "_id": "2cd28a306a1f873500003f4f0cbcf3c8",
+    "_openid": "UhgIddRjgIGEa-rDXbmPXg",
+    "key": "meditation_calendar",
+    "days": {
+      "2026-06-03": {
+        "morning": [
+          "1780449670968-lngoh"
+        ],
+        "noon": [
+          "1780449670968-lngoh"
+        ],
+        "afternoon": [
+          "1780449670968-lngoh"
+        ],
+        "evening": [
+          "1780449670968-lngoh"
+        ]
+      },
+      "2026-06-04": {
+        "afternoon": [
+          "1780449670968-lngoh"
+        ],
+        "evening": [
+          "1780449670968-lngoh"
+        ],
+        "morning": [
+          "1780449670968-lngoh"
+        ],
+        "noon": [
+          "1780449670968-lngoh"
+        ]
+      }
+    },
+    "updated_at": "2026-06-04T00:40:47.554Z",
+    "created_at": "2026-06-03T01:45:23.684Z"
+  },
+  {
+    "_id": "3090292a6a4771c600010f4f417147ea",
+    "enabled": true,
+    "updated_at": "2026-07-03T13:39:02.619Z",
+    "created_at": "2026-07-03T08:24:36.121Z",
+    "key": "ai_settings",
+    "apiEndpoint": "https://api.deepseek.com",
+    "apiKey": "sk-06f8c8233d9945a9bd094a671c2a042e",
+    "model": "deepseek-chat",
+    "_openid": "UhgIddRjgIGEa-rDXbmPXg",
+    "provider": "deepseek"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "_id": "6a09b553ef28305b824ad264",
+    "_openid": "Cggz6CiG3OHrmvIxAHFqtw",
+    "user_id": "d3a1add769d972f50034d2152afbf03a",
+    "beans_daily_settled_at": "05/15/2026",
+    "beans_last_extinguished_at": "",
+    "beans_last_ignited_at": "",
+    "created_at": "2026-04-10T22:00:19.130Z",
+    "updated_at": "2026-05-17T12:31:58.749Z"
+  },
+  {
+    "_id": "6a09b994ef28305b8252a517",
+    "_openid": "I5d1LEo0oNlbNTAFZyiyFw",
+    "user_id": "ecdcb60c69dfa04200012f10189293b6",
+    "beans_daily_settled_at": "05/14/2026",
+    "beans_last_extinguished_at": "",
+    "beans_last_ignited_at": "",
+    "created_at": "2026-04-15T14:27:14.176Z",
+    "updated_at": "2026-05-18T00:00:00.000Z"
+  }
+]
