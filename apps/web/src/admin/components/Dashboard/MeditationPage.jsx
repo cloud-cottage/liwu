@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getAudioTempUrl, uploadAudioFile } from '../../utils/audioUpload.js';
 import { synthesizeSpeech, blobUrlToFile } from '../../utils/ttsService.js';
 import DatabaseService, {
@@ -11,8 +11,59 @@ import {
   getMeditationAudioMimeType,
   MEDITATION_TRACK_VOLUMES
 } from '@liwu/shared-utils/meditation-session-plan.js';
+import {
+  buildMeditationSectionRawTextSnapshot,
+  buildMeditationTrackDurationEstimate,
+  countMeditationSectionChars,
+  getMeditationRecommendedSectionType,
+  getMeditationSectionTargetCharCount,
+  getMeditationSectionTypeMeta,
+  getMeditationSectionTypeParagraphTypes,
+  getMeditationWordCountStatusTone,
+  isMeditationParagraphTypeMatchSectionType,
+  MEDITATION_PARAGRAPH_TYPE_ORDER,
+  MEDITATION_SECTION_TYPE_GROUPS,
+  MEDITATION_SECTION_TYPE_LABELS,
+  MEDITATION_WORD_COUNT_STATUS_LABELS,
+  MEDITATION_WORD_COUNT_STATUS_TONES,
+  resolveMeditationWordCountStatus
+} from '@liwu/shared-utils/meditation-track-template.js';
+import {
+  buildMeditationSectionDurationMap,
+  isMeditationSectionAudioDeliveryComplete,
+  MEDITATION_SECTION_AUDIO_FORMATS,
+  MEDITATION_SECTION_AUDIO_SOURCE_KINDS,
+  MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE,
+  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS,
+  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS
+} from '@liwu/shared-utils/meditation-section-audio.js';
+import { createDefaultMeditationTrack } from '@liwu/shared-utils/meditation-track-normalizers.js';
+import {
+  getMeditationRecordingExtension,
+  isMeditationRecordingSupported,
+  measureMeditationAudioDurationSeconds,
+  MEDITATION_RECORDING_UNSUPPORTED_MESSAGE,
+  resolveMeditationAudioTargetFormat,
+  resolveMeditationRecordingMimeType,
+  resolveMeditationSectionAudioPlayback,
+  startMeditationRecording,
+  stopMeditationRecording
+} from '../../utils/meditationAudioCapture.js';
+import { getLatestCloudBaseProxyTrace } from '../../services/cloudbase.js';
+import MeditationTrackPreview from './MeditationTrackPreview.jsx';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
+
+// R8：写失败必须让用户看见。统一文案 = 动作名 + err.message，并在可得时附上 CloudBase 代理 requestId
+//（数据库层读回断言的消息里已含 requestId 时不重复追加）。
+const buildVisibleWriteFailureMessage = (actionLabel, err) => {
+  const rawMessage = err?.message || '未知错误';
+  const messageHasRequestId = /requestid/i.test(rawMessage);
+  const traceRequestId = messageHasRequestId
+    ? ''
+    : (getLatestCloudBaseProxyTrace?.()?.requestId || err?.requestId || '');
+  return `${actionLabel}：${rawMessage}${traceRequestId ? `（requestId: ${traceRequestId}）` : ''}`;
+};
 
 const TYPE_LABELS = {
   bowl: '颂钵库',
@@ -32,6 +83,7 @@ const SESSION_LABELS = {
 const SUB_TABS = [
   { key: 'paragraph', label: '段落文本库' },
   { key: 'section-raw', label: '原始音频库' },
+  { key: 'med-tracks', label: '冥想轨道' },
   { key: 'library', label: '音频库' },
   { key: 'presets', label: '冥想库' },
   { key: 'composition', label: '冥想设置' },
@@ -1690,6 +1742,7 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, compositionSett
   const [previewPlan, setPreviewPlan] = useState(null);
   const [previewingId, setPreviewingId] = useState(null);
   const [previewError, setPreviewError] = useState('');
+  const [writeError, setWriteError] = useState('');
 
   const startCreate = () => {
     setEditingId('__new__');
@@ -1729,13 +1782,26 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, compositionSett
           : m
       );
     }
-    await onUpdate({ ...meditationLibrary, meditations: nextMeditations });
+    setWriteError('');
+    try {
+      await onUpdate({ ...meditationLibrary, meditations: nextMeditations });
+    } catch (err) {
+      // 不吞错：写入失败给 tab 级可见提示，同时避免向调用方泄漏未捕获的 Promise 拒绝。
+      setWriteError(buildVisibleWriteFailureMessage('冥想库保存失败', err));
+      return;
+    }
     setEditingId(null);
   };
 
   const handleDelete = async (id) => {
     const nextMeditations = meditations.filter((m) => m.id !== id);
-    await onUpdate({ ...meditationLibrary, meditations: nextMeditations });
+    setWriteError('');
+    try {
+      await onUpdate({ ...meditationLibrary, meditations: nextMeditations });
+    } catch (err) {
+      setWriteError(buildVisibleWriteFailureMessage('冥想库删除失败', err));
+      return;
+    }
     setEditingId(null);
   };
 
@@ -1797,6 +1863,11 @@ const MeditationPresetsTab = ({ meditationLibrary, audioLibrary, compositionSett
       {previewError && (
         <div style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '12px' }}>
           {previewError}
+        </div>
+      )}
+      {writeError && (
+        <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '12px' }}>
+          {writeError}
         </div>
       )}
 
@@ -2592,6 +2663,367 @@ const CalendarTab = ({ calendar, meditationLibrary, saving, onUpdate }) => {
   );
 };
 
+// ─── 新链路行为共用渲染 ───────────────────────────────────────────────────────
+
+const medBadgeStyle = (tone = 'muted') => ({
+  display: 'inline-block',
+  padding: '1px 8px',
+  borderRadius: '10px',
+  fontSize: '11px',
+  border: `1px solid ${MEDITATION_WORD_COUNT_STATUS_TONES[tone].borderColor}`,
+  backgroundColor: MEDITATION_WORD_COUNT_STATUS_TONES[tone].backgroundColor,
+  color: MEDITATION_WORD_COUNT_STATUS_TONES[tone].color
+});
+
+const getSectionTypeLabel = (sectionType = '') => MEDITATION_SECTION_TYPE_LABELS[sectionType] || sectionType || '未设置';
+
+const getSectionTypeChapterLabel = (sectionType = '') => (
+  MEDITATION_SECTION_TYPE_GROUPS
+    .find((group) => group.section_types.some((meta) => meta.section_type === sectionType))?.chapter_label || ''
+);
+
+// 纯音频段（无文本、不经 Section-Raw）：由固定模板推导，不在此处硬编码。
+const PURE_AUDIO_SECTION_TYPES = MEDITATION_SECTION_TYPE_GROUPS
+  .flatMap((group) => group.section_types)
+  .filter((meta) => !meta.text_required)
+  .map((meta) => meta.section_type);
+
+const formatAudioDuration = (seconds) => (
+  Number(seconds) > 0 ? formatSeconds(Math.round(Number(seconds))) : '时长未知'
+);
+
+const SOURCE_KIND_LABELS = {
+  [MEDITATION_SECTION_AUDIO_SOURCE_KINDS.recording]: '网页录音',
+  [MEDITATION_SECTION_AUDIO_SOURCE_KINDS.upload]: '文件上传',
+  [MEDITATION_SECTION_AUDIO_SOURCE_KINDS.legacyImport]: '历史导入'
+};
+
+const getSourceKindLabel = (sourceKind = '') => SOURCE_KIND_LABELS[sourceKind] || sourceKind || '未知来源';
+
+// ─── 录音 / 上传控件（MediaRecorder；不支持时给出明确提示，不做调试开关掩盖） ──
+
+const MeditationRecordingControl = ({ disabled, busy, onCaptured }) => {
+  const [recording, setRecording] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [preparing, setPreparing] = useState(false);
+  const [controlError, setControlError] = useState('');
+  const sessionRef = useRef(null);
+  const timerRef = useRef(null);
+  const recordingSupported = isMeditationRecordingSupported();
+  const recordingCandidate = recordingSupported ? resolveMeditationRecordingMimeType() : null;
+  const usesMp3Fallback = Boolean(recordingCandidate && recordingCandidate.target_format !== MEDITATION_SECTION_AUDIO_FORMATS.opus);
+
+  const clearTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => {
+    clearTimer();
+    const session = sessionRef.current;
+    if (session?.mediaRecorder && session.mediaRecorder.state !== 'inactive') {
+      session.mediaRecorder.stop();
+    }
+    session?.stream?.getTracks?.().forEach((track) => track.stop());
+  }, []);
+
+  const handleStartRecording = async () => {
+    setControlError('');
+    const mimeCandidate = resolveMeditationRecordingMimeType();
+    if (!mimeCandidate) {
+      setControlError(MEDITATION_RECORDING_UNSUPPORTED_MESSAGE);
+      return;
+    }
+
+    setPreparing(true);
+    try {
+      sessionRef.current = await startMeditationRecording({ mimeType: mimeCandidate.mime_type });
+      setElapsedSeconds(0);
+      setRecording(true);
+      timerRef.current = setInterval(() => setElapsedSeconds((previous) => previous + 1), 1000);
+    } catch (err) {
+      setControlError(err.message || MEDITATION_RECORDING_UNSUPPORTED_MESSAGE);
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const handleStopRecording = async () => {
+    const session = sessionRef.current;
+    if (!session) {
+      return;
+    }
+
+    clearTimer();
+    setRecording(false);
+    setPreparing(true);
+    try {
+      const { blob, mime_type: recordedMimeType } = await stopMeditationRecording(session);
+      sessionRef.current = null;
+      const extension = getMeditationRecordingExtension(recordedMimeType);
+      const file = new File([blob], `take-${Date.now()}.${extension}`, { type: recordedMimeType });
+      await onCaptured({ file, mimeType: recordedMimeType, sourceKind: MEDITATION_SECTION_AUDIO_SOURCE_KINDS.recording });
+    } catch (err) {
+      setControlError(err.message || '录音处理失败');
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const handleUploadSelected = async (file) => {
+    if (!file) {
+      return;
+    }
+
+    setControlError('');
+    try {
+      await onCaptured({ file, mimeType: file.type || '', sourceKind: MEDITATION_SECTION_AUDIO_SOURCE_KINDS.upload });
+    } catch (err) {
+      setControlError(err.message || '上传失败');
+    }
+  };
+
+  const renderRecordButton = () => {
+    if (recording) {
+      return (
+        <button
+          style={{ ...dangerBtnStyle, padding: '3px 10px' }}
+          onClick={handleStopRecording}
+          disabled={preparing}
+        >
+          ■ 停止录音
+        </button>
+      );
+    }
+
+    return (
+      <button
+        style={{ ...ghostBtnStyle, padding: '3px 10px' }}
+        onClick={handleStartRecording}
+        disabled={disabled || busy || preparing || !recordingSupported}
+      >
+        {preparing ? '准备中…' : '● 网页录音'}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+      {renderRecordButton()}
+      {recording && <span style={{ color: '#dc2626', fontSize: '11px' }}>录音中 {formatSeconds(elapsedSeconds)}</span>}
+      {busy && <span style={{ color: '#64748b', fontSize: '11px' }}>处理中…</span>}
+      <label style={{ ...ghostBtnStyle, padding: '3px 10px', display: 'inline-block', opacity: disabled || busy ? 0.6 : 1 }}>
+        上传音频文件
+        <input
+          type="file"
+          accept="audio/*"
+          style={{ display: 'none' }}
+          disabled={disabled || busy}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) {
+              handleUploadSelected(file);
+            }
+          }}
+        />
+      </label>
+      {recordingCandidate && (
+        <span style={{ fontSize: '11px', color: '#94a3b8' }}>录音格式 {recordingCandidate.mime_type}</span>
+      )}
+      {usesMp3Fallback && (
+        <span style={{ fontSize: '11px', color: '#b45309' }}>当前浏览器不支持 Opus 录制，按 mp3 兜底链路处理</span>
+      )}
+      {!recordingSupported && (
+        <span style={{ fontSize: '11px', color: '#b45309' }}>⚠ {MEDITATION_RECORDING_UNSUPPORTED_MESSAGE}</span>
+      )}
+      {controlError && <span style={{ fontSize: '11px', color: '#ef4444' }}>❌ {controlError}</span>}
+    </div>
+  );
+};
+
+// ─── 冥想轨道（med_tracks）────────────────────────────────────────────────────
+
+const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSave }) => {
+  const [draft, setDraft] = useState(() => track);
+  const [saveNotice, setSaveNotice] = useState('');
+  const [saveError, setSaveError] = useState('');
+  // R43-③：预览**基于已保存版本**（`track` 是库中已保存的 Track，不是草稿）⇒ 预览面板单独开关。
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const estimate = buildMeditationTrackDurationEstimate({
+    chapters: draft.chapters,
+    sectionDurationSecondsByType
+  });
+
+  const updateDraft = (patch) => {
+    setSaveNotice('');
+    setSaveError('');
+    setDraft((previous) => ({ ...previous, ...patch }));
+  };
+
+  const updateChapter = (chapterKey, patch) => {
+    setSaveNotice('');
+    setSaveError('');
+    setDraft((previous) => ({
+      ...previous,
+      chapters: previous.chapters.map((chapter) => (
+        chapter.chapter_key === chapterKey ? { ...chapter, ...patch } : chapter
+      ))
+    }));
+  };
+
+  const handleSave = async () => {
+    setSaveNotice('');
+    setSaveError('');
+    try {
+      const saved = await onSave(draft);
+      // 版本号回写草稿：同一会话内连续保存必须基于新版本，才能每次保存 +1（D7 可复现追溯）。
+      if (saved?.version) {
+        setDraft((previous) => ({ ...previous, version: saved.version }));
+      }
+      setSaveNotice('已保存到 med_tracks');
+    } catch (err) {
+      setSaveError(err.message || '保存失败');
+    }
+  };
+
+  const renderChapterRow = (chapter, index) => {
+    const chapterEstimate = estimate.chapters.find((item) => item.chapter_key === chapter.chapter_key);
+    const isLastChapter = index === draft.chapters.length - 1;
+
+    return (
+      <div
+        key={chapter.chapter_key}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          flexWrap: 'wrap',
+          padding: '8px 0',
+          borderTop: index > 0 ? '1px solid #f8fafc' : 'none'
+        }}
+      >
+        <div style={{ width: '140px' }}>
+          <div style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{chapter.order}. {chapter.label}</div>
+          <div style={{ fontSize: '11px', color: '#94a3b8' }}>{chapter.chapter_key}</div>
+        </div>
+        <div style={{ flex: '1 1 260px', fontSize: '12px', color: '#64748b' }}>
+          Section 序列（固定只读）：{chapter.section_types.map(getSectionTypeLabel).join(' → ')}
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#475569' }}>
+          <input
+            type="checkbox"
+            checked={chapter.enabled}
+            onChange={(event) => updateChapter(chapter.chapter_key, { enabled: event.target.checked })}
+          />
+          章开关
+        </label>
+        <label style={{ fontSize: '12px', color: '#475569' }}>
+          时长上限(s)
+          <input
+            type="number"
+            min="1"
+            style={{ ...inputStyle, width: '76px', padding: '4px 8px', marginLeft: '4px' }}
+            value={chapter.max_duration_seconds}
+            onChange={(event) => updateChapter(chapter.chapter_key, { max_duration_seconds: Number(event.target.value) })}
+          />
+        </label>
+        {isLastChapter ? (
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>末章无章间留白</span>
+        ) : (
+          <label style={{ fontSize: '12px', color: '#475569' }}>
+            章间留白(s)
+            <input
+              type="number"
+              min="0"
+              style={{ ...inputStyle, width: '76px', padding: '4px 8px', marginLeft: '4px' }}
+              value={chapter.gap_after_seconds}
+              onChange={(event) => updateChapter(chapter.chapter_key, { gap_after_seconds: Number(event.target.value) })}
+            />
+          </label>
+        )}
+        <span style={{ fontSize: '12px', color: '#334155' }}>本章 {formatSeconds(chapterEstimate?.seconds || 0)}</span>
+        {chapterEstimate?.exceeds_max_duration && (
+          <span style={medBadgeStyle('danger')}>⚠ 超出时长上限</span>
+        )}
+      </div>
+    );
+  };
+
+  const renderEstimateSummary = () => (
+    <div style={{ marginTop: '12px', padding: '10px 12px', backgroundColor: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#334155' }}>
+      <div>
+        预估 Track 总时长：<strong>{formatSeconds(estimate.total_seconds)}</strong>
+        <span style={medBadgeStyle(estimate.estimated ? 'warning' : 'ok')}>{estimate.estimated ? '预估（含标称值）' : '全部实测'}</span>
+      </div>
+      <div style={{ marginTop: '4px', color: '#64748b' }}>
+        内容 {formatSeconds(estimate.content_seconds)} + 章间留白 {formatSeconds(estimate.gap_seconds)}；基准 15:00（软目标，不做尾部截断）
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={sectionTitleStyle}>冥想轨道</div>
+      <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>
+        六章顺序、章节数量、章内 Section 序列由固定模板决定，不可修改、不可重复；此处只能调整章开关、章时长上限与章间留白。
+      </div>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <label style={{ fontSize: '12px', color: '#475569' }}>
+          轨道名称
+          <input
+            style={{ ...inputStyle, width: '220px', padding: '6px 10px', marginLeft: '4px' }}
+            value={draft.name}
+            onChange={(event) => updateDraft({ name: event.target.value })}
+          />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#475569' }}>
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            onChange={(event) => updateDraft({ enabled: event.target.checked })}
+          />
+          轨道启用
+        </label>
+        <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+          {draft.track_key} · v{draft.version} · 双轨：背景 loop {MEDITATION_TRACK_VOLUMES.background} / 人声 sequence {MEDITATION_TRACK_VOLUMES.voice}
+        </span>
+        <button style={{ ...primaryBtnStyle, padding: '6px 14px' }} onClick={handleSave} disabled={saving}>
+          {saving ? '保存中…' : '保存 Track'}
+        </button>
+        {/* R43 实现约束 3：最小插入点＝保存按钮之后。预览取**已保存版本**（`track` 传入，**不传草稿**）。 */}
+        <button
+          style={{ ...ghostBtnStyle, padding: '6px 14px' }}
+          onClick={() => setPreviewOpen((previous) => !previous)}
+          disabled={saving}
+        >
+          预览 Track
+        </button>
+        {saveNotice && <span style={{ fontSize: '12px', color: '#16a34a' }}>✅ {saveNotice}</span>}
+        {saveError && <span style={{ fontSize: '12px', color: '#ef4444' }}>❌ {saveError}</span>}
+      </div>
+
+      {draft.chapters.map((chapter, index) => renderChapterRow(chapter, index))}
+
+      {renderEstimateSummary()}
+
+      {/* R43-③：预览基于**已保存版本**（`track.version`，不传草稿）；实测预览总时长与上方面板估算
+          **并列展示、不是同一把尺子**（R43-⑧）。 */}
+      {previewOpen && (
+        <MeditationTrackPreview
+          key={`preview-${track._id || track.track_key}-v${Number(track.version) || 0}`}
+          trackId={track._id || ''}
+          trackKey={track.track_key || ''}
+          savedVersion={Number(track.version) || 0}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
 // ─── MeditationPage ───────────────────────────────────────────────────────────
 
 const MeditationPage = ({
@@ -2600,17 +3032,20 @@ const MeditationPage = ({
   meditationCalendar,
   meditationLibrary,
   meditationParagraphs,
-  meditationSectionRaws,
   aiSettings,
+  medTracks,
   savingMeditationAudioLibrary,
   savingMeditationCompositionSettings,
   savingMeditationCalendar,
   savingMeditationLibrary,
+  savingMedTracks,
   updateMeditationAudioLibrary,
   queueMeditationAudioTranscodeJob,
   updateMeditationCompositionSettings,
   updateMeditationCalendar,
   updateMeditationLibrary,
+  loadMedTracks,
+  saveMedTrack,
   refreshMeditationSection,
   settingsError
 }) => {
@@ -2623,26 +3058,24 @@ const MeditationPage = ({
   const [newType, setNewType] = useState('verse');
   const [newTags, setNewTags] = useState('');
 
-  // P0 stub state for section-raw (fallback; real from prop if available)
-  const [sectionRawItems, setSectionRawItems] = useState([
-    // (populated from prop via useEffect)
-  ]);
+  // Section-Raw 编排与音频状态（唯一音频口径：med_section_audios）
+  const [sectionRawItems, setSectionRawItems] = useState([]);
+  const [sectionAudios, setSectionAudios] = useState([]);
   const [showSectionCreateForm, setShowSectionCreateForm] = useState(false);
   const [selectedParagraphIds, setSelectedParagraphIds] = useState([]);
-  const [sectionRawAudioStatus, setSectionRawAudioStatus] = useState({}); // { [id]: { uploading, fileId, audioUrl, error } }
+  const [newSectionType, setNewSectionType] = useState('sec-intro');
+  const [sectionParagraphTypeFilter, setSectionParagraphTypeFilter] = useState('all');
+  const [sectionAudioStatus, setSectionAudioStatus] = useState({}); // { [containerId]: { busy, notice, error } }
+  const [pureAudioSectionType, setPureAudioSectionType] = useState('sec-nature');
+  const [tracksLoaded, setTracksLoaded] = useState(false);
+  const [medTracksError, setMedTracksError] = useState('');
+  const [sectionRawFormError, setSectionRawFormError] = useState('');
 
-  // load real from prop (prefer over stubs) on mount/after refresh; supports prop or hook data
-  useEffect(() => {
-    if (Array.isArray(meditationSectionRaws)) {
-      setSectionRawItems(meditationSectionRaws);
-    }
-  }, [meditationSectionRaws]);
+  const playingAudioRef = useRef(null);
 
-  const selectedTotalChars = selectedParagraphIds.reduce((sum, pid) => {
-    const data = Array.isArray(meditationParagraphs) ? meditationParagraphs : [];
-    const p = data.find((pp) => (pp._id || pp.id) === pid);
-    return sum + String(p?.text || '').length;
-  }, 0);
+  useEffect(() => () => {
+    playingAudioRef.current?.pause?.();
+  }, []);
 
   const isDev = import.meta.env?.DEV === true;
 
@@ -2739,6 +3172,9 @@ const MeditationPage = ({
       }
     } catch (err) {
       console.error('AI rewrite failed:', err);
+      // R8：仿写写库链路（createMedParagraph / updateMedParagraph / 刷新）失败原本只进控制台，
+      // 用户只看到按钮从「改写中...」复原、无从判断是否成功。改为可见提示（与本函数内 L3098 的 alert 风格一致）。
+      alert(buildVisibleWriteFailureMessage('AI 仿写失败', err));
     } finally {
       setRewritingId(null);
     }
@@ -2815,11 +3251,76 @@ const MeditationPage = ({
     }
   };
 
-  // P0 minimal section-raw handlers (local stub only, no DB, no audio)
+  // ── Section-Raw 编排（新链路只写 med_* 集合；音频以 med_section_audios 为唯一口径） ──
+
+  const getParagraphById = useCallback((paragraphId) => (
+    (Array.isArray(meditationParagraphs) ? meditationParagraphs : [])
+      .find((paragraph) => (paragraph._id || paragraph.id) === paragraphId) || null
+  ), [meditationParagraphs]);
+
+  const resolveParagraphTexts = useCallback((paragraphIds) => (
+    (Array.isArray(paragraphIds) ? paragraphIds : [])
+      .map((paragraphId) => String(getParagraphById(paragraphId)?.text || ''))
+  ), [getParagraphById]);
+
+  const loadSectionRaws = useCallback(async () => {
+    const data = await DatabaseService.getMedSectionRaws();
+    setSectionRawItems((Array.isArray(data) ? data : []).map((item, index) => ({
+      id: item._id || item.id || `sr-${index}`,
+      _id: item._id || '',
+      section_type: item.section_type || '',
+      paragraph_ids: Array.isArray(item.paragraph_ids) ? item.paragraph_ids : [],
+      target_char_count: Number(item.target_char_count ?? 0),
+      current_char_count: Number(item.current_char_count ?? 0),
+      word_count_status: item.word_count_status || '',
+      audio_id: item.audio_id || '',
+      audio_candidates: Array.isArray(item.audio_candidates) ? item.audio_candidates : [],
+      stale: Boolean(item.stale),
+      stale_reason: item.stale_reason || '',
+      stale_paragraph_ids: Array.isArray(item.stale_paragraph_ids) ? item.stale_paragraph_ids : [],
+      stale_at: item.stale_at || '',
+      text_snapshot: item.text_snapshot || '',
+      record_granularity: item.record_granularity || 'paragraph',
+      recorded_at: item.recorded_at || ''
+    })));
+  }, []);
+
+  const loadSectionAudios = useCallback(async () => {
+    const data = await DatabaseService.getMedSectionAudios();
+    setSectionAudios(Array.isArray(data) ? data : []);
+  }, []);
+
+  const getSectionRawAudios = useCallback((sectionRawId = '') => (
+    sectionAudios.filter((audio) => (audio.section_raw_id || '') === sectionRawId)
+  ), [sectionAudios]);
+
+  const setAudioStatus = (containerId, patch) => {
+    setSectionAudioStatus((previous) => ({
+      ...previous,
+      [containerId]: { ...(previous[containerId] || {}), ...patch }
+    }));
+  };
+
+  const isSectionRawStale = (raw) => {
+    if (raw.stale) {
+      return true;
+    }
+
+    if (!raw.text_snapshot) {
+      return false;
+    }
+
+    return buildMeditationSectionRawTextSnapshot(resolveParagraphTexts(raw.paragraph_ids)) !== raw.text_snapshot;
+  };
+
   const toggleSectionCreateForm = () => {
-    setShowSectionCreateForm((s) => {
-      const next = !s;
-      if (!next) setSelectedParagraphIds([]);
+    setSectionRawFormError('');
+    setShowSectionCreateForm((previous) => {
+      const next = !previous;
+      if (!next) {
+        setSelectedParagraphIds([]);
+        setSectionParagraphTypeFilter('all');
+      }
       return next;
     });
   };
@@ -2835,77 +3336,212 @@ const MeditationPage = ({
   };
 
   const handleConfirmCreateSectionRaw = async () => {
-    if (!selectedParagraphIds.length) return;
-    const data = Array.isArray(meditationParagraphs) ? meditationParagraphs : [];
-    const selectedParagraphs = selectedParagraphIds
-      .map((pid) => {
-        const p = data.find((pp) => (pp._id || pp.id) === pid);
-        if (!p) return null;
-        const t = String(p.text || '').trim();
-        return t.length > 60 ? t.slice(0, 60) + '...' : t;
-      })
-      .filter(Boolean);
-    const totalChars = selectedParagraphIds.reduce((sum, pid) => {
-      const p = data.find((pp) => (pp._id || pp.id) === pid);
-      return sum + String(p?.text || '').length;
-    }, 0);
-    const newItem = {
-      id: generateId(),
-      paragraph_ids: [...selectedParagraphIds],
-      word_count_status: totalChars > 0 ? totalChars : '待计算',
-      paragraphs: selectedParagraphs,
-    };
+    const sectionMeta = getMeditationSectionTypeMeta(newSectionType);
+    if (!sectionMeta?.text_required) {
+      setSectionRawFormError('纯音频段（自然 / 颂钵）不经 Section-Raw，直接在下方录制或上传音频。');
+      return;
+    }
+
+    if (!selectedParagraphIds.length) {
+      setSectionRawFormError('请先选择组成该 Section-Raw 的段落。');
+      return;
+    }
+
+    setSectionRawFormError('');
+    const currentCharCount = countMeditationSectionChars(resolveParagraphTexts(selectedParagraphIds));
+    const targetCharCount = getMeditationSectionTargetCharCount(newSectionType) ?? 0;
+
     try {
-      await DatabaseService.createMedSectionRaw({ paragraph_ids: newItem.paragraph_ids, word_count_status: newItem.word_count_status, created_at: new Date().toISOString() });
+      await DatabaseService.createMedSectionRaw({
+        section_type: newSectionType,
+        paragraph_ids: [...selectedParagraphIds],
+        target_char_count: targetCharCount,
+        current_char_count: currentCharCount,
+        word_count_status: resolveMeditationWordCountStatus(currentCharCount, targetCharCount),
+        record_granularity: 'paragraph',
+        created_by: 'admin-section-raw'
+      });
+      setShowSectionCreateForm(false);
+      setSelectedParagraphIds([]);
+      setSectionParagraphTypeFilter('all');
+      await loadSectionRaws();
       if (typeof refreshMeditationSection === 'function') {
         await refreshMeditationSection();
       }
-    } catch {
-      console.log('DB createMedSectionRaw attempt (fallback local)');
-      setSectionRawItems((prev) => [newItem, ...prev]);
+    } catch (err) {
+      console.error('Failed to create med section raw:', err);
+      setSectionRawFormError(err.message || '保存失败');
     }
-    setShowSectionCreateForm(false);
-    setSelectedParagraphIds([]);
   };
 
-  // minimal audio upload for section-raw items (reuses existing uploadAudioFile)
-  const handleSectionRawUpload = async (itemId, file) => {
-    if (!itemId || !file) return;
-    setSectionRawAudioStatus((prev) => ({ ...prev, [itemId]: { uploading: true } }));
+  // 转码调用点（执行器第二批实现）：上传成功后排队 Opus 转码任务，并同步转码状态。
+  const queueSectionAudioTranscode = async ({ sectionAudio, sectionType, cloudPath, fileId, fileName, targetFormat }) => {
+    const targetExtension = targetFormat === MEDITATION_SECTION_AUDIO_FORMATS.opus ? 'opus' : 'mp3';
     try {
-      const cloudPath = `meditation-audio-raw/section-raw/${itemId}/${Date.now()}-${file.name}`;
-      const { fileId, audioUrl } = await uploadAudioFile({ file, cloudPath });
-      setSectionRawItems((prev) => prev.map((item) =>
-        item.id === itemId ? { ...item, file_id: fileId, audio_url: audioUrl } : item
-      ));
-      // persist audio_id to DB if the item has a real _id
-      const currentItem = Array.isArray(localSectionRaws) ? localSectionRaws.find((r) => (r._id || r.id) === itemId) : null;
-      if (currentItem?._id) {
-        try {
-          await DatabaseService.updateMedSectionRaw(currentItem._id, { file_id: fileId, audio_url: audioUrl });
-          // queue Opus transcode job for this item
-          try {
-            const targetCloudPath = `meditation-audio/section-raw/${itemId}/${Date.now()}.opus`;
-            await DatabaseService.createMeditationAudioTranscodeJob({
-              itemId: currentItem._id,
-              sourceFileId: fileId,
-              sourceFileName: file.name,
-              sourceCloudPath: cloudPath,
-              targetCloudPath,
-              transcode_profile: 'default',
-            });
-            console.log('transcode job queued for section-raw:', currentItem._id);
-          } catch (transcodeErr) {
-            console.log('transcode queue skipped (non-critical):', transcodeErr.message);
-          }
-        } catch (dbErr) {
-          console.log('DB update for audio_id skipped (item may be local stub):', dbErr.message);
+      await DatabaseService.createMeditationAudioTranscodeJob({
+        itemId: sectionAudio.section_raw_id || sectionAudio._id,
+        section_audio_id: sectionAudio._id,
+        section_raw_id: sectionAudio.section_raw_id || '',
+        section_type: sectionType,
+        target_format: targetFormat,
+        sourceFileId: fileId,
+        sourceFileName: fileName || 'audio.bin',
+        sourceCloudPath: cloudPath,
+        targetCloudPath: `meditation-audio/${sectionType}/${sectionAudio.section_raw_id || 'audio-only'}/take-${sectionAudio._id}.${targetExtension}`,
+        transcode_profile: 'section_audio'
+      });
+      await DatabaseService.updateMedSectionAudio(sectionAudio._id, {
+        transcode_status: MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.queued
+      });
+      return { queued: true, error: '' };
+    } catch (transcodeErr) {
+      console.error('section audio transcode queue failed:', transcodeErr);
+      const queueErrorMessage = transcodeErr?.message || '转码任务排队失败';
+      try {
+        await DatabaseService.updateMedSectionAudio(sectionAudio._id, {
+          transcode_status: MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.idle,
+          transcode_error: queueErrorMessage
+        });
+      } catch (statusErr) {
+        console.error('section audio transcode status update failed:', statusErr);
+        // R8：排队失败且状态回写也失败时，两层错误都必须回到调用方，否则用户只看到「（转码任务未排队）」而不知原因。
+        return { queued: false, error: `${queueErrorMessage}（转码状态回写亦失败：${statusErr?.message || '未知错误'}）` };
+      }
+      return { queued: false, error: queueErrorMessage };
+    }
+  };
+
+  // 网页录音 / 文件上传 → med_section_audios → 回写 Section-Raw 引用。
+  // 快照/候选序号/回写一律查库获取（数据层驱动），不依赖 sectionRawItems 内存态。
+  const handleSectionAudioCaptured = async ({ sectionRawId = '', sectionType }, capture) => {
+    const containerId = sectionRawId || 'audio-only';
+    setAudioStatus(containerId, { busy: true, error: '', notice: '' });
+
+    try {
+      const capturedMimeType = capture.mimeType || capture.file.type || '';
+      const durationSeconds = await measureMeditationAudioDurationSeconds(capture.file);
+      const existingAudios = await DatabaseService.getMedSectionAudiosByContainer({ sectionRawId, sectionType });
+      const takeIndex = existingAudios.length + 1;
+      const extension = getMeditationRecordingExtension(capturedMimeType);
+      const cloudPath = `meditation-audio-raw/${sectionType}/${sectionRawId || 'audio-only'}/take-${takeIndex}.${extension}`;
+      const { fileId, audioUrl } = await uploadAudioFile({ file: capture.file, cloudPath });
+      const snapshot = await DatabaseService.getMedSectionRawSnapshotById(sectionRawId);
+      const targetFormat = resolveMeditationAudioTargetFormat(capturedMimeType);
+      // 纯音频段（sec-nature / sec-bowl）无 Section-Raw，label 作为候选显示名写入。
+      // 前缀用章节名（自然库 / 颂钵库）与 Track 章节命名一致；take 序号逻辑不变。
+      const labelPrefix = getSectionTypeChapterLabel(sectionType) || getSectionTypeLabel(sectionType);
+      const label = sectionRawId ? '' : `${labelPrefix} take-${takeIndex}`;
+
+      const created = await DatabaseService.createMedSectionAudio({
+        section_raw_id: sectionRawId,
+        section_type: sectionType,
+        // 转码未完成：Opus 主体与 mp3 兜底 URL 均为空，transcoded_formats 初始为 []
+        // （由 toMedSectionAudioPayload 按已登记的交付 URL 推导）。
+        file_id: '',
+        audio_url: '',
+        duration: Math.round(durationSeconds * 100) / 100,
+        mime_type: MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE.opus,
+        original_file_id: fileId,
+        original_url: audioUrl,
+        original_mime_type: capturedMimeType,
+        target_format: targetFormat,
+        source_kind: capture.sourceKind,
+        label,
+        paragraph_ids_snapshot: snapshot.paragraph_ids,
+        text_snapshot: snapshot.text_snapshot,
+        char_count: snapshot.char_count,
+        stale: false
+      });
+
+      if (sectionRawId && created?._id) {
+        const attached = await DatabaseService.attachMedSectionAudioToRaw(sectionRawId, created._id);
+        // attach 返回 null = 业务上找不到目标 Section-Raw（已被删除等）：音频已落库但候选引用没写回，
+        // 必须让用户看见，不能静默通过（环境/写入异常由数据层直接抛错）。
+        if (!attached) {
+          throw new Error('音频已保存，但未能回写 Section-Raw 候选引用（目标不存在或已被删除），请刷新后重试');
         }
       }
-      setSectionRawAudioStatus((prev) => ({ ...prev, [itemId]: { uploading: false, fileId, audioUrl, success: true } }));
+
+      const transcodeQueue = await queueSectionAudioTranscode({
+        sectionAudio: created,
+        sectionType,
+        cloudPath,
+        fileId,
+        fileName: capture.file.name,
+        targetFormat
+      });
+
+      await loadSectionAudios();
+      if (sectionRawId) {
+        await loadSectionRaws();
+      }
+      setAudioStatus(containerId, transcodeQueue.queued
+        ? {
+            busy: false,
+            notice: '已保存到 med_section_audios，转码任务已排队',
+            error: ''
+          }
+        : {
+            busy: false,
+            notice: '已保存到 med_section_audios（转码任务未排队）',
+            // R8：音频已落库但转码排队失败，底层错误文本必须可见（原来只进 console，现有提示里丢失了原因）。
+            error: `转码任务排队失败：${transcodeQueue.error}`
+          });
     } catch (err) {
-      console.error('section-raw upload failed:', err);
-      setSectionRawAudioStatus((prev) => ({ ...prev, [itemId]: { uploading: false, error: err.message || '上传失败' } }));
+      console.error('section audio capture failed:', err);
+      setAudioStatus(containerId, { busy: false, error: `音频保存失败：${err.message || '未知错误'}` });
+    }
+  };
+
+  const handlePlaySectionAudio = (audio) => {
+    const containerId = audio.section_raw_id || 'audio-only';
+    const resolved = resolveMeditationSectionAudioPlayback(audio);
+
+    if (resolved.error) {
+      setAudioStatus(containerId, { error: resolved.error, notice: '' });
+      return;
+    }
+
+    playingAudioRef.current?.pause?.();
+    const player = new Audio(resolved.url);
+    playingAudioRef.current = player;
+    player.play().catch((playErr) => {
+      console.error('section audio playback failed:', playErr);
+      setAudioStatus(containerId, { error: playErr.message || '试听失败' });
+    });
+    setAudioStatus(containerId, { error: '', notice: resolved.notice || '' });
+  };
+
+  const handleDeleteSectionAudio = async (audio) => {
+    if (!audio?._id) {
+      return;
+    }
+
+    if (!confirm('确定删除该条候选音频？')) {
+      return;
+    }
+
+    const containerId = audio.section_raw_id || 'audio-only';
+    setAudioStatus(containerId, { busy: true, error: '', notice: '' });
+    try {
+      playingAudioRef.current?.pause?.();
+      await DatabaseService.deleteMedSectionAudio(audio._id);
+      // 回写 Section-Raw 候选引用（数据层查库，不依赖 sectionRawItems 内存态）
+      const detached = await DatabaseService.detachMedSectionAudioFromRaw(audio.section_raw_id || '', audio._id);
+
+      // 有 Section-Raw 却回写不到（返回 null = 目标已不存在）时给出提示，不能静默当成功。
+      if (audio.section_raw_id && !detached) {
+        throw new Error('音频已删除，但未能回写 Section-Raw 候选引用（目标不存在或已被删除），请刷新后重试');
+      }
+
+      await loadSectionAudios();
+      if (audio.section_raw_id) {
+        await loadSectionRaws();
+      }
+      setAudioStatus(containerId, { busy: false, notice: '已删除该候选音频' });
+    } catch (err) {
+      console.error('section audio delete failed:', err);
+      setAudioStatus(containerId, { busy: false, error: err.message || '删除失败' });
     }
   };
 
@@ -2915,6 +3551,7 @@ const MeditationPage = ({
   const [editType, setEditType] = useState('');
   const [editTags, setEditTags] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editSaveError, setEditSaveError] = useState('');
   const [polishing, setPolishing] = useState(false);
   const [editTagInput, setEditTagInput] = useState('');
   const [addingToSectionRaw, setAddingToSectionRaw] = useState(null);
@@ -2934,14 +3571,28 @@ const MeditationPage = ({
   // Load existing section-raws for the dropdown when edit modal opens
   useEffect(() => {
     if (editParagraph) {
-      DatabaseService.getMedSectionRaws().then((data) => {
-        setSectionRawDropdownList(
-          (data || []).map((sr) => ({
+      (async () => {
+        try {
+          const data = await DatabaseService.getMedSectionRaws();
+          const items = (data || []).map((sr) => ({
             id: sr._id || sr.id,
-            paragraphs: Array.isArray(sr.paragraph_texts) ? sr.paragraph_texts : [],
-          }))
-        );
-      }).catch(() => {});
+            paragraph_ids: Array.isArray(sr.paragraph_ids) ? sr.paragraph_ids : [],
+            section_type: sr.section_type || '',
+          }));
+          // 列表项没有 paragraphs 字段，首段摘要必须由段落 ids 查库取（否则下拉恒显示「无内容」）。
+          const firstParagraphIds = items.map((item) => item.paragraph_ids[0]).filter(Boolean);
+          const firstParagraphTexts = await DatabaseService.resolveMedParagraphTextsByIds(firstParagraphIds);
+          const firstTextById = new Map(
+            firstParagraphIds.map((paragraphId, index) => [paragraphId, firstParagraphTexts[index] || ''])
+          );
+          setSectionRawDropdownList(items.map((item) => ({
+            ...item,
+            first_paragraph_text: firstTextById.get(item.paragraph_ids[0]) || '',
+          })));
+        } catch (err) {
+          console.error('Failed to load section-raws for dropdown:', err);
+        }
+      })();
     }
   }, [editParagraph]);
   const [paragraphTagFilter, setParagraphTagFilter] = useState(null);
@@ -2957,13 +3608,14 @@ const MeditationPage = ({
       }
     } catch (err) {
       console.error('Delete failed:', err);
-      alert('删除失败');
+      // R8：删除失败必须可见。带上 err.message —— 删除断言把「影响条数为 0（文档不存在或无权删除）」
+      // 抛到这里，笼统的「删除失败」会让操作者分不清是没删掉还是网络问题（D-B2-12 / D-B2-15）。
+      alert(`删除失败：${err?.message || '未知错误'}`);
     }
   };
 
   // Lazy load sub-tab data on demand (instead of loading all at once on mount)
   const [localAudioLibrary, setLocalAudioLibrary] = useState(meditationAudioLibrary);
-  const [localSectionRaws, setLocalSectionRaws] = useState(meditationSectionRaws);
   const [localCompositionSettings, setLocalCompositionSettings] = useState(meditationCompositionSettings);
   const [localCalendar, setLocalCalendar] = useState(meditationCalendar);
   const [localLibrary, setLocalLibrary] = useState(meditationLibrary);
@@ -2978,26 +3630,16 @@ const MeditationPage = ({
             }
             break;
           case 'section-raw':
-            try {
-              const data = await DatabaseService.getMedSectionRaws();
-              setLocalSectionRaws(data || []);
-              // Also update sectionRawItems (the actual render state) with normalized data
-              setSectionRawItems(
-                (data || []).map((item, idx) => ({
-                  id: item._id || item.id || `sr-${idx}`,
-                  paragraph_ids: Array.isArray(item.paragraph_ids) ? item.paragraph_ids : [],
-                  paragraphs: Array.isArray(item.paragraph_texts) ? item.paragraph_texts : [],
-                  word_count_status: item.word_count_status || '',
-                  audio_url: item.audio_url || '',
-                  file_id: item.file_id || '',
-                  transcodeStatus: item.transcode_status || null,
-                  transcodeError: item.transcode_error || null,
-                }))
-              );
-              console.log('Section-raw loaded:', data?.length, 'items');
-            } catch (e) {
-              console.error('Failed to load section-raw:', e.message);
+            await loadSectionRaws();
+            await loadSectionAudios();
+            break;
+          case 'med-tracks':
+            setMedTracksError('');
+            if (typeof loadMedTracks === 'function') {
+              await loadMedTracks();
+              setTracksLoaded(true);
             }
+            await loadSectionAudios();
             break;
           case 'composition':
             if (!localCompositionSettings?.documentId) {
@@ -3019,7 +3661,10 @@ const MeditationPage = ({
             break;
         }
       } catch (e) {
-        console.log('Lazy load skipped for', activeSubTab, e.message);
+        console.error('Lazy load failed for', activeSubTab, e);
+        if (activeSubTab === 'med-tracks') {
+          setMedTracksError(e?.message || '冥想轨道加载失败');
+        }
       }
     };
     load();
@@ -3030,6 +3675,7 @@ const MeditationPage = ({
     setEditText(p?.text || '');
     setEditType(p?.paragraph_type || 'verse');
     setEditTags(Array.isArray(p?.tags) ? p.tags.join(', ') : '');
+    setEditSaveError('');
   };
 
   const handleAiPolish = async () => {
@@ -3069,6 +3715,7 @@ const MeditationPage = ({
   const handleSaveEdit = async () => {
     if (!editParagraph?._id) return;
     setSavingEdit(true);
+    setEditSaveError('');
     try {
       const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean);
       const updateData = {
@@ -3078,16 +3725,79 @@ const MeditationPage = ({
         // manual edit clears AI status
         source: 'manual',
         ai_rewritten_from: null,
+        // revision 每次编辑 +1，供 Section-Raw 的 stale 比对
+        revision: Number(editParagraph.revision ?? 1) + 1,
       };
-      await DatabaseService.updateMedParagraph(editParagraph._id, updateData);
+      const savedParagraph = await DatabaseService.updateMedParagraph(editParagraph._id, updateData);
+      // revision 回写内存编辑对象：级联失败时弹窗刻意保持打开，同一弹窗会话内再次保存必须基于新 revision，
+      // 否则会把同一版本号重复写回（失败分支保持打开的行为不变）。
+      setEditParagraph((previous) => (
+        previous ? { ...previous, revision: Number(savedParagraph?.revision ?? updateData.revision) } : previous
+      ));
+      // 文本变更判据（K9）：trim 归一后按字符串比较，undefined/null 一律归一为空串；
+      // 仅 tags/paragraph_type 改动而文本未变时不得触发 stale 级联，否则管理员会被要求重录实际无需重录的音频。
+      const normalizeParagraphText = (value) => (typeof value === 'string' ? value.trim() : '');
+      const paragraphTextChanged = normalizeParagraphText(editText) !== normalizeParagraphText(editParagraph.text);
+      if (paragraphTextChanged) {
+        // 段落改动级联（数据层驱动）：直接查库找出引用该段落的 Section-Raw，标记 stale* 并重算字数，
+        // 同时把被引用的候选音频置 stale（规范：stale 不阻断音频可用）。不依赖 sectionRawItems 内存态。
+        let cascade;
+        try {
+          cascade = await DatabaseService.cascadeMedSectionRawsStaleByParagraph(editParagraph._id, {
+            reason: '引用的段落文本已修改，建议重录',
+          });
+        } catch (cascadeErr) {
+          // 段落本身已保存，但 Section-Raw 的 stale 级联失败：必须在弹窗内提示（弹窗保持打开），
+          // 只进控制台会让用户误以为「保存成功、音频库状态已同步」。
+          console.error('Failed to update paragraph:', cascadeErr);
+          setEditSaveError(`段落已保存，但音频库「需重录」标记同步失败：${cascadeErr.message || '未知错误'}，请稍后重试或重新打开本条确认状态。`);
+          if (typeof refreshMeditationSection === 'function') {
+            await refreshMeditationSection();
+          }
+          return;
+        }
+        if (cascade.sectionRawIds.length > 0) {
+          await loadSectionRaws();
+          await loadSectionAudios();
+        }
+      }
       setEditParagraph(null);
       if (typeof refreshMeditationSection === 'function') {
         await refreshMeditationSection();
       }
     } catch (err) {
       console.error('Failed to update paragraph:', err);
+      setEditSaveError(`保存失败：${err.message || '未知错误'}`);
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  // 追加段落：字数重算、stale 标记与候选音频置位全部在数据层完成（见
+  // DatabaseService.appendMedSectionRawParagraphs），前端不再依赖 sectionRawItems 内存态。
+  const handleAppendParagraphs = async (sectionRawId, appendIds) => {
+    if (!sectionRawId || !appendIds.length) {
+      return;
+    }
+
+    setAppending(true);
+    try {
+      await DatabaseService.appendMedSectionRawParagraphs(sectionRawId, appendIds);
+      setAppendToSr(null);
+      setAppendSelected([]);
+      await loadSectionRaws();
+      await loadSectionAudios();
+      if (typeof refreshMeditationSection === 'function') {
+        await refreshMeditationSection();
+      }
+    } catch (err) {
+      console.error('Append failed:', err);
+      // R8：appendMedSectionRawParagraphs（→ updateMedSectionRaw）以及候选音频 stale 回写
+      //（markMedSectionAudiosStaleByRawId → updateMedSectionAudio）失败原本静默，用户会误以为追加成功。
+      // 改为可见提示；弹窗保持打开，便于用户重试（与本页其它写失败提示一致用 alert）。
+      alert(buildVisibleWriteFailureMessage('追加段落失败', err));
+    } finally {
+      setAppending(false);
     }
   };
 
@@ -3096,26 +3806,28 @@ const MeditationPage = ({
     setAddingToSectionRaw(targetId || 'new');
     setSectionRawDropdownOpen(false);
     try {
-      const text = editText || editParagraph.text || '';
       if (targetId && targetId !== 'new') {
-        // Append to existing section-raw
-        const existing = sectionRawDropdownList.find((sr) => sr.id === targetId);
-        const existingParagraphs = existing?.paragraphs || [];
-        await DatabaseService.updateMedSectionRaw(targetId, {
-          paragraph_texts: [...existingParagraphs, text],
-        });
+        // 追加到已有 Section-Raw：数据层读库取当前段落序列，只写段落引用与字数，音频仅留引用
+        await DatabaseService.appendMedSectionRawParagraphs(targetId, [editParagraph._id]);
       } else {
-        // Create new section-raw
-        const payload = {
+        // 新建 Section-Raw：section_type 按段落类型推荐取值
+        const sectionType = getMeditationRecommendedSectionType(editParagraph.paragraph_type) || 'sec-intro';
+        const targetCharCount = getMeditationSectionTargetCharCount(sectionType) ?? 0;
+        const currentCharCount = countMeditationSectionChars([editText || editParagraph.text || '']);
+        await DatabaseService.createMedSectionRaw({
+          section_type: sectionType,
           paragraph_ids: [editParagraph._id],
-          paragraph_texts: [text],
-          word_count_status: String(text.length),
+          target_char_count: targetCharCount,
+          current_char_count: currentCharCount,
+          word_count_status: resolveMeditationWordCountStatus(currentCharCount, targetCharCount),
+          record_granularity: 'paragraph',
           created_by: 'admin-edit-modal',
-        };
-        await DatabaseService.createMedSectionRaw(payload);
+        });
       }
       setAddingToSectionRaw(null);
       setEditParagraph(null);
+      await loadSectionRaws();
+      await loadSectionAudios();
       if (typeof refreshMeditationSection === 'function') {
         await refreshMeditationSection();
       }
@@ -3126,8 +3838,287 @@ const MeditationPage = ({
     }
   };
 
+  // 初始化默认种子 Track（六章固定模板 + 章间留白默认 141s）
+  const handleCreateDefaultTrack = async () => {
+    try {
+      setMedTracksError('');
+      await saveMedTrack(createDefaultMeditationTrack({ createdBy: 'admin-med-tracks' }));
+      setTracksLoaded(true);
+    } catch (err) {
+      console.error('Failed to create default med track:', err);
+      setMedTracksError(err?.message || '冥想轨道保存失败');
+    }
+  };
+
   const handleCancelEdit = () => {
     setEditParagraph(null);
+  };
+
+  // ── Section-Raw 渲染（音频一律来自 med_section_audios 候选池） ──────────────
+
+  const renderSectionAudioStatus = (containerId) => {
+    const status = sectionAudioStatus[containerId] || {};
+
+    return (
+      <>
+        {status.notice && <span style={{ fontSize: '11px', color: '#16a34a' }}>{status.notice}</span>}
+        {status.error && <span style={{ fontSize: '11px', color: '#ef4444' }}>❌ {status.error}</span>}
+      </>
+    );
+  };
+
+  const renderSectionAudioList = (containerId, audios, { showStatus = true, showSectionType = false } = {}) => {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {audios.length === 0 && (
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>候选池为空（同 section_type 允许 1..N 条候选，运行时抽一条）</span>
+        )}
+        {audios.map((audio) => (
+          <div key={audio._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: '#475569' }}>
+            <span>#{String(audio._id).slice(-6)}</span>
+            {showSectionType && <span>{audio.section_type || '未设置类型'}</span>}
+            {audio.label && <span>{audio.label}</span>}
+            <span>{formatAudioDuration(audio.duration)}</span>
+            <span>{getSourceKindLabel(audio.source_kind)}</span>
+            <span>{MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS[audio.transcode_status] || audio.transcode_status}</span>
+            <span style={{ color: audio.audio_url ? '#16a34a' : '#94a3b8' }}>Opus {audio.audio_url ? '✓' : '待转码'}</span>
+            <span style={{ color: audio.fallback_audio_url ? '#16a34a' : '#94a3b8' }}>mp3 {audio.fallback_audio_url ? '✓' : '—'}</span>
+            {!isMeditationSectionAudioDeliveryComplete(audio) && <span style={medBadgeStyle('warning')}>未完成交付</span>}
+            {audio.stale && <span style={medBadgeStyle('warning')}>stale</span>}
+            <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handlePlaySectionAudio(audio)}>试听</button>
+            <button style={{ ...dangerBtnStyle, padding: '2px 8px' }} onClick={() => handleDeleteSectionAudio(audio)}>删除</button>
+          </div>
+        ))}
+        {showStatus && renderSectionAudioStatus(containerId)}
+      </div>
+    );
+  };
+
+  const renderSectionRawItem = (raw, index) => {
+    const audios = getSectionRawAudios(raw.id);
+    const status = sectionAudioStatus[raw.id] || {};
+    // 无候选音频（= 没有录音）时不显示「需重录 / 文本与录制快照不一致」：无录音可重录。
+    // DB 侧 stale 语义不变，仅提示口径按有无录音收敛。
+    const stale = audios.length > 0 && isSectionRawStale(raw);
+    const paragraphTexts = resolveParagraphTexts(raw.paragraph_ids);
+    const currentCharCount = raw.current_char_count || countMeditationSectionChars(paragraphTexts);
+    const sectionMeta = getMeditationSectionTypeMeta(raw.section_type);
+
+    return (
+      <div key={raw.id} style={{ padding: '10px 8px', borderTop: index > 0 ? '1px solid #f1f5f9' : 'none', fontSize: '13px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <strong style={{ color: '#1e293b' }}>{getSectionTypeLabel(raw.section_type)}</strong>
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+            {raw.section_type || '未设置类型'} · {getSectionTypeChapterLabel(raw.section_type)}
+          </span>
+          <span style={medBadgeStyle(getMeditationWordCountStatusTone(raw.word_count_status))}>
+            {MEDITATION_WORD_COUNT_STATUS_LABELS[raw.word_count_status] || '未计算'}
+          </span>
+          {stale && (
+            <span style={medBadgeStyle('danger')}>
+              {raw.stale ? `需重录${raw.stale_reason ? `（${raw.stale_reason}）` : ''}` : '文本与录制快照不一致'}
+            </span>
+          )}
+          <span style={{ fontSize: '11px', color: '#64748b' }}>
+            段落 {raw.paragraph_ids.length} 个 · 字数 {currentCharCount}/{raw.target_char_count || '—'} · 时长上限 {sectionMeta?.max_duration_seconds ?? '—'}s
+          </span>
+        </div>
+        {paragraphTexts.length > 0 && (
+          <ol style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 4px 20px', padding: 0 }}>
+            {paragraphTexts.map((text, textIndex) => (
+              <li key={textIndex} style={{ opacity: 0.85 }}>{text}</li>
+            ))}
+          </ol>
+        )}
+        <div style={{ marginTop: '4px' }}>{renderSectionAudioList(raw.id, audios)}</div>
+        <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => setAppendToSr(raw._id)}>📎 追加段落</button>
+          <MeditationRecordingControl
+            busy={Boolean(status.busy)}
+            onCaptured={(capture) => handleSectionAudioCaptured(
+              { sectionRawId: raw.id, sectionType: raw.section_type },
+              capture
+            )}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderPureAudioPanel = () => (
+    <div style={{ marginTop: '16px', padding: '10px', background: '#fafafa', borderRadius: '8px' }}>
+      <div style={{ fontSize: '12px', fontWeight: '600', color: '#1e293b', marginBottom: '4px' }}>纯音频段（不建 Section-Raw）</div>
+      <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px' }}>
+        sec-nature / sec-bowl 无文本，录音或上传后直接写入 med_section_audios（section_raw_id 允许为空）。
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+        {PURE_AUDIO_SECTION_TYPES.map((sectionType) => (
+          <button
+            key={sectionType}
+            style={pillBtnStyle(pureAudioSectionType === sectionType)}
+            onClick={() => setPureAudioSectionType(sectionType)}
+          >
+            {getSectionTypeLabel(sectionType)}（{sectionType}）
+          </button>
+        ))}
+        <MeditationRecordingControl
+          busy={Boolean(sectionAudioStatus['audio-only']?.busy)}
+          onCaptured={(capture) => handleSectionAudioCaptured({ sectionRawId: '', sectionType: pureAudioSectionType }, capture)}
+        />
+      </div>
+      {PURE_AUDIO_SECTION_TYPES.map((sectionType) => (
+        <div key={sectionType} style={{ marginTop: '8px' }}>
+          <div style={{ fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
+            {getSectionTypeChapterLabel(sectionType)} · {getSectionTypeLabel(sectionType)}（{sectionType}）
+          </div>
+          {renderSectionAudioList(
+            'audio-only',
+            getSectionRawAudios('').filter((audio) => (audio.section_type || '') === sectionType),
+            { showStatus: false, showSectionType: true }
+          )}
+        </div>
+      ))}
+      <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {renderSectionAudioStatus('audio-only')}
+      </div>
+    </div>
+  );
+
+  const renderSectionRawCreateForm = () => {
+    const currentCharCount = countMeditationSectionChars(resolveParagraphTexts(selectedParagraphIds));
+    const targetCharCount = getMeditationSectionTargetCharCount(newSectionType) ?? 0;
+    const wordCountStatus = resolveMeditationWordCountStatus(currentCharCount, targetCharCount);
+    const recommendedParagraphTypes = getMeditationSectionTypeParagraphTypes(newSectionType);
+    const filteredParagraphs = (Array.isArray(meditationParagraphs) ? meditationParagraphs : [])
+      .filter((paragraph) => (
+        sectionParagraphTypeFilter === 'all'
+        || (paragraph?.paragraph_type || 'verse') === sectionParagraphTypeFilter
+      ));
+
+    return (
+      <div style={{ marginTop: '12px' }}>
+        <button style={{ ...ghostBtnStyle, padding: '4px 10px' }} onClick={toggleSectionCreateForm}>
+          {showSectionCreateForm ? '取消新建' : '新建 Section-Raw'}
+        </button>
+        {showSectionCreateForm && (
+          <div style={{ marginTop: '8px', padding: '10px', background: '#fafafa', borderRadius: '8px', fontSize: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '12px', color: '#475569' }}>
+                Section 类型
+                <select
+                  value={newSectionType}
+                  style={{ ...inputStyle, width: '260px', padding: '4px 8px', marginLeft: '4px' }}
+                  onChange={(event) => setNewSectionType(event.target.value)}
+                >
+                  {MEDITATION_SECTION_TYPE_GROUPS.map((group) => (
+                    <optgroup key={group.chapter_key} label={`${group.order}. ${group.chapter_label}（时长上限 ${group.max_duration_seconds}s）`}>
+                      {group.section_types.map((meta) => (
+                        <option key={meta.section_type} value={meta.section_type} disabled={!meta.text_required}>
+                          {meta.label}（{meta.section_type}{meta.text_required ? ` · 目标 ${meta.target_char_count} 字` : ' · 纯音频，不经 Section-Raw'}）
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <span style={{ color: '#64748b' }}>
+                推荐段落类型：{recommendedParagraphTypes.length > 0 ? recommendedParagraphTypes.join(' / ') : '无（纯音频段）'}
+              </span>
+              <span style={{ color: '#64748b' }}>
+                字数 {currentCharCount}/{targetCharCount || '不判字数'}
+                {wordCountStatus && (
+                  <span style={{ ...medBadgeStyle(getMeditationWordCountStatusTone(wordCountStatus)), marginLeft: '6px' }}>
+                    {MEDITATION_WORD_COUNT_STATUS_LABELS[wordCountStatus]}
+                  </span>
+                )}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '8px 0 4px' }}>
+              <span style={{ color: '#64748b' }}>按段落类型筛选：</span>
+              {['all', ...MEDITATION_PARAGRAPH_TYPE_ORDER].map((paragraphType) => (
+                <button
+                  key={paragraphType}
+                  style={pillBtnStyle(sectionParagraphTypeFilter === paragraphType)}
+                  onClick={() => setSectionParagraphTypeFilter(paragraphType)}
+                >
+                  {paragraphType === 'all' ? '全部' : paragraphType}
+                </button>
+              ))}
+            </div>
+            {filteredParagraphs.length === 0 && (
+              <div style={{ color: '#94a3b8' }}>没有符合筛选条件的段落</div>
+            )}
+            {filteredParagraphs.map((paragraph, paragraphIndex) => {
+              const paragraphId = paragraph?._id || `p-${paragraphIndex}`;
+              const checked = selectedParagraphIds.includes(paragraphId);
+              const recommendedSectionType = getMeditationRecommendedSectionType(paragraph?.paragraph_type);
+              const matched = isMeditationParagraphTypeMatchSectionType(paragraph?.paragraph_type, newSectionType);
+
+              return (
+                <label key={paragraphId} style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '2px 0' }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleParagraphSelect(paragraphId)} />
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {String(paragraph?.text || '').slice(0, 60)}
+                  </span>
+                  <span style={{ color: '#94a3b8' }}>{paragraph?.paragraph_type}</span>
+                  <span style={{ color: '#64748b' }}>推荐 {recommendedSectionType || '—'}</span>
+                  <span style={medBadgeStyle(matched ? 'ok' : 'warning')}>{matched ? '类型匹配' : '类型不匹配'}</span>
+                </label>
+              );
+            })}
+            <div style={{ marginTop: '6px', color: '#64748b' }}>
+              已选 {selectedParagraphIds.length} 段 · 当前 {currentCharCount} 字 / 目标 {targetCharCount || '—'} 字（字数硬约束，仅提示不阻断）
+            </div>
+            {sectionRawFormError && <div style={{ color: '#ef4444', marginTop: '4px' }}>❌ {sectionRawFormError}</div>}
+            <button style={{ ...primaryBtnStyle, marginTop: '8px', padding: '5px 12px' }} onClick={handleConfirmCreateSectionRaw}>
+              保存 Section-Raw
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderMedTracksTab = () => {
+    const track = (Array.isArray(medTracks) ? medTracks : [])[0] || null;
+    // 失败必须可辨识（例：med_tracks 集合不存在，请先在 CloudBase 创建），不得静默
+    const tracksErrorNotice = medTracksError ? (
+      <div style={{ color: '#ef4444', fontSize: '12px', marginBottom: '8px' }}>❌ {medTracksError}</div>
+    ) : null;
+
+    if (track) {
+      return (
+        <div>
+          {tracksErrorNotice}
+          <MeditationTracksTab
+            key={track._id || track.track_key}
+            track={track}
+            sectionDurationSecondsByType={buildMeditationSectionDurationMap(sectionAudios)}
+            saving={savingMedTracks}
+            onSave={saveMedTrack}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div style={sectionTitleStyle}>冥想轨道</div>
+        {tracksErrorNotice}
+        {tracksLoaded ? (
+          <div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
+              尚无 med_tracks 记录；可初始化默认种子 Track（六章固定模板、各章时长上限 300/30/130/150/270/30、章间留白默认 141s）。
+            </div>
+            <button style={{ ...primaryBtnStyle, padding: '6px 14px' }} onClick={handleCreateDefaultTrack} disabled={savingMedTracks}>
+              {savingMedTracks ? '创建中…' : '初始化默认 Track'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ padding: '6px 8px', color: '#94a3b8', fontSize: '13px' }}>加载中…</div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -3335,98 +4326,22 @@ const MeditationPage = ({
           <div>
             <div style={sectionTitleStyle}>原始音频库</div>
             <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px' }}>
-              Section-raw 列表
+              Section-Raw 列表（音频以 med_section_audios 为唯一口径，本页只保存引用）
             </div>
             {sectionRawItems.length === 0 ? (
-              <div style={{ padding: '6px 8px', color: '#94a3b8', fontSize: '13px' }}>暂无 section-raw</div>
-            ) : sectionRawItems.map((item, idx) => (
-              <div key={item.id || idx} style={{ padding: '6px 8px', borderTop: idx > 0 ? '1px solid #f8fafc' : 'none', fontSize: '13px' }}>
-                <div>IDs: {item.paragraph_ids.join(', ')}</div>
-                 {Array.isArray(item.paragraphs) && item.paragraphs.length > 0 && (
-                   <ol style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 4px 20px', padding: 0 }}>
-                     {item.paragraphs.map((txt, ti) => (
-                       <li key={ti} style={{ opacity: 0.85 }}>{txt}</li>
-                     ))}
-                   </ol>
-                 )}
-                 <div style={{ color: '#64748b' }}>字数状态: {item.word_count_status}</div>
-                 <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', flexWrap: 'wrap' }}>
-                   <button
-                     style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#059669', cursor: 'pointer' }}
-                     onClick={() => setAppendToSr(item.id)}
-                   >
-                     📎 追加段落
-                   </button>
-                   {!item.audio_url && (
-                     <button
-                       style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #c4b5fd', background: '#f5f3ff', color: '#7c3aed', cursor: 'pointer' }}
-                       onClick={async () => {
-                         try {
-                           const text = Array.isArray(item.paragraphs) ? item.paragraphs.join('\n') : '';
-                           if (!text) return;
-                           const blobUrl = await synthesizeSpeech(text, { voice: 'zh-CN' });
-                           const audio = new Audio(blobUrl);
-                           audio.play();
-                         } catch (e) {
-                           console.error('AI listen failed:', e);
-                         }
-                       }}
-                     >
-                       🎧 AI试听
-                     </button>
-                   )}
-                   {item.audio_url ? (
-                     <span style={{ color: '#22c55e' }}>✅ 已上传音频</span>
-                   ) : (
-                     <label style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', cursor: 'pointer', display: 'inline-block' }}>
-                       {sectionRawAudioStatus[item.id]?.uploading ? '上传中...' : '上传音频'}
-                       <input type="file" accept="audio/*" style={{ display: 'none' }} disabled={sectionRawAudioStatus[item.id]?.uploading}
-                         onChange={(e) => {
-                           const f = e.target.files?.[0];
-                           if (f) handleSectionRawUpload(item.id, f);
-                           e.target.value = '';
-                         }}
-                       />
-                     </label>
-                   )}
-                   {sectionRawAudioStatus[item.id]?.error && (
-                     <span style={{ color: '#ef4444' }}>❌ {sectionRawAudioStatus[item.id]?.error}</span>
-                   )}
-                   {item.file_id && !item.audio_url && (
-                     <span style={{ color: '#f59e0b' }}>⏳ 转码中</span>
-                   )}
-                 </div>
-              </div>
-              ))}
-            <div style={{ marginTop: '12px' }}>
-              <button
-                style={{ padding: '4px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#334155', cursor: 'pointer' }}
-                onClick={toggleSectionCreateForm}
-              >
-                {showSectionCreateForm ? '取消新建' : '新建 section-raw'}
-              </button>
-            </div>
-            {showSectionCreateForm && (
-              <div style={{ marginTop: '8px', padding: '8px', background: '#fafafa', borderRadius: '8px', fontSize: '12px' }}>
-                <div>选择段落（stub）:</div>
-                { (meditationParagraphs || []).slice(0,5).map((p, i) => {
-                  const id = p?._id || `p-${i}`;
-                  const checked = selectedParagraphIds.includes(id);
-                  return (
-                    <label key={id} style={{ display: 'block', margin: '2px 0' }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleParagraphSelect(id)} /> {String(p?.text || '').slice(0,30)}...
-                    </label>
-                  );
-                })}
-
-                <div style={{ margin: '4px 0', color: '#64748b' }}>预计字数: {selectedTotalChars}</div>
-                <button style={{ marginTop: '6px', padding: '3px 8px', fontSize: '11px' }} onClick={handleConfirmCreateSectionRaw}>保存</button>
-              </div>
-            )}
+              <div style={{ padding: '6px 8px', color: '#94a3b8', fontSize: '13px' }}>暂无 Section-Raw</div>
+            ) : sectionRawItems.map((raw, index) => renderSectionRawItem(raw, index))}
+            {renderPureAudioPanel()}
+            {renderSectionRawCreateForm()}
           </div>
         )}
 
-        {/* Append paragraphs modal */}
+        {activeSubTab === 'med-tracks' && (
+          <React.Fragment>
+            {renderMedTracksTab()}
+          </React.Fragment>
+        )}
+
         {appendToSr && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
             <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', width: '460px', maxWidth: '94vw', maxHeight: '80vh', overflowY: 'auto' }}>
@@ -3451,27 +4366,7 @@ const MeditationPage = ({
                   onClick={() => { setAppendToSr(null); setAppendSelected([]); }}>取消</button>
                 <button style={{ padding: '7px 16px', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '500', cursor: 'pointer', backgroundColor: '#1e293b', color: '#fff' }}
                   disabled={appending || appendSelected.length === 0}
-                  onClick={async () => {
-                    setAppending(true);
-                    try {
-                      const sr = sectionRawItems.find((s) => s.id === appendToSr);
-                      const existingTexts = sr?.paragraphs || [];
-                      const newTexts = appendSelected.map((pid) => {
-                        const p = (meditationParagraphs || []).find((pp) => (pp._id || pp.id) === pid);
-                        return p?.text || '';
-                      }).filter(Boolean);
-                      await DatabaseService.updateMedSectionRaw(appendToSr, {
-                        paragraph_texts: [...existingTexts, ...newTexts],
-                      });
-                      setAppendToSr(null);
-                      setAppendSelected([]);
-                      if (typeof refreshMeditationSection === 'function') await refreshMeditationSection();
-                    } catch (err) {
-                      console.error('Append failed:', err);
-                    } finally {
-                      setAppending(false);
-                    }
-                  }}
+                  onClick={() => handleAppendParagraphs(appendToSr, appendSelected)}
                 >
                   {appending ? '追加中...' : `追加 ${appendSelected.length} 条`}
                 </button>
@@ -3663,6 +4558,10 @@ const MeditationPage = ({
               </div>
             )}
 
+            {editSaveError && (
+              <div style={{ color: '#ef4444', fontSize: '12px', marginBottom: '12px' }}>❌ {editSaveError}</div>
+            )}
+
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between' }}>
               <div style={{ position: 'relative' }}>
                 <button
@@ -3681,10 +4580,12 @@ const MeditationPage = ({
                       <div key={sr.id} style={{ padding: '8px 12px', fontSize: '12px', color: '#475569', cursor: 'pointer', borderBottom: '1px solid #f8fafc', display: 'flex', justifyContent: 'space-between' }}
                         onClick={() => handleAddToSectionRaw(sr.id)}
                       >
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {sr.paragraphs?.[0]?.slice(0, 40) || '无内容'}...
+                        <span style={{ flexShrink: 0 }}>
+                          {getSectionTypeLabel(sr.section_type)} · {sr.paragraph_ids.length}条
                         </span>
-                        <span style={{ color: '#94a3b8', marginLeft: '8px', flexShrink: 0 }}>{sr.paragraphs?.length || 0}条</span>
+                        <span style={{ flex: 1, marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8', textAlign: 'right' }}>
+                          {sr.first_paragraph_text ? sr.first_paragraph_text.slice(0, 40) : '无内容'}
+                        </span>
                       </div>
                     ))}
                     {sectionRawDropdownList.length === 0 && (

@@ -1,6 +1,6 @@
 import cloudbase from '@cloudbase/js-sdk';
 import { Capacitor } from '@capacitor/core';
-import { createAuthService, readSession, normalizePhone as authNormalizePhone, normalizeUserProfile as authNormalizeUserProfile } from '@liwu/auth';
+import { createAuthService, readSession } from '@liwu/auth';
 import { DATABASE_CONFIG } from '../config/database.js';
 import {
   BADGE_ACTIVITY_TYPES,
@@ -30,6 +30,7 @@ import {
 import {
   AWARENESS_DISPLAY_SETTINGS_KEY,
   DEFAULT_AWARENESS_DISPLAY_SETTINGS,
+  DEFAULT_AWARENESS_POPULAR_TAG_COUNT,
   normalizeAwarenessDisplaySettings
 } from '@liwu/shared-utils/awareness-display-settings.js';
 import {
@@ -42,8 +43,7 @@ import {
   USER_AVATAR_OPTIONS_SETTINGS_KEY,
   getAvatarOptionByIndex,
   getSelectableUserAvatars,
-  normalizeUserAvatarOptionsSettings,
-  pickRandomDefaultAvatarIndex
+  normalizeUserAvatarOptionsSettings
 } from '@liwu/shared-utils/avatar-options.js';
 import {
   DEFAULT_STUDENT_MEMBERSHIP_SETTINGS,
@@ -64,15 +64,9 @@ import {
 import { createAuthResolvers, createEnsureAnonymousLogin } from '@liwu/shared-utils/cloudbase-auth-runtime.js';
 import {
   createPendingAuthPhoneHelpers,
-  createPendingInviteHelpers,
   getOrCreateAwarenessAuthorKey,
   readLocalStorageJSON,
-  readLocalStorageValue,
-  readSessionStorageJSON,
-  removeLocalStorageByPrefix,
-  writeLocalStorageJSON,
-  writeLocalStorageValue,
-  writeSessionStorageJSON
+  writeLocalStorageJSON
 } from '@liwu/shared-utils/cloudbase-browser-storage.js';
 import {
   getDocumentId,
@@ -107,6 +101,7 @@ import {
   normalizeWealthEntry
 } from '@liwu/shared-utils/cloudbase-wealth-snapshot.js';
 import { MEDITATION_SETTINGS_KEY } from '@liwu/shared-utils/meditation-reward-settings.js';
+import { createMeditationReadClient } from '@liwu/shared-utils/meditation-read-client.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
@@ -155,14 +150,17 @@ if (shouldInstallProxy) {
 
 const { app, db, auth, command: _ } = createCloudBaseSdk(cloudbase, { env, region, publishableKey });
 
+// D6 只读云函数（`meditation-read`）客户端：端侧读 `med_tracks` / `med_section_audios` 的**唯一通道**
+// （规范 §5 / R30 / R39 ①②③）。`callFunction` 的 this 绑定到 `app`（wx / CloudBase 的 callFunction 依赖 this）。
+const meditationReadClient = createMeditationReadClient({
+  callFunction: app.callFunction.bind(app)
+});
+
 let currentProfilePromise = null;
 let currentProfileCache = null;
 
 const { resolveCurrentUser, resolveCurrentSession } = createAuthResolvers(auth);
 const ensureAnonymousLogin = createEnsureAnonymousLogin({ auth, resolveCurrentUser });
-const { rememberPendingInviteCode, clearPendingInviteCode } = createPendingInviteHelpers({
-  queryKeys: ['i', 'invite']
-});
 const { rememberPendingAuthPhone, clearPendingAuthPhone } = createPendingAuthPhoneHelpers();
 
 const resolveAuthStatus = createResolveAuthStatus({
@@ -301,16 +299,6 @@ const normalizeRelatedProductCard = (product = null) => {
     priceCash: Number(product.priceCash || product.priceCashFrom || 0),
     beansDeductionRatio: Number(product.beansDeductionRatio ?? 0.1)
   };
-};
-
-const formatRelatedProductPrice = (product = null) => {
-  if (!product?.id) {
-    return '';
-  }
-
-  const cash = Number(product.priceCash || product.priceCashFrom || 0);
-  const ratio = Math.max(0, Number(product.beansDeductionRatio ?? 0.1));
-  return `¥${cash.toFixed(2)} · 福豆最多抵 ${Math.round(ratio * 100)}%`;
 };
 
 const normalizeShopSku = (sku = {}) => ({
@@ -528,22 +516,53 @@ const toShanghaiHour = (value = new Date()) => (
   Number(shanghaiHourFormatter.format(new Date(value)))
 );
 
+// 写入侧时段值：清晨统一写 `morning`（与小程序 `apps/miniprogram/src/utils/meditation.js` 一致）。
+// 徽章 id 域 `BADGE_SLOT_KEYS`（`packages/shared-utils/badge-system.js`）**不改**：它同时是徽章 id
+// 与历史解锁记录的名字来源；读侧由 resolveMeditationReadSlotKey 把 `morning` 归回 `dawn` 统计。
+// 其余时段的写入值保持原样（noon / afternoon / evening）。
+const MEDITATION_SLOT_WRITE_KEYS = Object.freeze({
+  morning: 'morning',
+  noon: BADGE_SLOT_KEYS.noon,
+  afternoon: BADGE_SLOT_KEYS.afternoon,
+  evening: BADGE_SLOT_KEYS.evening
+});
+
 const getMeditationSlotKey = (value = new Date()) => {
   const hour = toShanghaiHour(value);
 
   if (hour >= 5 && hour < 11) {
-    return BADGE_SLOT_KEYS.dawn;
+    return MEDITATION_SLOT_WRITE_KEYS.morning;
   }
 
   if (hour >= 11 && hour < 14) {
-    return BADGE_SLOT_KEYS.noon;
+    return MEDITATION_SLOT_WRITE_KEYS.noon;
   }
 
   if (hour >= 14 && hour < 18) {
-    return BADGE_SLOT_KEYS.afternoon;
+    return MEDITATION_SLOT_WRITE_KEYS.afternoon;
   }
 
-  return BADGE_SLOT_KEYS.evening;
+  return MEDITATION_SLOT_WRITE_KEYS.evening;
+};
+
+// ─── 时段键读侧归一（R41-⑫：历史值读侧兼容、不批量改写） ──────────────────────────────
+// App 与小程序写入侧现已**统一**把清晨时段写成 `morning`；历史数据里仍存着旧值 `dawn`。
+// 若读侧按字面比较，同一时段的「历史值 + 新值」会互相看不见，故读侧做别名归一。
+// 归一方向＝归到**徽章 id 域里的键**（`dawn`），因为 `BADGE_SLOT_KEYS` 同时是徽章 id 的名字来源。
+// 硬约束：**不得**为归一去改 `packages/shared-utils/badge-system.js` 的 `BADGE_SLOT_KEYS`
+// （改常量会连带徽章命名与历史解锁记录），只在这里做读侧别名。
+const MEDITATION_SLOT_READ_ALIASES = Object.freeze({
+  morning: BADGE_SLOT_KEYS.dawn
+});
+
+const resolveMeditationReadSlotKey = (slotKey = '') => {
+  const normalized = String(slotKey || '').trim();
+  const aliased = MEDITATION_SLOT_READ_ALIASES[normalized];
+  // 别名只在「别名自身不是合法徽章时段键」时生效：将来常量若真加了 `morning` 键，
+  // 也不会出现同一条记录被两个时段各统计一次。
+  const isBadgeSlotKey = Object.values(BADGE_SLOT_KEYS).includes(normalized);
+
+  return aliased && !isBadgeSlotKey ? aliased : normalized;
 };
 
 const buildStreakStats = (dateKeys = []) => {
@@ -848,7 +867,7 @@ const computeBadgeMetricsForUser = async (currentProfile = null) => {
 
   const meditationSlotStats = Object.values(BADGE_SLOT_KEYS).reduce((accumulator, slotKey) => {
     const slotDateKeys = meditationEntries
-      .filter((entry) => (entry.activity_slot || '') === slotKey)
+      .filter((entry) => resolveMeditationReadSlotKey(entry.activity_slot) === slotKey)
       .map((entry) => entry.activity_date_key || toShanghaiDateKey(entry.created_at || new Date()));
 
     return {
@@ -1982,6 +2001,16 @@ export const rewardSettingsService = {
       };
     }
   }
+};
+
+// ─── 冥想（D6 只读云函数） ─────────────────────────────────────────────────────
+// 端侧**唯一**的冥想 Track / Section 音频读取通道（规范 §5 / R30 / R39 ①~③）：
+// **错误一律上抛**（`MeditationReadError`，`error.code` 即分支依据），**不吞错、不做兜底**——
+// 调用方（播放器）**绝不**可用它失败时的任何老音频库 / 本地 plan 顶上（D9）。
+export const meditationReadService = {
+  getTrack: (params = {}) => meditationReadClient.getTrack(params),
+  getSectionAudios: (params = {}) => meditationReadClient.getSectionAudios(params),
+  listTracks: (params = {}) => meditationReadClient.listTracks(params)
 };
 
 export const shareService = {

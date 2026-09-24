@@ -19,6 +19,8 @@ const requiredSyncedUtils = [
   'page-masthead-settings.js',
   'shop-home-living-settings.js',
   'meditation-reward-settings.js',
+  'meditation-read-client.js',
+  'meditation-track-playback-plan.js',
   'cloudbase-document-helpers.js',
   'cloudbase-user-identity.js',
   'cloudbase-wealth-snapshot.js',
@@ -64,6 +66,13 @@ const convertStandaloneEsmToCjs = (source) => {
       if (functionMatch) {
         exportedNames.push(functionMatch[1])
         return line.replace(/^export function/, 'function')
+      }
+
+      // 与 `scripts/sync-miniprogram-packages.mjs` 的转换器保持同构：`export class` 同样要收名去前缀。
+      const classMatch = line.match(/^export class (\w+)/)
+      if (classMatch) {
+        exportedNames.push(classMatch[1])
+        return line.replace(/^export class/, 'class')
       }
 
       return line

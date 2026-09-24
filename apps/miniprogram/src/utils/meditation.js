@@ -24,15 +24,17 @@ const getMeditationSlotKey = (value = new Date()) => {
   })
   const hour = Number(hourFormatter.format(new Date(value)))
 
-  if (hour < 11) {
-    return 'dawn'
+  // 时段边界与 App 写入侧同口径（apps/app/src/services/cloudbase.js 的 getMeditationSlotKey）：
+  // 清晨＝05:00–10:59，00:00–04:59 归傍晚。
+  if (hour >= 5 && hour < 11) {
+    return 'morning'
   }
 
-  if (hour < 14) {
+  if (hour >= 11 && hour < 14) {
     return 'noon'
   }
 
-  if (hour < 18) {
+  if (hour >= 14 && hour < 18) {
     return 'afternoon'
   }
 
@@ -128,9 +130,13 @@ const recordMeditationCompletion = async ({ durationSeconds = 0 } = {}) => {
   }
 }
 
+// 日期键 / 时段键一并导出：会话固化载荷（R41-⑤ / R44-⑩，键 `liwu_meditation_session_v1`）需要
+// `date_key` ＋ `session_key`，**复用本文件既有的上海时区口径**，不在别处另抄一份。
 module.exports = {
   SESSION_SECONDS,
   MIN_VALID_MEDITATION_SECONDS,
+  getShanghaiDateKey,
+  getMeditationSlotKey,
   getMeditationPageData,
   recordMeditationCompletion
 }

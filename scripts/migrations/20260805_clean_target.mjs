@@ -8,7 +8,7 @@
  */
 
 import cloudbase from '@cloudbase/node-sdk';
-import { parseFlag, hasFlag } from './lib/cloudbase-nosql.mjs';
+import { hasFlag } from './lib/cloudbase-nosql.mjs';
 
 const TARGET_ENV = 'liwu-d8gek6jjdab1d087c';
 

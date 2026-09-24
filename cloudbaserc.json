@@ -26,6 +26,25 @@
       "timeout": 30,
       "memorySize": 256,
       "runtime": "Nodejs18.15"
+    },
+    {
+      "name": "meditation-read",
+      "timeout": 30,
+      "memorySize": 128,
+      "runtime": "Nodejs18.15"
+    },
+    {
+      "name": "meditation-transcoder",
+      "timeout": 60,
+      "memorySize": 256,
+      "runtime": "Nodejs18.15",
+      "triggers": [
+        {
+          "name": "meditation-transcoder-trigger",
+          "type": "timer",
+          "config": "0 * * * * * *"
+        }
+      ]
     }
   ]
 }

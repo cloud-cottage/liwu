@@ -15,9 +15,33 @@
         <view class="meditation-orb">静</view>
       </view>
       <view class="meditation-timer">{{timeLabel}}</view>
+      <view class="meditation-timer-hint" wx:if="{{loading}}">正在读取冥想轨道…</view>
     </view>
 
-    <button class="primary-button meditation-button" loading="{{saving}}" disabled="{{saving}}" bindtap="handleToggleMeditation">
+    <view class="meditation-error-card" wx:if="{{errorMessage}}">
+      <view class="meditation-error-title">冥想内容加载失败</view>
+      <view class="meditation-error-text">{{errorMessage}}</view>
+      <view class="meditation-error-meta" wx:if="{{errorCode}}">错误码：{{errorCode}}</view>
+      <view class="meditation-error-meta" wx:if="{{errorRequestId}}">requestId：{{errorRequestId}}</view>
+      <button class="ghost-button meditation-retry-button" bindtap="handleRetryLoad">重试</button>
+    </view>
+
+    <view class="meditation-notice" wx:elif="{{emptyPlanNotice}}">
+      <view class="meditation-notice-text">{{emptyPlanNotice}}</view>
+      <button class="ghost-button meditation-retry-button" bindtap="handleRetryLoad">重试</button>
+    </view>
+
+    <view class="meditation-warning-card" wx:if="{{segmentWarningCount > 0}}">
+      <view class="meditation-warning-summary">{{segmentWarningSummary}}</view>
+      <view class="meditation-warning-line" wx:for="{{segmentWarnings}}" wx:key="*this">{{item}}</view>
+    </view>
+
+    <button
+      class="primary-button meditation-button"
+      loading="{{saving}}"
+      disabled="{{saving || loading || !audioReady}}"
+      bindtap="handleToggleMeditation"
+    >
       {{running ? '暂停静寂' : '冥想此刻'}}
     </button>
 

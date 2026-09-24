@@ -18,7 +18,6 @@
 
 import { writeFile } from 'node:fs/promises';
 import { 
-  fetchAllCollection, 
   getEnvId, 
   updateDocument,
   runNosqlCommands 
@@ -120,7 +119,7 @@ const DUPLICATE_GROUPS = [
 ];
 
 // 选择规范用户
-const selectCanonicalUser = (users, reason) => {
+const selectCanonicalUser = (users) => {
   // 按优先级排序
   const scored = users.map(u => ({
     ...u,
@@ -147,7 +146,7 @@ const main = async () => {
     console.log(`Processing: ${group.authUid} (${group.reason})`);
     console.log(`  Users: ${group.users.length}`);
     
-    const canonical = selectCanonicalUser(group.users, group.reason);
+    const canonical = selectCanonicalUser(group.users);
     const duplicates = group.users.filter(u => u.id !== canonical.id);
     
     console.log(`  Canonical: ${canonical.id} (${canonical.name}, ${canonical.phone || 'no phone'})`);

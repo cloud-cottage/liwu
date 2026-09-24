@@ -43,6 +43,7 @@ import {
   normalizeWealthEntry
 } from '@liwu/shared-utils/cloudbase-wealth-snapshot.js';
 import { MEDITATION_SETTINGS_KEY } from '@liwu/shared-utils/meditation-reward-settings.js';
+import { createMeditationReadClient } from '@liwu/shared-utils/meditation-read-client.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
@@ -62,6 +63,13 @@ if (shouldInstallProxy) {
 }
 
 const { app, db, auth, command: _ } = createCloudBaseSdk(cloudbase, { env, region, publishableKey });
+
+// D6 只读云函数（`meditation-read`）客户端：**后台读冥想集合（`med_*`）的唯一通道**
+// （R43-①：后台同样不得直连 DB 组装播放）。`callFunction` 的 this 必须绑定到 `app`
+// （wx / CloudBase 的 callFunction 依赖 this），照 `apps/app/src/services/cloudbase.js:155-157` 同款。
+export const meditationReadClient = createMeditationReadClient({
+  callFunction: app.callFunction.bind(app)
+});
 
 let currentProfilePromise = null;
 let currentProfileCache = null;

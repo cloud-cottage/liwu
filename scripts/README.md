@@ -11,6 +11,8 @@
 | `audio-transcode-worker.mjs` | 冥想音频转码后台 worker |
 | [migrations/](./migrations/) | 数据库迁移脚本（含 `users` 集合拆分） |
 
+> **上线纪律**：`audio-transcode-worker` 与云函数 `meditation-transcoder` **共用同一队列但按 `transcode_profile` 分区消费（老 worker 跳 section_audio）；启用新执行器前先停 audio:transcode-worker:loop，同一时刻只允许一侧消费**。
+
 ## 常用命令
 
 ```bash

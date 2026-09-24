@@ -70,10 +70,23 @@ import {
   toShopRewardSettingsPayload
 } from '@liwu/shared-utils/shop-reward-settings.js';
 import { BRAND_SCOPE_DEFINITIONS, resolveProductTypeByCategoryName } from '@liwu/shared-utils/brand-scope-mapping.js';
+import { COURSE_BRAND_SCOPE_TAG_NAME } from '@liwu/shared-utils/fortune-daily-settlement-core.js';
 import {
-  COURSE_BRAND_SCOPE_TAG_NAME,
-  resolveDailyBeansConsumption
-} from '@liwu/shared-utils/fortune-daily-settlement-core.js';
+  MEDITATION_TRACK_COLLECTION,
+  normalizeMedTrack,
+  toMedTrackPayload
+} from '@liwu/shared-utils/meditation-track-normalizers.js';
+import {
+  MEDITATION_SECTION_AUDIO_COLLECTION,
+  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS,
+  normalizeMedSectionAudio,
+  toMedSectionAudioPayload
+} from '@liwu/shared-utils/meditation-section-audio.js';
+import {
+  buildMeditationSectionRawTextSnapshot,
+  countMeditationSectionChars,
+  resolveMeditationWordCountStatus
+} from '@liwu/shared-utils/meditation-track-template.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -343,6 +356,234 @@ const getDocuments = (result, collectionName) => {
 };
 
 const getFirstDocument = (result, collectionName) => getDocuments(result, collectionName)[0] || null;
+
+const MED_PARAGRAPHS_COLLECTION = 'med_paragraphs';
+const MED_SECTION_RAWS_COLLECTION = 'med_section_raws';
+const MED_SECTION_AUDIO_MISSING_HINT_SUFFIX = '集合不存在，请先在 CloudBase 创建该集合';
+
+const buildMedCollectionMissingMessage = (collectionName) => `${collectionName} ${MED_SECTION_AUDIO_MISSING_HINT_SUFFIX}`;
+
+// 读取路径上「集合不存在」在 getMedSectionRawById 里被折成 null（= 业务上没有目标）。
+// 回写方法（attach/detach）必须把「环境异常」与「业务空值」分开：回写前显式探一次集合，
+// 集合缺失时直接抛错（口径同 assertCloudBaseWriteResult），不再静默 return null。
+const assertMedSectionRawsCollectionExists = async () => {
+  await ensureAnonymousLogin();
+  const result = await db.collection(MED_SECTION_RAWS_COLLECTION).limit(1).get();
+
+  if (isMissingCollectionIssue(result)) {
+    throw new Error(buildMedCollectionMissingMessage(MED_SECTION_RAWS_COLLECTION));
+  }
+
+  return result;
+};
+
+// CloudBase SDK 在「集合不存在」等错误时以 resolve 返回 { code, message } 而不是 reject，
+// 只 try/catch 会静默失败（既无用户提示、也无 error 日志）。所有 med_* 写入点统一经此校验，
+// 把 resolve-error 转成抛错，让上层 UI 能给出可辨识提示。
+//
+// 反向纪律（D-B2-14，硬）：update 路径不得用 `updated >= 1` 作成功条件。
+// `updated` 计的是「内容真正发生变化的文档数」而非命中行数；
+// `updated: 0` 有三种成因——值本来相同／无权写（静默）／文档不存在，返回形态完全相同，
+// **既不是成功证据、也不是失败证据**；
+// 且含对象数组字段的载荷上`updated` 非确定（同一 payload 连写三次实测 0,0,1 与 1,0,0）
+// ⇒ 单看它连「是否写入」都判不出。成功判据只看 `code`/`message` 有无错误与读回的文档内容。
+// **有条件例外**：仅当本次 update 的载荷必然包含易变字段（`updated_at: new Date()`
+// ／`version + 1` 之类）时，
+// 才可把「`updated < 1` 且无`code`/`message`」当作「本次写入未生效」的强信号处理；
+// 错误文案不得声称「无权限」（无权限与无变化在返回值上不可区分）。
+const assertCloudBaseWriteResult = (result, collectionName) => {
+  if (isMissingCollectionIssue(result)) {
+    throw new Error(buildMedCollectionMissingMessage(collectionName));
+  }
+
+  if (result && typeof result === 'object' && !Array.isArray(result) && result.code && result.message) {
+    throw new Error(`${collectionName} 写入失败：${result.message}（${result.code}）`);
+  }
+
+  return result;
+};
+
+const assertCloudBaseCreateResult = (result, collectionName) => {
+  const checkedResult = assertCloudBaseWriteResult(result, collectionName);
+
+  if (!checkedResult?.id || typeof checkedResult.id !== 'string') {
+    throw new Error(`${collectionName} 创建失败：CloudBase 未返回新文档 ID`);
+  }
+
+  return checkedResult;
+};
+
+// D-B2-12 删除路径硬口径：删除必须「读并断言影响条数」。
+// CloudBase 的 doc().remove() / where().remove() 成功时返回 { deleted, requestId }；
+// 文档不存在或（非 owner 身份时）无权删除返回 `{ deleted: 0, requestId }` —— 这不是 { code, message } 错误形态，
+// 只经 assertCloudBaseWriteResult 会被直接放过 ⇒ 调用方以为删成功、实际文档还在（静默假成功）。
+// 本断言把 deleted: 0 转成显式抛错，文案区分「文档不存在或无权删除」，deleted >= 1 才算成功。
+//
+// options.entityLabel：错误文案里的中文对象名（默认用集合名）。
+// options.allowZero：**仅**给「删主对象时顺带删关联行」的级联清理用 —— 这类 where 查询匹配 0 行属合法业务态
+//   （例如用户本来就没标签、标签本来就没被分配）。主目标文档的删除一律不得用 allowZero。
+// 说明：这里同时要求「影响条数可读」，因为读不出条数就无法断言是否生效；该情形同样按失败处理。
+const assertCloudBaseDeleteResult = (result, collectionName, options = {}) => {
+  assertCloudBaseWriteResult(result, collectionName);
+
+  const entityLabel = options.entityLabel || collectionName;
+
+  // remove 的错误响应同样是 resolve 形态，且可能只有 code 没有 message（成功响应只有 deleted / requestId）。
+  if (result && typeof result === 'object' && !Array.isArray(result) && result.code) {
+    throw new Error(`${entityLabel}删除失败：${result.message || 'CloudBase 返回错误码'}（${result.code}）`);
+  }
+
+  const deletedCount = Number(result?.deleted);
+
+  if (!Number.isFinite(deletedCount)) {
+    throw new Error(`${entityLabel}删除失败：CloudBase 未返回影响条数（deleted），无法确认删除是否生效`);
+  }
+
+  if (deletedCount < 1 && options.allowZero !== true) {
+    throw new Error(`${entityLabel}删除失败：影响条数为 0（文档不存在或无权删除）`);
+  }
+
+  return result;
+};
+
+// ─── D-B2-14 正向落地：update 路径的「生效」判据 ───────────────────────────────
+// 本断言**仅**用于「本次 update 的载荷必然包含易变字段」的路径（`updated_at: new Date()` / `version + 1`
+// 之类，见 assertCloudBaseUpdateTookEffect 的调用点）。实测这类路径 updated 稳定返回 1，
+// 因此「updated < 1 且无 code/message」是「本次写入未生效」的强信号。
+// 但 updated 本身仍不是成功证据（三种成因同形），所以必须读回目标文档逐字段核对：
+//   与本次 payload 一致 ⇒ 幂等 no-op（值本来就相同），视为成功，不报错；
+//   不一致 ⇒ 抛错（文案不得声称「无权限」：无权限与无变化在返回值上不可区分）；
+//   读回失败 ⇒ 用独立文案抛错，绝不能因为读不回来就当成功。
+// 载荷无易变字段的 update 路径**不得**使用本断言：那种情况下同值写回同样返回 updated: 0，会产生假失败。
+
+// 读回比对用：时间统一按「时刻」比较（Date 实例与 CloudBase 回读的 ISO 字符串可能是不同形态）。
+const toComparableTime = (value) => {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.getTime() : null;
+  }
+
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// 键序无关的深比较：对象按 key 排序后递归比较，数组按位比较，null / undefined 视为等价的空值。
+const isSameComparableValue = (left, right) => {
+  if (left instanceof Date || right instanceof Date) {
+    const leftTime = toComparableTime(left);
+    const rightTime = toComparableTime(right);
+
+    if (leftTime !== null && rightTime !== null) {
+      return leftTime === rightTime;
+    }
+  }
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((item, index) => isSameComparableValue(item, right[index]));
+  }
+
+  if (left && right && typeof left === 'object' && typeof right === 'object') {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+
+    if (leftKeys.length !== rightKeys.length) {
+      return false;
+    }
+
+    return leftKeys.every((key, index) => key === rightKeys[index] && isSameComparableValue(left[key], right[key]));
+  }
+
+  const leftEmpty = left === null || left === undefined;
+  const rightEmpty = right === null || right === undefined;
+
+  if (leftEmpty || rightEmpty) {
+    return leftEmpty && rightEmpty;
+  }
+
+  return left === right;
+};
+
+// options.entityLabel：错误文案里的中文对象名（默认用集合名）。
+// options.documentId：读回核对的目标文档 ID（缺失时按「无法核实」抛错，不得静默放过）。
+// options.payload：本次 update 的载荷，用于与读回文档逐字段比对。
+const assertCloudBaseUpdateTookEffect = async (result, collectionName, options = {}) => {
+  assertCloudBaseWriteResult(result, collectionName);
+
+  const entityLabel = options.entityLabel || collectionName;
+
+  // 与删除断言同口径：只有 code 没有 message 的错误响应同样是错误（成功响应不带 code）。
+  if (result && typeof result === 'object' && !Array.isArray(result) && result.code) {
+    throw new Error(`${entityLabel}保存失败：${result.message || 'CloudBase 返回错误码'}（${result.code}）`);
+  }
+
+  const rawUpdated = result?.updated;
+  const updatedCount = Number(rawUpdated);
+
+  // 读不出影响条数就无法断言是否生效（对齐 assertCloudBaseDeleteResult 的处理）。
+  if (rawUpdated === undefined || rawUpdated === null || !Number.isFinite(updatedCount)) {
+    throw new Error(`${entityLabel}保存失败：CloudBase 未返回影响条数（updated），无法确认保存是否生效`);
+  }
+
+  if (updatedCount >= 1) {
+    return result;
+  }
+
+  // updated < 1 且无 code/message：值本来相同 / 无权写（静默）/ 文档不存在 三者同形 ⇒ 只能读回核对。
+  const documentId = options.documentId;
+
+  if (!documentId) {
+    throw new Error(`${entityLabel}保存失败：写入结果无法核实（缺少文档 ID，无法读回核对）`);
+  }
+
+  let readBackDocument = null;
+
+  try {
+    const readResult = await db.collection(collectionName).doc(documentId).get();
+
+    if (isMissingCollectionIssue(readResult)) {
+      throw new Error(buildMedCollectionMissingMessage(collectionName));
+    }
+
+    readBackDocument = getFirstDocument(readResult, collectionName);
+  } catch (readError) {
+    throw new Error(`${entityLabel}保存失败：写入结果无法核实（读回失败：${readError.message || '未知错误'}）`);
+  }
+
+  if (!readBackDocument) {
+    throw new Error(`${entityLabel}保存失败：写入结果无法核实（读回失败）`);
+  }
+
+  const payload = options.payload || {};
+  const payloadKeys = Object.keys(payload).filter((key) => payload[key] !== undefined);
+  const hasMismatch = payloadKeys.some((key) => !isSameComparableValue(payload[key], readBackDocument[key]));
+
+  if (hasMismatch) {
+    throw new Error(
+      `${entityLabel}保存失败：未能确认写入生效（未检测到任何变化）（requestId: ${result?.requestId || '未知'}）`
+    );
+  }
+
+  return result;
+};
+
+// 后台自动修复路径（品牌/分类/标签关系的 reconcile，均由读库自动触发、非用户点击）专用：
+// 断言照接（不再静默放过 deleted: 0），但断言失败不中断后续修复步骤，
+// 因此就地记录显式 error 日志 —— 取代原来的 `.catch(() => {})`（连日志都没有）。
+// 用户触发的删除 **不得** 走这里，必须让错误抛到调用方（R8：保存/删除失败必须可见）。
+const removeDocBestEffort = (collectionName, documentId, entityLabel) => (
+  db.collection(collectionName).doc(documentId).remove()
+    .then((result) => assertCloudBaseDeleteResult(result, collectionName, { entityLabel }))
+    .catch((error) => {
+      console.error(`${entityLabel}后台清理未生效（自动修复路径，不阻断后续步骤）:`, error.message);
+    })
+);
 
 const buildTempUrlMap = async (fileIds = []) => {
   const normalizedFileIds = [...new Set(fileIds.filter(Boolean))];
@@ -1703,7 +1944,8 @@ class DatabaseService {
           ));
 
           if (existingPrimaryMember) {
-            await db.collection(collections.partnerBrandMembers).doc(memberId).remove().catch(() => {});
+            // 后台自动修复：断言影响条数（deleted: 0 → 抛「不存在或无权删除」），失败只记日志不中断修复
+            await removeDocBestEffort(collections.partnerBrandMembers, memberId, '冗余品牌成员关联');
           } else {
             await db.collection(collections.partnerBrandMembers).doc(memberId).update({
               brand_id: primaryBrandId
@@ -1721,7 +1963,8 @@ class DatabaseService {
           }).catch(() => {});
         }
 
-        await db.collection(collections.partnerBrands).doc(redundantBrandId).remove().catch(() => {});
+        // 后台自动修复：断言影响条数（deleted: 0 → 抛「不存在或无权删除」），失败只记日志不中断修复
+        await removeDocBestEffort(collections.partnerBrands, redundantBrandId, '冗余品牌');
       }
     } catch (error) {
       console.error('Error deduping store_102 brands:', error);
@@ -2257,7 +2500,12 @@ class DatabaseService {
 
       if (productId) {
         await db.collection(collections.shopProducts).doc(productId).update(productPayload);
-        await db.collection(collections.shopProductSkus).where({ product_id: productId }).remove();
+        // 级联清理：SKU 全量重建（先删后插），该商品本来没有 SKU 时匹配 0 行属合法业务态，故 allowZero
+        assertCloudBaseDeleteResult(
+          await db.collection(collections.shopProductSkus).where({ product_id: productId }).remove(),
+          collections.shopProductSkus,
+          { entityLabel: '商品 SKU', allowZero: true }
+        );
       } else {
         const result = await db.collection(collections.shopProducts).add({
           ...productPayload,
@@ -4093,8 +4341,18 @@ class DatabaseService {
   static async deleteUser(userId) {
     try {
       await ensureAnonymousLogin();
-      await db.collection(collections.userTags).where({ user_id: userId }).remove();
-      await db.collection(collections.users).doc(userId).remove();
+      // 级联清理：用户本来就没打过标签时匹配 0 行属合法业务态，故 allowZero
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.userTags).where({ user_id: userId }).remove(),
+        collections.userTags,
+        { entityLabel: '用户标签关联', allowZero: true }
+      );
+      // 主目标文档：必须 deleted >= 1，deleted: 0 → 抛「文档不存在或无权删除」
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.users).doc(userId).remove(),
+        collections.users,
+        { entityLabel: '用户' }
+      );
     } catch (error) {
       console.error('Error deleting user:', error);
       throw error;
@@ -4256,7 +4514,8 @@ class DatabaseService {
           continue;
         }
 
-        await db.collection(collections.shopCategories).doc(getDocumentId(legacyCategory)).remove().catch(() => {});
+        // 后台自动修复：断言影响条数（deleted: 0 → 抛「不存在或无权删除」），失败只记日志不中断修复
+        await removeDocBestEffort(collections.shopCategories, getDocumentId(legacyCategory), '历史遗留商品分类');
       }
     } catch (error) {
       console.error('Error ensuring brand scope tags and shop categories:', error);
@@ -4339,7 +4598,8 @@ class DatabaseService {
           for (const removableLink of removableMemberLinks) {
             const linkId = getDocumentId(removableLink);
             if (linkId) {
-              await db.collection(collections.userTags).doc(linkId).remove().catch(() => {});
+              // 后台自动修复：断言影响条数（deleted: 0 → 抛「不存在或无权删除」），失败只记日志不中断修复
+              await removeDocBestEffort(collections.userTags, linkId, '历史品牌成员标签关联');
             }
           }
         }
@@ -4496,7 +4756,12 @@ class DatabaseService {
         await this.deleteTag(getDocumentId(tag));
       }
 
-      await db.collection(collections.tagCategories).doc(categoryId).remove();
+      // 主目标文档：必须 deleted >= 1，deleted: 0 → 抛「文档不存在或无权删除」
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.tagCategories).doc(categoryId).remove(),
+        collections.tagCategories,
+        { entityLabel: '标签分类' }
+      );
     } catch (error) {
       console.error('Error deleting category:', error);
       throw error;
@@ -4550,8 +4815,18 @@ class DatabaseService {
   static async deleteTag(tagId) {
     try {
       await ensureAnonymousLogin();
-      await db.collection(collections.userTags).where({ tag_id: tagId }).remove();
-      await db.collection(collections.tags).doc(tagId).remove();
+      // 级联清理：该标签本来就没分配给任何人时匹配 0 行属合法业务态，故 allowZero
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.userTags).where({ tag_id: tagId }).remove(),
+        collections.userTags,
+        { entityLabel: '标签分配关联', allowZero: true }
+      );
+      // 主目标文档：必须 deleted >= 1，deleted: 0 → 抛「文档不存在或无权删除」
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.tags).doc(tagId).remove(),
+        collections.tags,
+        { entityLabel: '标签' }
+      );
     } catch (error) {
       console.error('Error deleting tag:', error);
       throw error;
@@ -4612,7 +4887,12 @@ class DatabaseService {
   static async removeTagFromUser(userId, tagId) {
     try {
       await ensureAnonymousLogin();
-      await db.collection(collections.userTags).where({ user_id: userId, tag_id: tagId }).remove();
+      // 幂等终态：期望结果就是「该用户没有这条标签关联」，本来就没分配时匹配 0 行属合法业务态，故 allowZero
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.userTags).where({ user_id: userId, tag_id: tagId }).remove(),
+        collections.userTags,
+        { entityLabel: '用户标签关联', allowZero: true }
+      );
     } catch (error) {
       console.error('Error removing tag from user:', error);
       throw error;
@@ -4622,7 +4902,12 @@ class DatabaseService {
   static async updateUserTags(userId, tagIds) {
     try {
       await ensureAnonymousLogin();
-      await db.collection(collections.userTags).where({ user_id: userId }).remove();
+      // 级联清理：全量重设标签（先清空再逐条分配），用户本来就没标签时匹配 0 行属合法业务态，故 allowZero
+      assertCloudBaseDeleteResult(
+        await db.collection(collections.userTags).where({ user_id: userId }).remove(),
+        collections.userTags,
+        { entityLabel: '用户标签关联', allowZero: true }
+      );
 
       for (const tagId of tagIds) {
         await this.assignTagToUser(userId, tagId);
@@ -5023,11 +5308,18 @@ class DatabaseService {
 
       if (existingDocuments.length > 0) {
         const existingDocument = existingDocuments[0];
-        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        await assertCloudBaseUpdateTookEffect(
+          await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload),
+          collections.appSettings,
+          { documentId: getDocumentId(existingDocument), payload, entityLabel: '冥想音频库' }
+        );
         return normalizeMeditationAudioLibrary({ ...existingDocument, ...payload });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() }),
+        collections.appSettings
+      );
       return normalizeMeditationAudioLibrary({ ...payload, _id: createResult.id });
     } catch (error) {
       console.error('Error saving meditation audio library:', error);
@@ -5083,11 +5375,18 @@ class DatabaseService {
 
       if (existingDocuments.length > 0) {
         const existingDocument = existingDocuments[0];
-        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        await assertCloudBaseUpdateTookEffect(
+          await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload),
+          collections.appSettings,
+          { documentId: getDocumentId(existingDocument), payload, entityLabel: '冥想编排设置' }
+        );
         return normalizeMeditationCompositionSettings({ ...existingDocument, ...payload });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() }),
+        collections.appSettings
+      );
       return normalizeMeditationCompositionSettings({ ...payload, _id: createResult.id });
     } catch (error) {
       console.error('Error saving meditation composition settings:', error);
@@ -5143,11 +5442,18 @@ class DatabaseService {
 
       if (existingDocuments.length > 0) {
         const existingDocument = existingDocuments[0];
-        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        await assertCloudBaseUpdateTookEffect(
+          await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload),
+          collections.appSettings,
+          { documentId: getDocumentId(existingDocument), payload, entityLabel: '冥想日历' }
+        );
         return normalizeMeditationCalendar({ ...existingDocument, ...payload });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() }),
+        collections.appSettings
+      );
       return normalizeMeditationCalendar({ ...payload, _id: createResult.id });
     } catch (error) {
       console.error('Error saving meditation calendar:', error);
@@ -5203,11 +5509,18 @@ class DatabaseService {
 
       if (existingDocuments.length > 0) {
         const existingDocument = existingDocuments[0];
-        await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
+        await assertCloudBaseUpdateTookEffect(
+          await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload),
+          collections.appSettings,
+          { documentId: getDocumentId(existingDocument), payload, entityLabel: '冥想文库' }
+        );
         return normalizeMeditationLibrary({ ...existingDocument, ...payload });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() }),
+        collections.appSettings
+      );
       return normalizeMeditationLibrary({ ...payload, _id: createResult.id });
     } catch (error) {
       console.error('Error saving meditation library:', error);
@@ -5251,7 +5564,10 @@ class DatabaseService {
         created_by: data?.created_by || '',
         ...(data || {})
       };
-      const result = await db.collection('med_paragraphs').add(payload);
+      const result = assertCloudBaseCreateResult(
+        await db.collection(MED_PARAGRAPHS_COLLECTION).add(payload),
+        MED_PARAGRAPHS_COLLECTION
+      );
       return { ...payload, _id: result.id };
     } catch (error) {
       console.error('Error creating med paragraph:', error);
@@ -5266,7 +5582,11 @@ class DatabaseService {
         ...data,
         updated_at: new Date().toISOString()
       };
-      await db.collection('med_paragraphs').doc(id).update(payload);
+      await assertCloudBaseUpdateTookEffect(
+        await db.collection(MED_PARAGRAPHS_COLLECTION).doc(id).update(payload),
+        MED_PARAGRAPHS_COLLECTION,
+        { documentId: id, payload, entityLabel: '段落' }
+      );
       return { _id: id, ...payload };
     } catch (error) {
       console.error('Error updating med paragraph:', error);
@@ -5277,7 +5597,12 @@ class DatabaseService {
   static async deleteMedParagraph(id) {
     try {
       await ensureAnonymousLogin();
-      await db.collection('med_paragraphs').doc(id).remove();
+      // 主目标文档：必须 deleted >= 1，deleted: 0 → 抛「文档不存在或无权删除」（D-B2-12）
+      assertCloudBaseDeleteResult(
+        await db.collection(MED_PARAGRAPHS_COLLECTION).doc(id).remove(),
+        MED_PARAGRAPHS_COLLECTION,
+        { entityLabel: '段落' }
+      );
       return { id };
     } catch (error) {
       console.error('Error deleting med paragraph:', error);
@@ -5285,10 +5610,305 @@ class DatabaseService {
     }
   }
 
+  // ─── med_* 级联写（数据层驱动，不依赖前端内存态）─────────────────────────────
+  // 规范「段落改动级联」：Paragraph 被修改后，引用它的 Section-Raw 一律标 stale + 提示重录。
+  // 这类判定必须「查库 → 写库」，不能依赖只在访问过对应子 Tab 后才加载的前端 state
+  // （否则新会话直接改段落时级联完全失效）。
+
+  static async getMedParagraphsByIds(paragraphIds = []) {
+    const uniqueIds = [...new Set((Array.isArray(paragraphIds) ? paragraphIds : []).filter(Boolean))];
+
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    await ensureAnonymousLogin();
+    const result = await db
+      .collection(MED_PARAGRAPHS_COLLECTION)
+      .where({ _id: db.command.in(uniqueIds) })
+      .limit(uniqueIds.length)
+      .get();
+
+    if (isMissingCollectionIssue(result)) {
+      return [];
+    }
+
+    return getDocuments(result, MED_PARAGRAPHS_COLLECTION) || [];
+  }
+
+  // 按 paragraph_ids 取文本（顺序与入参一致；缺失的 Paragraph 视为空文本，与历史口径一致）。
+  static async resolveMedParagraphTextsByIds(paragraphIds = []) {
+    const ids = Array.isArray(paragraphIds) ? paragraphIds : [];
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const paragraphs = await this.getMedParagraphsByIds(ids);
+    const textByParagraphId = new Map(
+      paragraphs.map((paragraph) => [getDocumentId(paragraph), String(paragraph?.text || '')])
+    );
+
+    return ids.map((paragraphId) => textByParagraphId.get(paragraphId) || '');
+  }
+
+  // 引用该 Paragraph 的 Section-Raw（CloudBase 数组包含查询；本地再过滤一次确保不误伤）。
+  static async getMedSectionRawsByParagraphId(paragraphId) {
+    if (!paragraphId) {
+      return [];
+    }
+
+    await ensureAnonymousLogin();
+    const paragraphQuery = db.command?.all
+      ? { paragraph_ids: db.command.all([paragraphId]) }
+      : { paragraph_ids: paragraphId };
+    const result = await db
+      .collection(MED_SECTION_RAWS_COLLECTION)
+      .where(paragraphQuery)
+      .limit(1000)
+      .get();
+
+    if (isMissingCollectionIssue(result)) {
+      return [];
+    }
+
+    return (getDocuments(result, MED_SECTION_RAWS_COLLECTION) || [])
+      .filter((raw) => (Array.isArray(raw.paragraph_ids) ? raw.paragraph_ids : []).includes(paragraphId));
+  }
+
+  static async getMedSectionRawById(id) {
+    if (!id) {
+      return null;
+    }
+
+    await ensureAnonymousLogin();
+    const result = await db.collection(MED_SECTION_RAWS_COLLECTION).doc(id).get();
+
+    if (isMissingCollectionIssue(result)) {
+      return null;
+    }
+
+    return getFirstDocument(result, MED_SECTION_RAWS_COLLECTION);
+  }
+
+  // 录音/上传落库需要写入的文本快照与字数（查库计算，不依赖前端段落列表）。
+  static async getMedSectionRawSnapshotById(sectionRawId) {
+    if (!sectionRawId) {
+      return { paragraph_ids: [], text_snapshot: '', char_count: 0 };
+    }
+
+    const raw = await this.getMedSectionRawById(sectionRawId);
+    const paragraphIds = Array.isArray(raw?.paragraph_ids) ? raw.paragraph_ids : [];
+    const paragraphTexts = await this.resolveMedParagraphTextsByIds(paragraphIds);
+
+    return {
+      paragraph_ids: paragraphIds,
+      text_snapshot: buildMeditationSectionRawTextSnapshot(paragraphTexts),
+      char_count: countMeditationSectionChars(paragraphTexts)
+    };
+  }
+
+  // 候选音频查询：同一条 Section-Raw（或纯音频段的 section_type 容器）下的全部候选。
+  static async getMedSectionAudiosByContainer({ sectionRawId = '', sectionType = '' } = {}) {
+    await ensureAnonymousLogin();
+    const containerQuery = sectionRawId
+      ? { section_raw_id: sectionRawId }
+      : { section_type: sectionType };
+    const result = await db
+      .collection(MEDITATION_SECTION_AUDIO_COLLECTION)
+      .where(containerQuery)
+      .limit(500)
+      .get();
+
+    if (isMissingCollectionIssue(result)) {
+      return [];
+    }
+
+    const documents = getDocuments(result, MEDITATION_SECTION_AUDIO_COLLECTION) || [];
+
+    return sectionRawId
+      ? documents.filter((audio) => (audio.section_raw_id || '') === sectionRawId)
+      : documents.filter((audio) => !audio.section_raw_id);
+  }
+
+  // P1-A + P2-A：段落保存成功后直接查库级联——标 stale* 并重算 current_char_count / word_count_status，
+  // 同时把被引用的候选音频一并置 stale（规范：stale 不阻断音频可用）。
+  static async cascadeMedSectionRawsStaleByParagraph(paragraphId, options = {}) {
+    if (!paragraphId) {
+      return { sectionRawIds: [], audioCount: 0 };
+    }
+
+    const staleAt = new Date().toISOString();
+    const staleReason = options.reason || '引用的段落文本已修改，建议重录';
+    const raws = await this.getMedSectionRawsByParagraphId(paragraphId);
+    const sectionRawIds = raws.map((raw) => getDocumentId(raw)).filter(Boolean);
+
+    if (sectionRawIds.length === 0) {
+      return { sectionRawIds: [], audioCount: 0 };
+    }
+
+    let audioCount = 0;
+
+    for (const raw of raws) {
+      const docId = getDocumentId(raw);
+      const paragraphIds = Array.isArray(raw.paragraph_ids) ? raw.paragraph_ids : [];
+      const paragraphTexts = await this.resolveMedParagraphTextsByIds(paragraphIds);
+      const currentCharCount = countMeditationSectionChars(paragraphTexts);
+      const staleParagraphIds = [
+        ...new Set([
+          ...(Array.isArray(raw.stale_paragraph_ids) ? raw.stale_paragraph_ids : []),
+          paragraphId
+        ])
+      ];
+
+      await this.updateMedSectionRaw(docId, {
+        current_char_count: currentCharCount,
+        word_count_status: resolveMeditationWordCountStatus(currentCharCount, raw.target_char_count),
+        stale: true,
+        stale_reason: staleReason,
+        stale_paragraph_ids: staleParagraphIds,
+        stale_at: staleAt
+      });
+
+      audioCount += await this.markMedSectionAudiosStaleByRawId(docId);
+    }
+
+    return { sectionRawIds, audioCount };
+  }
+
+  // 标记某条 Section-Raw 下的全部候选音频为 stale（返回实际更新条数）。
+  static async markMedSectionAudiosStaleByRawId(sectionRawId) {
+    if (!sectionRawId) {
+      return 0;
+    }
+
+    const audios = await this.getMedSectionAudiosByContainer({ sectionRawId });
+    let updatedCount = 0;
+
+    for (const audio of audios) {
+      if (audio.stale) {
+        continue;
+      }
+
+      await this.updateMedSectionAudio(getDocumentId(audio), { stale: true });
+      updatedCount += 1;
+    }
+
+    return updatedCount;
+  }
+
+  // 追加段落（P2-A）：读库取当前段落序列 → 重算字数 → 已有录音时标 stale（不阻断音频可用）。
+  static async appendMedSectionRawParagraphs(sectionRawId, appendParagraphIds = []) {
+    if (!sectionRawId) {
+      throw new Error('缺少 Section-Raw ID，无法追加段落');
+    }
+
+    const appendIds = [...new Set((Array.isArray(appendParagraphIds) ? appendParagraphIds : []).filter(Boolean))];
+
+    if (appendIds.length === 0) {
+      return null;
+    }
+
+    const raw = await this.getMedSectionRawById(sectionRawId);
+
+    if (!raw) {
+      throw new Error('目标 Section-Raw 不存在或已被删除');
+    }
+
+    const currentParagraphIds = Array.isArray(raw.paragraph_ids) ? raw.paragraph_ids : [];
+    const newlyAddedIds = appendIds.filter((id) => !currentParagraphIds.includes(id));
+    const nextParagraphIds = [...currentParagraphIds, ...newlyAddedIds];
+    const paragraphTexts = await this.resolveMedParagraphTextsByIds(nextParagraphIds);
+    const currentCharCount = countMeditationSectionChars(paragraphTexts);
+    const audios = await this.getMedSectionAudiosByContainer({ sectionRawId });
+    const payload = {
+      paragraph_ids: nextParagraphIds,
+      current_char_count: currentCharCount,
+      word_count_status: resolveMeditationWordCountStatus(currentCharCount, raw.target_char_count)
+    };
+
+    if (audios.length > 0) {
+      payload.stale = true;
+      payload.stale_reason = '段落已变更，建议重录';
+      payload.stale_paragraph_ids = newlyAddedIds;
+      payload.stale_at = new Date().toISOString();
+
+      for (const audio of audios) {
+        if (!audio.stale) {
+          await this.updateMedSectionAudio(getDocumentId(audio), { stale: true });
+        }
+      }
+    }
+
+    return this.updateMedSectionRaw(getDocumentId(raw), payload);
+  }
+
+  // 录音/上传落库后回写 Section-Raw（数据层）：追加候选引用 + 刷新文本快照/最近录制时间并清 stale。
+  // 返回 null = 业务上没有目标（无 id / 目标文档已不存在）；集合缺失等环境异常直接抛错。
+  static async attachMedSectionAudioToRaw(sectionRawId, sectionAudioId) {
+    if (!sectionRawId || !sectionAudioId) {
+      return null;
+    }
+
+    const raw = await this.getMedSectionRawById(sectionRawId);
+
+    if (!raw) {
+      await assertMedSectionRawsCollectionExists();
+      return null;
+    }
+
+    const currentCandidates = Array.isArray(raw.audio_candidates) ? raw.audio_candidates : [];
+    const nextCandidates = currentCandidates.includes(sectionAudioId)
+      ? currentCandidates
+      : [...currentCandidates, sectionAudioId];
+    const paragraphIds = Array.isArray(raw.paragraph_ids) ? raw.paragraph_ids : [];
+    const paragraphTexts = await this.resolveMedParagraphTextsByIds(paragraphIds);
+    const currentCharCount = countMeditationSectionChars(paragraphTexts);
+
+    return this.updateMedSectionRaw(getDocumentId(raw), {
+      audio_id: sectionAudioId,
+      audio_candidates: nextCandidates,
+      text_snapshot: buildMeditationSectionRawTextSnapshot(paragraphTexts),
+      current_char_count: currentCharCount,
+      word_count_status: resolveMeditationWordCountStatus(currentCharCount, raw.target_char_count),
+      recorded_at: new Date().toISOString(),
+      stale: false,
+      stale_reason: '',
+      stale_paragraph_ids: [],
+      stale_at: ''
+    });
+  }
+
+  // 删除候选音频后回写 Section-Raw（数据层）：移除候选引用，audio_id 落到剩余最后一条。
+  // 返回 null = 业务上没有目标（无 id / 目标文档已不存在）；集合缺失等环境异常直接抛错。
+  static async detachMedSectionAudioFromRaw(sectionRawId, sectionAudioId) {
+    if (!sectionRawId || !sectionAudioId) {
+      return null;
+    }
+
+    const raw = await this.getMedSectionRawById(sectionRawId);
+
+    if (!raw) {
+      await assertMedSectionRawsCollectionExists();
+      return null;
+    }
+
+    const nextCandidates = (Array.isArray(raw.audio_candidates) ? raw.audio_candidates : [])
+      .filter((candidateId) => candidateId !== sectionAudioId);
+
+    return this.updateMedSectionRaw(getDocumentId(raw), {
+      audio_candidates: nextCandidates,
+      audio_id: nextCandidates[nextCandidates.length - 1] || ''
+    });
+  }
+
   // Basic support for med_section_raws (P0 stub per meditation.admin.spec.md)
   // Fields: _id, section_type, paragraph_ids (array ordered), target_char_count, current_char_count,
-  // word_count_status ('ok'|'slightly_over'|'over'|'slightly_under'|'under' or stub '计算中'),
-  // audio_id (optional), created_at, updated_at, created_by
+  // word_count_status ('ok'|'slightly_over'|'over'|'slightly_under'|'under'),
+  // audio_id (兼容保留 = 最近一次关联的音频), audio_candidates (array<string>, 1..N 候选池),
+  // stale / stale_reason / stale_paragraph_ids / stale_at, text_snapshot, record_granularity,
+  // recorded_at, created_at, updated_at, created_by
+  // 口径：音频以 med_section_audios 为唯一来源，本集合不写 audio_url / file_id。
   static async getMedSectionRaws() {
     try {
       await ensureAnonymousLogin();
@@ -5311,18 +5931,29 @@ class DatabaseService {
       await ensureAnonymousLogin();
       const now = new Date().toISOString();
       const payload = {
-        section_type: data?.section_type || 'sec-stub',
+        section_type: data?.section_type || '',
         paragraph_ids: Array.isArray(data?.paragraph_ids) ? data.paragraph_ids : [],
         target_char_count: typeof data?.target_char_count === 'number' ? data.target_char_count : 0,
         current_char_count: typeof data?.current_char_count === 'number' ? data.current_char_count : 0,
-        word_count_status: data?.word_count_status || '计算中',
-        audio_id: data?.audio_id || null,
+        word_count_status: data?.word_count_status || '',
+        audio_id: data?.audio_id || '',
+        audio_candidates: Array.isArray(data?.audio_candidates) ? data.audio_candidates : [],
+        stale: Boolean(data?.stale),
+        stale_reason: data?.stale_reason || '',
+        stale_paragraph_ids: Array.isArray(data?.stale_paragraph_ids) ? data.stale_paragraph_ids : [],
+        stale_at: data?.stale_at || '',
+        text_snapshot: data?.text_snapshot || '',
+        record_granularity: data?.record_granularity || 'paragraph',
+        recorded_at: data?.recorded_at || '',
         created_at: now,
         updated_at: now,
-        created_by: data?.created_by || 'stub-admin',
+        created_by: data?.created_by || '',
         ...(data || {})
       };
-      const result = await db.collection('med_section_raws').add(payload);
+      const result = assertCloudBaseCreateResult(
+        await db.collection(MED_SECTION_RAWS_COLLECTION).add(payload),
+        MED_SECTION_RAWS_COLLECTION
+      );
       return { ...payload, _id: result.id };
     } catch (error) {
       console.error('Error creating med section raw:', error);
@@ -5335,10 +5966,174 @@ class DatabaseService {
       await ensureAnonymousLogin();
       const now = new Date().toISOString();
       const payload = { ...data, updated_at: now };
-      await db.collection('med_section_raws').doc(id).update(payload);
+      await assertCloudBaseUpdateTookEffect(
+        await db.collection(MED_SECTION_RAWS_COLLECTION).doc(id).update(payload),
+        MED_SECTION_RAWS_COLLECTION,
+        { documentId: id, payload, entityLabel: 'Section-Raw' }
+      );
       return { _id: id, ...payload };
     } catch (error) {
       console.error('Error updating med section raw:', error);
+      throw error;
+    }
+  }
+
+  // med_section_audios（音频唯一口径）：1 条 Section-Raw 对应 1..N 条候选音频。
+  // 字段严格对齐 spec；双格式（D3）：file_id / audio_url / mime_type 为 Opus 主体，
+  // fallback_file_id / fallback_audio_url / fallback_mime_type 为 mp3 兜底，transcoded_formats
+  // 记录已完成的交付格式（['opus','mp3'] 齐备；只有 ['opus'] 视为未完成交付），
+  // original_* 为原始录制文件，label 为纯音频段显示名。
+  static async getMedSectionAudios() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection(MEDITATION_SECTION_AUDIO_COLLECTION).limit(2000).get();
+      if (isMissingCollectionIssue(result)) {
+        return [];
+      }
+      return (getDocuments(result) || []).map((doc) => normalizeMedSectionAudio(doc));
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return [];
+      }
+      console.error('Error fetching med_section_audios:', error);
+      throw error;
+    }
+  }
+
+  static async createMedSectionAudio(data) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const payload = {
+        ...toMedSectionAudioPayload(data),
+        transcode_status: data?.transcode_status || MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.idle,
+        created_at: now,
+        updated_at: now
+      };
+      const result = assertCloudBaseCreateResult(
+        await db.collection(MEDITATION_SECTION_AUDIO_COLLECTION).add(payload),
+        MEDITATION_SECTION_AUDIO_COLLECTION
+      );
+      return normalizeMedSectionAudio({ ...payload, _id: result.id });
+    } catch (error) {
+      console.error('Error creating med section audio:', error);
+      throw error;
+    }
+  }
+
+  // 更新点同时是转码执行器（第二批）的回写点：完成某一格式后需一并写入该格式的 URL 字段与
+  // transcoded_formats（用 shared-utils 的 mergeMeditationSectionAudioTranscodedFormats 合并现有值）。
+  static async updateMedSectionAudio(id, data) {
+    try {
+      await ensureAnonymousLogin();
+      const payload = { ...data, updated_at: new Date().toISOString() };
+      await assertCloudBaseUpdateTookEffect(
+        await db.collection(MEDITATION_SECTION_AUDIO_COLLECTION).doc(id).update(payload),
+        MEDITATION_SECTION_AUDIO_COLLECTION,
+        { documentId: id, payload, entityLabel: '候选音频' }
+      );
+      return normalizeMedSectionAudio({ _id: id, ...payload });
+    } catch (error) {
+      console.error('Error updating med section audio:', error);
+      throw error;
+    }
+  }
+
+  static async deleteMedSectionAudio(id) {
+    try {
+      await ensureAnonymousLogin();
+      // 主目标文档：必须 deleted >= 1，deleted: 0 → 抛「文档不存在或无权删除」（D-B2-12）
+      assertCloudBaseDeleteResult(
+        await db.collection(MEDITATION_SECTION_AUDIO_COLLECTION).doc(id).remove(),
+        MEDITATION_SECTION_AUDIO_COLLECTION,
+        { entityLabel: '候选音频' }
+      );
+      return { id };
+    } catch (error) {
+      console.error('Error deleting med section audio:', error);
+      throw error;
+    }
+  }
+
+  // med_tracks（Track 配置唯一落点，取代 compositionSettings.segments）
+  // 章节顺序、章节数量、章内 Section 序列由固定模板决定，规范化时一律不接受数据覆盖。
+  static async getMedTracks() {
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection(MEDITATION_TRACK_COLLECTION).limit(100).get();
+      if (isMissingCollectionIssue(result)) {
+        return [];
+      }
+      return (getDocuments(result) || [])
+        .map((doc) => normalizeMedTrack(doc))
+        .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
+    } catch (error) {
+      if (isMissingCollectionIssue(error)) {
+        return [];
+      }
+      console.error('Error fetching med_tracks:', error);
+      throw error;
+    }
+  }
+
+  static async createMedTrack(data) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const payload = {
+        ...toMedTrackPayload(data),
+        // 新建 Track 版本从 1 开始（version 递增只在保存路径发生，见 updateMedTrack）。
+        version: 1,
+        created_at: now,
+        updated_at: now,
+        created_by: data?.created_by || ''
+      };
+      const result = assertCloudBaseCreateResult(
+        await db.collection(MEDITATION_TRACK_COLLECTION).add(payload),
+        MEDITATION_TRACK_COLLECTION
+      );
+      return normalizeMedTrack({ ...payload, _id: result.id });
+    } catch (error) {
+      console.error('Error creating med track:', error);
+      throw error;
+    }
+  }
+
+  static async updateMedTrack(id, data) {
+    try {
+      await ensureAnonymousLogin();
+      const now = new Date().toISOString();
+      const trackPayload = toMedTrackPayload(data);
+      const payload = {
+        ...trackPayload,
+        // 版本推进：每次保存 version +1（D7 可复现追溯以版本号为准）。
+        version: trackPayload.version + 1,
+        updated_at: now
+      };
+      await assertCloudBaseUpdateTookEffect(
+        await db.collection(MEDITATION_TRACK_COLLECTION).doc(id).update(payload),
+        MEDITATION_TRACK_COLLECTION,
+        { documentId: id, payload, entityLabel: '冥想轨道' }
+      );
+      return normalizeMedTrack({ _id: id, ...payload });
+    } catch (error) {
+      console.error('Error updating med track:', error);
+      throw error;
+    }
+  }
+
+  static async deleteMedTrack(id) {
+    try {
+      await ensureAnonymousLogin();
+      // 主目标文档：必须 deleted >= 1，deleted: 0 → 抛「文档不存在或无权删除」（D-B2-12）
+      assertCloudBaseDeleteResult(
+        await db.collection(MEDITATION_TRACK_COLLECTION).doc(id).remove(),
+        MEDITATION_TRACK_COLLECTION,
+        { entityLabel: '冥想轨道' }
+      );
+      return { id };
+    } catch (error) {
+      console.error('Error deleting med track:', error);
       throw error;
     }
   }

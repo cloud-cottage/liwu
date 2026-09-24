@@ -41,8 +41,29 @@ const esmSources = [
   {
     source: path.join(repoRoot, 'packages/shared-utils/meditation-reward-settings.js'),
     outfile: path.join(targetRoot, 'meditation-reward-settings.js')
+  },
+  {
+    source: path.join(repoRoot, 'packages/shared-utils/meditation-read-client.js'),
+    outfile: path.join(targetRoot, 'meditation-read-client.js')
+  },
+  {
+    source: path.join(repoRoot, 'packages/shared-utils/meditation-track-playback-plan.js'),
+    outfile: path.join(targetRoot, 'meditation-track-playback-plan.js')
   }
 ]
+
+// 本脚本生成的文件（＝需要清理后再重写的对象）。
+const managedOutputs = [
+  path.join(targetRoot, 'auth.js'),
+  ...esmSources.map(({ outfile }) => outfile)
+]
+
+// ⚠ 不得 `rm -rf` 整个 targetRoot：`utils/shared` 里还有 6 个**手工维护**的包内工具
+// （cloudbase-document-helpers / cloudbase-user-identity / cloudbase-wealth-snapshot /
+//  users-split-fields / cloudbase-user-profile / user-bundle；后两个含转换器不覆盖的
+//  import → require 手工改写），而且它们被 `scripts/build-miniprogram.mjs` 的
+//  requiredSyncedUtils 门禁要求存在。历史上这里整目录删除 ⇒ 同步后 build 必报
+//  「Missing synced util」（已实测复现），故只清理本脚本自己生成的文件。
 
 const convertStandaloneEsmToCjs = (source) => {
   const exportedNames = []
@@ -62,6 +83,14 @@ const convertStandaloneEsmToCjs = (source) => {
         return line.replace(/^export function/, 'function')
       }
 
+      // `export class X extends Y {` / `export class X {`：收类名、去 `export`，
+      // 与上两条同构（否则 `export` 残留 ⇒ 小程序端 `node --check` 直接 SyntaxError）。
+      const classMatch = line.match(/^export class (\w+)/)
+      if (classMatch) {
+        exportedNames.push(classMatch[1])
+        return line.replace(/^export class/, 'class')
+      }
+
       return line
     })
     .join('\n')
@@ -71,8 +100,8 @@ const convertStandaloneEsmToCjs = (source) => {
 
 const main = async () => {
   await Promise.all(legacyRoots.map((legacyRoot) => rm(legacyRoot, { recursive: true, force: true })))
-  await rm(targetRoot, { recursive: true, force: true })
   await mkdir(targetRoot, { recursive: true })
+  await Promise.all(managedOutputs.map((outfile) => rm(outfile, { force: true })))
 
   await copyFile(
     path.join(repoRoot, 'packages/auth/src/miniprogram-adapter.js'),

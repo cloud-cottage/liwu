@@ -32,3 +32,14 @@ audit-full.json
 audit-report.json
 resolve-duplicates-result-*.json
 *.export.json
+
+# 环境变量文件（可能含密钥，禁止入库；模式文件除外）
+.env
+.env.*
+apps/*/.env
+apps/*/.env.*
+!*.env.example
+
+# 敏感本地文件（微信开发者工具私有配置；此前仅靠「恰好未被 add」，此处补闸门）
+project.private.config.json
+apps/*/project.private.config.json

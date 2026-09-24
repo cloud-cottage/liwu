@@ -23,9 +23,18 @@ const JOB_STATUS = Object.freeze({
 const TRANSCODE_PROFILE = Object.freeze({
   default: 'default',
   nature: 'nature',
-  ttsSimple: 'tts_simple'
+  ttsSimple: 'tts_simple',
+  // D-B2-9 队列分区：新链路（冥想段落音频，云函数 meditation-transcoder）专用 profile。
+  // 字面值与排队方一致（MeditationPage.jsx `transcode_profile: 'section_audio'`）；本 worker
+  // **必须跳过**带该 profile 的 job，否则会把新链路的 job 吃掉（见下方 fetchQueuedJobs 守卫）。
+  sectionAudio: 'section_audio'
 });
-const DEFAULT_FFMPEG_AUDIO_ARGS = ['-c:a', 'libopus', '-b:a', '48k', '-vbr', 'on', '-compression_level', '10', '-application', 'audio'];
+// Kevin（用户）2026-09-24 裁定：Opus 主体改 **48k 立体声硬 CBR** ⇒ `-b:a 48k -vbr off -ac 2 -ar 48000`。
+// `-vbr off` 必须保留（48k VBR 实测漂到 ≈73kbps，预算不可控）；不再下混单声道。
+// 旧值 `-b:a 48k -vbr on -compression_level 10 -application audio` 已废弃（VBR 下 `-b:a` 不可控）。
+// 输出容器由扩展名决定：本 worker 现有 `<tmp>/output.opus`（第 295 行）与 `.ogg` 同为 Ogg 封装，未改。
+// 同步责任：与 cloudfunctions/meditation-transcoder/lib/transcode-command.js 同口径，两处必须同步。
+const DEFAULT_FFMPEG_AUDIO_ARGS = ['-c:a', 'libopus', '-b:a', '48k', '-vbr', 'off', '-ac', '2', '-ar', '48000'];
 
 const parseArgs = (argv = process.argv.slice(2)) => ({
   envId: (() => {
@@ -258,7 +267,10 @@ const fetchQueuedJobs = async ({ db, limit = 1 }) => {
     .limit(limit)
     .get();
 
-  return result?.data || [];
+  // D-B2-9 队列分区守卫（本 worker 侧唯一改动，其余逻辑/字段口径一律不动）：
+  // section_audio job 归云函数 meditation-transcoder 消费，本 worker 一律跳过。
+  // ⚠ 上线纪律：启用新执行器前先停掉 `npm run audio:transcode-worker:loop`，且同一时刻只允许一侧消费。
+  return (result?.data || []).filter((job) => String(job?.transcode_profile || '').trim() !== TRANSCODE_PROFILE.sectionAudio);
 };
 
 const processJob = async ({ app, db, envId, job }) => {

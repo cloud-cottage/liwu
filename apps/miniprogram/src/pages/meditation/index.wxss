@@ -98,6 +98,88 @@
   margin-top: 32rpx;
 }
 
+.meditation-timer-hint {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  color: #6b7280;
+}
+
+/* 错误态（五类错误码各自文案 ＋ requestId ＋ 重试）：可见、不静默、不回退老音频库 */
+.meditation-error-card {
+  width: 100%;
+  margin-top: 24rpx;
+  padding: 20rpx 22rpx;
+  border-radius: 18rpx;
+  border: 2rpx solid rgba(180, 83, 9, 0.24);
+  background: rgba(254, 243, 199, 0.72);
+  text-align: left;
+}
+
+.meditation-error-title {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.meditation-error-text {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #7c2d12;
+}
+
+.meditation-error-meta {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #92400e;
+  opacity: 0.86;
+}
+
+.meditation-notice {
+  width: 100%;
+  margin-top: 24rpx;
+  padding: 20rpx 22rpx;
+  border-radius: 18rpx;
+  border: 2rpx solid rgba(107, 114, 128, 0.22);
+  background: rgba(243, 244, 246, 0.8);
+  text-align: left;
+}
+
+.meditation-notice-text {
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #4b5563;
+}
+
+.meditation-retry-button {
+  margin-top: 14rpx;
+  width: 100%;
+}
+
+/* 段级 warning（逐字文案 ＋ 汇总计数）：跳段可见、其余段照常、整场不失败 */
+.meditation-warning-card {
+  width: 100%;
+  margin-top: 24rpx;
+  padding: 18rpx 22rpx;
+  border-radius: 18rpx;
+  border: 2rpx solid rgba(143, 165, 138, 0.28);
+  background: rgba(240, 247, 236, 0.82);
+  text-align: left;
+}
+
+.meditation-warning-summary {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #3f6212;
+}
+
+.meditation-warning-line {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: #4d7c0f;
+}
+
 .meditation-actions {
   width: 100%;
   display: grid;

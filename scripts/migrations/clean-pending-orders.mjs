@@ -9,7 +9,7 @@
  */
 
 import cloudbase from '@cloudbase/node-sdk';
-import { parseFlag, hasFlag } from './lib/cloudbase-nosql.mjs';
+import { hasFlag } from './lib/cloudbase-nosql.mjs';
 
 const ENV = 'liwu-d8gek6jjdab1d087c';
 

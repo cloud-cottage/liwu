@@ -51,15 +51,18 @@ const readFirstPopulatedEnv = (envSource, keys) => {
 };
 
 const getTencentSecrets = (envSource = process.env) => {
+  // 服务端密钥一律走非 VITE_ 前缀变量：Vite 会无条件把 .env 里所有 VITE_* 变量（连同值）内联进客户端产物。
   const secretId = readFirstPopulatedEnv(envSource, [
     'TENCENT_SECRET_ID',
     'TENCENTCLOUD_SECRET_ID',
+    // TODO(security): 待 .env 改为 TENCENT_SECRET_ID/KEY（去掉 VITE_ 前缀）后，删除本回退
     'VITE_TENCENT_SECRET_ID',
     'VITE_TENCENTCLOUD_SECRET_ID'
   ]);
   const secretKey = readFirstPopulatedEnv(envSource, [
     'TENCENT_SECRET_KEY',
     'TENCENTCLOUD_SECRET_KEY',
+    // TODO(security): 待 .env 改为 TENCENT_SECRET_ID/KEY（去掉 VITE_ 前缀）后，删除本回退
     'VITE_TENCENT_SECRET_KEY',
     'VITE_TENCENTCLOUD_SECRET_KEY'
   ]);

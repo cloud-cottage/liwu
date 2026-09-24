@@ -4486,15 +4486,19 @@ const AdminDashboardPanel = ({
     meditationLibrary,
     meditationParagraphs,
     meditationSectionRaws,
+    medTracks,
     savingMeditationAudioLibrary,
     savingMeditationCompositionSettings,
     savingMeditationCalendar,
     savingMeditationLibrary,
+    savingMedTracks,
     updateMeditationAudioLibrary,
     queueMeditationAudioTranscodeJob,
     updateMeditationCompositionSettings,
     updateMeditationCalendar,
     updateMeditationLibrary,
+    loadMedTracks,
+    saveMedTrack,
     loadAdminSection,
     refresh
   } = useDatabase();
@@ -5973,16 +5977,20 @@ const AdminDashboardPanel = ({
             meditationLibrary={meditationLibrary}
             meditationParagraphs={meditationParagraphs}
             meditationSectionRaws={meditationSectionRaws}
+            medTracks={medTracks}
             aiSettings={aiSettings}
             savingMeditationAudioLibrary={savingMeditationAudioLibrary}
             savingMeditationCompositionSettings={savingMeditationCompositionSettings}
             savingMeditationCalendar={savingMeditationCalendar}
             savingMeditationLibrary={savingMeditationLibrary}
+            savingMedTracks={savingMedTracks}
             updateMeditationAudioLibrary={updateMeditationAudioLibrary}
             queueMeditationAudioTranscodeJob={queueMeditationAudioTranscodeJob}
             updateMeditationCompositionSettings={updateMeditationCompositionSettings}
             updateMeditationCalendar={updateMeditationCalendar}
             updateMeditationLibrary={updateMeditationLibrary}
+            loadMedTracks={loadMedTracks}
+            saveMedTrack={saveMedTrack}
             refreshMeditationSection={() => loadAdminSection('meditation', { force: true })}
             settingsError={settingsError}
           />

@@ -15,8 +15,6 @@ if (!key) { console.error('需要 TARGET_ACCESS_KEY'); process.exit(1); }
 const app = cloudbase.init({ env: ENV, accessKey: key });
 const db = app.database();
 
-const now = () => new Date().toISOString();
-
 const ensureColl = async (name) => {
   try { await db.createCollection(name); console.log(`  ✅ ${name}`); }
   catch(e) { if (!e.message?.includes('exist')) console.log(`  ⚠️ ${name}: ${e.message?.slice(0,60)}`); }

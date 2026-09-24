@@ -25,8 +25,13 @@ import { getLatestCloudBaseProxyTrace } from '../services/cloudbase.js';
 
 const getSetupErrorMessage = (error) => {
   const rawMessage = error?.message || 'Unknown CloudBase error';
+  // 消息里已含 requestId（数据库层读回断言会一并带上）时，不再追加代理 trace 后缀，
+  // 否则失败提示会同时出现两个 requestId。与 MeditationPage.buildVisibleWriteFailureMessage 同口径。
+  const messageHasRequestId = /requestid/i.test(rawMessage);
   const proxyTrace = getLatestCloudBaseProxyTrace();
-  const traceSuffix = proxyTrace?.requestId ? `（requestId: ${proxyTrace.requestId}）` : '';
+  const traceSuffix = !messageHasRequestId && proxyTrace?.requestId
+    ? `（requestId: ${proxyTrace.requestId}）`
+    : '';
 
   if (rawMessage.includes('DATABASE_COLLECTION_NOT_EXIST') || rawMessage.includes('Db or Table not exist')) {
     return [
@@ -125,6 +130,8 @@ export const useDatabase = () => {
   const [meditationLibrary, setMeditationLibrary] = useState(DEFAULT_MEDITATION_LIBRARY);
   const [meditationParagraphs, setMeditationParagraphs] = useState([]);
   const [meditationSectionRaws, setMeditationSectionRaws] = useState([]);
+  const [medTracks, setMedTracks] = useState([]);
+  const [savingMedTracks, setSavingMedTracks] = useState(false);
   const [savingMeditationAudioLibrary, setSavingMeditationAudioLibrary] = useState(false);
   const [savingMeditationCompositionSettings, setSavingMeditationCompositionSettings] = useState(false);
   const [savingMeditationCalendar, setSavingMeditationCalendar] = useState(false);
@@ -1169,6 +1176,40 @@ export const useDatabase = () => {
     }
   };
 
+  // med_tracks：懒加载（进入「冥想轨道」子 Tab 时才拉取）
+  const loadMedTracks = async () => {
+    try {
+      setSettingsError(null);
+      const tracks = await DatabaseService.getMedTracks();
+      const normalizedTracks = Array.isArray(tracks) ? tracks : [];
+      setMedTracks(normalizedTracks);
+      return normalizedTracks;
+    } catch (err) {
+      console.error('Error loading med tracks:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    }
+  };
+
+  const saveMedTrack = async (track) => {
+    try {
+      setSavingMedTracks(true);
+      setSettingsError(null);
+      const saved = track?._id
+        ? await DatabaseService.updateMedTrack(track._id, track)
+        : await DatabaseService.createMedTrack(track);
+      const tracks = await DatabaseService.getMedTracks();
+      setMedTracks(Array.isArray(tracks) ? tracks : []);
+      return saved;
+    } catch (err) {
+      console.error('Error saving med track:', err);
+      setSettingsError(getSetupErrorMessage(err));
+      throw err;
+    } finally {
+      setSavingMedTracks(false);
+    }
+  };
+
   // Initialize on mount
   useEffect(() => {
     void initializeDatabase();
@@ -1215,6 +1256,7 @@ export const useDatabase = () => {
     meditationLibrary,
     meditationParagraphs,
     meditationSectionRaws,
+    medTracks,
     settingsError,
     savingMeditationSettings,
     savingAwarenessTagSettings,
@@ -1235,6 +1277,7 @@ export const useDatabase = () => {
     savingMeditationCompositionSettings,
     savingMeditationCalendar,
     savingMeditationLibrary,
+    savingMedTracks,
     loading,
     error,
 
@@ -1275,6 +1318,8 @@ export const useDatabase = () => {
     updateMeditationCompositionSettings,
     updateMeditationCalendar,
     updateMeditationLibrary,
+    loadMedTracks,
+    saveMedTrack,
     loadAdminSection,
     initializeDatabase,
 

@@ -13,7 +13,7 @@
 import cloudbase from '@cloudbase/node-sdk';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFlag, hasFlag } from './lib/cloudbase-nosql.mjs';
+import { hasFlag } from './lib/cloudbase-nosql.mjs';
 
 const SOURCE_ENV = 'liwu-0gtd91eebd863ccf';
 const TARGET_ENV = 'liwu-d8gek6jjdab1d087c';
@@ -82,31 +82,6 @@ const cleanCollection = async (db, name) => {
   return deleted;
 };
 
-// === MIGRATE ===
-
-const migrateCollection = async (sourceDb, targetDb, name) => {
-  const docs = await exportCollection(sourceDb, name);
-  if (!docs.length) return 0;
-
-  // Ensure collection exists in target
-  try { await targetDb.createCollection(name); } catch {}
-
-  let migrated = 0;
-  for (const doc of docs) {
-    const clean = { ...doc };
-    // IMPORTANT: keep _openid — see stripSystemFields in 20260805_migrate_to_new_env.mjs
-    try {
-      await targetDb.collection(name).add(clean);
-      migrated++;
-    } catch(e) {
-      // If duplicate _id or other non-fatal error, log and continue
-      if (migrated < 3) console.log(`  ⚠️ ${name} doc error: ${e.message?.slice(0, 80)}`);
-    }
-    if (migrated % 50 === 0) await pause(100);
-  }
-  return migrated;
-};
-
 // === MAIN ===
 
 const main = async () => {
@@ -158,14 +133,14 @@ const main = async () => {
     const docs = JSON.parse(fs.readFileSync(path.join(EXPORT_DIR, `${name}.json`), 'utf8'));
     if (docs.length === 0) continue;
 
-    // Create collection
-    try { await tgtDb.createCollection(name); } catch {}
+    // Create collection（已存在时 createCollection 报错属正常，忽略）
+    try { await tgtDb.createCollection(name); } catch { /* 集合已存在 */ }
 
     let ok = 0;
     for (const doc of docs) {
       const clean = { ...doc };
       delete clean._openid;
-      try { await tgtDb.collection(name).add(clean); ok++; } catch {}
+      try { await tgtDb.collection(name).add(clean); ok++; } catch { /* 重复 _id 等非致命错误，继续 */ }
       if (ok % 100 === 0) await pause(50);
     }
     migrated += ok;

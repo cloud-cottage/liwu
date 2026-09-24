@@ -16,7 +16,7 @@ import cloudbase from '@cloudbase/node-sdk';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { parseFlag, hasFlag } from './lib/cloudbase-nosql.mjs';
+import { hasFlag } from './lib/cloudbase-nosql.mjs';
 
 const SOURCE_ENV = 'liwu-0gtd91eebd863ccf';
 const TARGET_ENV = 'liwu-d8gek6jjdab1d087c';
@@ -121,8 +121,8 @@ const main = async () => {
       fail++;
     }
 
-    // 清理临时文件
-    try { fs.unlinkSync(localPath); } catch {}
+    // 清理临时文件（删除失败可忽略：下次运行会覆盖同名临时文件）
+    try { fs.unlinkSync(localPath); } catch { /* 忽略清理失败 */ }
   }
 
   console.log('\n========================================');
@@ -133,8 +133,8 @@ const main = async () => {
     console.log('\n🔍 Dry-run 完成。执行 --write 实际迁移。');
   }
 
-  // 清理临时目录
-  try { fs.rmdirSync(TMP_DIR); } catch {}
+  // 清理临时目录（非空 / 已被系统清理时忽略）
+  try { fs.rmdirSync(TMP_DIR); } catch { /* 忽略清理失败 */ }
 };
 
 main().catch(e => {
