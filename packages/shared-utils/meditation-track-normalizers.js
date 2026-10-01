@@ -3,7 +3,8 @@ import {
   MEDITATION_TRACK_BACKGROUND_CONFIG,
   MEDITATION_TRACK_CHAPTER_TEMPLATE,
   MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
-  MEDITATION_TRACK_VOICE_CONFIG
+  MEDITATION_TRACK_VOICE_CONFIG,
+  normalizeMeditationChapterCode
 } from './meditation-track-template.js'
 
 // ─── med_tracks（CloudBase 集合）规范化 ──────────────────────────────────────
@@ -41,7 +42,12 @@ export const normalizeMedTrackChapters = (chapters = []) => {
   const sourceChapters = Array.isArray(chapters) ? chapters : []
 
   return MEDITATION_TRACK_CHAPTER_TEMPLATE.map((templateChapter, index) => {
-    const matchedChapter = sourceChapters.find((chapter) => chapter?.chapter_key === templateChapter.chapter_key)
+    // 读侧归一：库里的旧章 key（chapter-opening / chapter-breath / chapter-verse / chapter-closing）
+    // 归一到新组 key（section-start / section-breath / section-truth / section-end）后与模板比对，
+    // 使旧值章也能取回自己的 `gap_after_seconds` / `max_duration_seconds` / `enabled`（折回仍是新 key）。
+    const matchedChapter = sourceChapters.find((chapter) => (
+      normalizeMeditationChapterCode(chapter?.chapter_key) === templateChapter.chapter_key
+    ))
 
     return normalizeChapterEntry(
       matchedChapter || {},
@@ -79,6 +85,9 @@ export const createDefaultMeditationTrack = ({
 export const DEFAULT_MEDITATION_TRACK = createDefaultMeditationTrack()
 
 export const normalizeMedTrack = (doc = {}) => {
+  // 入参归一（C25）：显式 `null` 与 `undefined` **同等**处理，都走 `= {}` 的既有默认路径。
+  // 否则下一行取 `doc._id` 会抛 TypeError: Cannot read properties of null (reading '_id')。
+  doc = doc ?? {}
   const now = new Date().toISOString()
   const id = doc._id || doc.id || ''
 

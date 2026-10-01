@@ -15,7 +15,10 @@ import {
   buildMeditationSectionRawTextSnapshot,
   buildMeditationTrackDurationEstimate,
   countMeditationSectionChars,
+  getMeditationParagraphTypeDisplayLabel,
   getMeditationRecommendedSectionType,
+  getMeditationSectionDisplayLabel,
+  getMeditationSectionDisplayLabelWithCode,
   getMeditationSectionTargetCharCount,
   getMeditationSectionTypeMeta,
   getMeditationSectionTypeParagraphTypes,
@@ -24,8 +27,11 @@ import {
   MEDITATION_PARAGRAPH_TYPE_ORDER,
   MEDITATION_SECTION_TYPE_GROUPS,
   MEDITATION_SECTION_TYPE_LABELS,
+  MEDITATION_TRACK_CHAPTER_TEMPLATE,
+  MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
   MEDITATION_WORD_COUNT_STATUS_LABELS,
   MEDITATION_WORD_COUNT_STATUS_TONES,
+  normalizeMeditationSectionCode,
   resolveMeditationWordCountStatus
 } from '@liwu/shared-utils/meditation-track-template.js';
 import {
@@ -50,6 +56,12 @@ import {
   stopMeditationRecording
 } from '../../utils/meditationAudioCapture.js';
 import { getLatestCloudBaseProxyTrace } from '../../services/cloudbase.js';
+import {
+  isMeditationTrackMixJobPending,
+  MEDITATION_TRACK_MIX_JOB_STATUS,
+  MEDITATION_TRACK_MIX_POLL_INTERVAL_MS,
+  resolveMeditationTrackMixTrackVersion
+} from '../../utils/meditationTrackMixJob.js';
 import MeditationTrackPreview from './MeditationTrackPreview.jsx';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -80,15 +92,44 @@ const SESSION_LABELS = {
   afternoon: '下午课',
   evening: '晚课'
 };
+// 子 Tab 条（规则 B 活跃区，正本 §1.2「子 Tab 顺序」）：key 以代码为准，顺序固定
+// paragraph → section-raw → med-tracks。**老四 tab 不在本表内**（其入口自 D10 起隐藏）。
 const SUB_TABS = [
   { key: 'paragraph', label: '段落文本库' },
   { key: 'section-raw', label: '原始音频库' },
-  { key: 'med-tracks', label: '冥想轨道' },
+  { key: 'med-tracks', label: '冥想轨道' }
+];
+
+// D10 冻结注册表（老四 tab）—— **保留而非删除**：老组件、老代码、老预览器与老数据留一个版本周期，
+// 入口自 D10 起不再出现在子 Tab 条上。本表是**只读闸门**的唯一数据源，闸门共三层：
+//   ① 入口层：`SUB_TABS` 不含下表 key ⇒ 子 Tab 条不渲染老四 tab（入口隐藏）；
+//   ② 渲染层：`activeSubTab` 命中下表 key（内部 state / hash / devtools 强制激活）时**只渲染只读说明**，
+//      老组件渲染分支被 `isFrozenMeditationTab(activeSubTab)` 挡掉（不报错、不白屏）；
+//   ③ 写入口层（硬）：传给老组件的 `onUpdate` / `onQueueTranscodeJob` 一律经
+//      `blockFrozenMeditationTabWrite` 换成只读桩 ⇒ 真实 writer 不再有任何可达调用点。
+// 保留理由：正本 §1.2「冻结定义」＋附录 B.1 D10（冻结只读、老数据保留一个版本周期）。
+// 下线时点：D10 之后的下一版本周期末——届时本表、老组件与老数据一并清理。
+const FROZEN_MEDITATION_TABS = [
   { key: 'library', label: '音频库' },
   { key: 'presets', label: '冥想库' },
   { key: 'composition', label: '冥想设置' },
   { key: 'calendar', label: '冥想日历' }
 ];
+
+const FROZEN_MEDITATION_TAB_KEYS = FROZEN_MEDITATION_TABS.map((tab) => tab.key);
+
+const isFrozenMeditationTab = (key) => FROZEN_MEDITATION_TAB_KEYS.includes(key);
+
+// 冻结 tab 的中文名（只读说明里点名，便于操作者确认自己被挡在哪一页）
+const getFrozenMeditationTabLabel = (key) => FROZEN_MEDITATION_TABS.find((tab) => tab.key === key)?.label || '';
+
+// 只读桩：老四 tab 的写入口一律换成它（硬闸门）。真实 writer 仅作为 `frozenSource` 保留引用
+// （保留而非删除；一个版本周期后随老四 tab 一并下线），闸门本身不再调用它。
+const blockFrozenMeditationTabWrite = (writer) => {
+  const blockedFrozenTabWrite = async () => ({ blocked: true, reason: 'frozen-tab-readonly' });
+  blockedFrozenTabWrite.frozenSource = writer;
+  return blockedFrozenTabWrite;
+};
 
 // ─── Shared Styles ────────────────────────────────────────────────────────────
 
@@ -969,7 +1010,9 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
     try {
       await onRenameGroup(group.id, nextName);
     } catch (error) {
-      setGroupError(error.message || '音频组名称保存失败');
+      // 写入失败必须可见：tab 级提示由 AudioLibraryTab.handleRenameGroup 统一给出，这里再落一条组级提示；
+      // 失败时保留组名输入框内容（不重置 groupName），且不向按钮 onClick（未 await）泄漏未捕获拒绝。
+      setGroupError(buildVisibleWriteFailureMessage('音频库组重命名失败', error));
     } finally {
       setRenamingGroup(false);
     }
@@ -1202,13 +1245,20 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
     const isTts = !!item.ttsText;
     const normalizedTtsText = normalizeStoredTtsText(editForm.ttsText, editForm.isSSML);
     const title = isTts ? normalizedTtsText.replace(/<[^>]+>/g, '').slice(0, 20) : editForm.title.trim();
-    await onSaveItem({
-      ...item,
-      title,
-      duration: Number(editForm.duration) || 0,
-      ttsText: normalizedTtsText,
-      isSSML: Boolean(editForm.isSSML) || isSsmlText(normalizedTtsText)
-    }, item.id);
+    try {
+      await onSaveItem({
+        ...item,
+        title,
+        duration: Number(editForm.duration) || 0,
+        ttsText: normalizedTtsText,
+        isSSML: Boolean(editForm.isSSML) || isSsmlText(normalizedTtsText)
+      }, item.id);
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示由 AudioLibraryTab.handleSaveItem 统一给出，这里再落一条组级提示；
+      // 同时失败时保持编辑态，并收口按钮 onClick（未 await）造成的未捕获 Promise 拒绝。
+      setGroupError(buildVisibleWriteFailureMessage('音频库片段保存失败', err));
+      return;
+    }
     setEditingId(null);
   };
 
@@ -1218,7 +1268,13 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
       return;
     }
 
-    await onDeleteItem(item.id);
+    try {
+      await onDeleteItem(item.id);
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示由 AudioLibraryTab.handleDeleteItem 统一给出，这里再落一条组级提示；
+      // 并收口按钮 onClick（未 await）造成的未捕获 Promise 拒绝。
+      setGroupError(buildVisibleWriteFailureMessage('音频库片段删除失败', err));
+    }
   };
 
   const handlePlayToggle = async (item) => {
@@ -1290,7 +1346,7 @@ const AudioGroupSection = ({ group, items, onSaveItem, onDeleteItem, onRenameGro
               {renamingGroup ? '保存中...' : '保存组名'}
             </button>
           </div>
-          {groupError && <div style={{ color: '#dc2626', fontSize: '12px', marginBottom: '10px' }}>{groupError}</div>}
+          {groupError && <div role="alert" style={{ color: '#dc2626', fontSize: '12px', marginBottom: '10px' }}>{groupError}</div>}
           <input
             ref={manualAudioInputRef}
             type="file"
@@ -1533,6 +1589,7 @@ const AudioLibrarySection = ({ type, groups, items, onSaveItem, onDeleteItem, on
 
 const AudioLibraryTab = ({ library, saving, onUpdate, onQueueTranscodeJob, onRefresh }) => {
   const [refreshingStatuses, setRefreshingStatuses] = useState(false);
+  const [writeError, setWriteError] = useState('');
   const handleSaveItem = useCallback(async (item, replacingId) => {
     const currentItems = library.items || [];
     let nextItems;
@@ -1541,12 +1598,26 @@ const AudioLibraryTab = ({ library, saving, onUpdate, onQueueTranscodeJob, onRef
     } else {
       nextItems = [...currentItems, item];
     }
-    await onUpdate({ ...library, items: nextItems });
+    setWriteError('');
+    try {
+      await onUpdate({ ...library, items: nextItems });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示 + 继续向上抛，保持调用方（上传/生成/编辑）原有失败分支语义，不吞错。
+      setWriteError(buildVisibleWriteFailureMessage('音频库保存失败', err));
+      throw err;
+    }
   }, [library, onUpdate]);
 
   const handleDeleteItem = useCallback(async (itemId) => {
     const nextItems = (library.items || []).filter((i) => i.id !== itemId);
-    await onUpdate({ ...library, items: nextItems });
+    setWriteError('');
+    try {
+      await onUpdate({ ...library, items: nextItems });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示 + 继续向上抛，保持调用方（音频组删除）原有失败分支语义，不吞错。
+      setWriteError(buildVisibleWriteFailureMessage('音频库删除失败', err));
+      throw err;
+    }
   }, [library, onUpdate]);
 
   const handleRenameGroup = useCallback(async (groupId, nextName) => {
@@ -1558,7 +1629,14 @@ const AudioLibraryTab = ({ library, saving, onUpdate, onQueueTranscodeJob, onRef
     const nextGroups = (library.groups || []).map((group) => (
       group.id === groupId ? { ...group, name: normalizedName } : group
     ));
-    await onUpdate({ ...library, groups: nextGroups });
+    setWriteError('');
+    try {
+      await onUpdate({ ...library, groups: nextGroups });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示 + 继续向上抛，保持调用方（音频组重命名）原有失败分支语义，不吞错。
+      setWriteError(buildVisibleWriteFailureMessage('音频库重命名失败', err));
+      throw err;
+    }
   }, [library, onUpdate]);
 
   const transcodeCounts = (library.items || []).reduce((summary, item) => {
@@ -1604,6 +1682,11 @@ const AudioLibraryTab = ({ library, saving, onUpdate, onQueueTranscodeJob, onRef
   return (
     <div>
       <div style={sectionTitleStyle}>六大音频库管理</div>
+      {writeError && (
+        <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '12px' }}>
+          {writeError}
+        </div>
+      )}
       <div
         style={{
           display: 'flex',
@@ -2051,6 +2134,7 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
     startSeconds: '0',
     durationSeconds: '30'
   });
+  const [writeError, setWriteError] = useState('');
 
   const itemsByType = useCallback((type) => (library.items || []).filter((i) => i.type === type), [library]);
 
@@ -2082,12 +2166,26 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
         }
         : s
     );
-    await onUpdate({ ...settings, segments: nextSegments });
+    setWriteError('');
+    try {
+      await onUpdate({ ...settings, segments: nextSegments });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示；失败时保持编辑面板打开，且不向按钮 onClick（未 await）泄漏未捕获拒绝。
+      setWriteError(buildVisibleWriteFailureMessage('冥想设置保存失败', err));
+      return;
+    }
     setSelectedId(null);
   };
 
   const handleDelete = async (segId) => {
-    await onUpdate({ ...settings, segments: segments.filter((s) => s.id !== segId) });
+    setWriteError('');
+    try {
+      await onUpdate({ ...settings, segments: segments.filter((s) => s.id !== segId) });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示；失败时保持编辑面板打开，且不向按钮 onClick（未 await）泄漏未捕获拒绝。
+      setWriteError(buildVisibleWriteFailureMessage('冥想设置删除失败', err));
+      return;
+    }
     setSelectedId(null);
   };
 
@@ -2100,7 +2198,14 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
       startSeconds: Number(addForm.startSeconds) || 0,
       durationSeconds: Number(addForm.durationSeconds) || 30
     };
-    await onUpdate({ ...settings, segments: [...segments, newSeg] });
+    setWriteError('');
+    try {
+      await onUpdate({ ...settings, segments: [...segments, newSeg] });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示；失败时保持新增面板打开，且不向按钮 onClick（未 await）泄漏未捕获拒绝。
+      setWriteError(buildVisibleWriteFailureMessage('冥想设置新增失败', err));
+      return;
+    }
     setAddMode(false);
     setAddForm({
       trackKey: 'background',
@@ -2122,6 +2227,11 @@ const CompositionTab = ({ settings, library, saving, onUpdate }) => {
         <div style={sectionTitleStyle}>冥想时间轴设置</div>
         {saving && <span style={{ fontSize: '12px', color: '#6366f1' }}>保存中...</span>}
       </div>
+      {writeError && (
+        <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '12px' }}>
+          {writeError}
+        </div>
+      )}
       <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '18px' }}>
         此处只配置音频库级时间轴。音频组会在库内按顺序自动拼接，无需在这里单独设置。自然库只需设置目标总时长；其余音频库会在运行时按真实音频时长自动推导并校正时间轴。
       </div>
@@ -2468,6 +2578,7 @@ const CalendarTab = ({ calendar, meditationLibrary, saving, onUpdate }) => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [editingDate, setEditingDate] = useState(null);
   const [editForm, setEditForm] = useState({ morning: [], noon: [], afternoon: [], evening: [] });
+  const [writeError, setWriteError] = useState('');
 
   const days = calendar.days || {};
   const presets = meditationLibrary.meditations || [];
@@ -2495,14 +2606,28 @@ const CalendarTab = ({ calendar, meditationLibrary, saving, onUpdate }) => {
     } else {
       nextDays[editingDate] = { ...editForm };
     }
-    await onUpdate({ ...calendar, days: nextDays });
+    setWriteError('');
+    try {
+      await onUpdate({ ...calendar, days: nextDays });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示；失败时保持当天编辑弹层打开，且不向按钮 onClick（未 await）泄漏未捕获拒绝。
+      setWriteError(buildVisibleWriteFailureMessage('冥想日历保存失败', err));
+      return;
+    }
     setEditingDate(null);
   };
 
   const handleClearDay = async () => {
     const nextDays = { ...days };
     delete nextDays[editingDate];
-    await onUpdate({ ...calendar, days: nextDays });
+    setWriteError('');
+    try {
+      await onUpdate({ ...calendar, days: nextDays });
+    } catch (err) {
+      // 写入失败必须可见：tab 级提示；失败时保持当天编辑弹层打开，且不向按钮 onClick（未 await）泄漏未捕获拒绝。
+      setWriteError(buildVisibleWriteFailureMessage('冥想日历清除当天失败', err));
+      return;
+    }
     setEditingDate(null);
   };
 
@@ -2651,6 +2776,11 @@ const CalendarTab = ({ calendar, meditationLibrary, saving, onUpdate }) => {
               );
             })}
             {saving && <div style={{ color: '#6366f1', fontSize: '12px', marginBottom: '10px' }}>保存中...</div>}
+            {writeError && (
+              <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '10px' }}>
+                {writeError}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button style={dangerBtnStyle} onClick={handleClearDay}>清除当天</button>
               <button style={ghostBtnStyle} onClick={() => setEditingDate(null)}>取消</button>
@@ -2675,18 +2805,42 @@ const medBadgeStyle = (tone = 'muted') => ({
   color: MEDITATION_WORD_COUNT_STATUS_TONES[tone].color
 });
 
-const getSectionTypeLabel = (sectionType = '') => MEDITATION_SECTION_TYPE_LABELS[sectionType] || sectionType || '未设置';
+// 段名上屏一律**先共享归一、再取中文名**（旧码行必须出中文名，不得退化为原始代号或空白）；
+// 中英并列（「中文名｜英文名」）另走 display helper，供宽位使用；窄位仍用纯中文名。
+const getSectionTypeLabel = (sectionType = '') => {
+  const code = normalizeMeditationSectionCode(sectionType);
+  return MEDITATION_SECTION_TYPE_LABELS[code] || code || '未设置';
+};
 
-const getSectionTypeChapterLabel = (sectionType = '') => (
-  MEDITATION_SECTION_TYPE_GROUPS
-    .find((group) => group.section_types.some((meta) => meta.section_type === sectionType))?.chapter_label || ''
+// 上屏标签（宽位）＝「中文名｜英文名」；英文名空缺（背景两轨）时只出中文名，不自拟。
+const getSectionTypeDisplayLabel = (sectionType = '') => (
+  getMeditationSectionDisplayLabel(sectionType) || getSectionTypeLabel(sectionType)
 );
+
+// 分组标题用：＝「中文名｜英文名（新代号）」（代号只在此处作为分组技术标识上屏）。
+const getSectionTypeDisplayLabelWithCode = (sectionType = '') => (
+  getMeditationSectionDisplayLabelWithCode(sectionType) || getSectionTypeLabel(sectionType)
+);
+
+const getSectionTypeChapterLabel = (sectionType = '') => {
+  // 旧段码先归一，否则按原始值比对会漏配所属章（章节名本身不变，仍为中文）。
+  const code = normalizeMeditationSectionCode(sectionType);
+  return (
+    MEDITATION_SECTION_TYPE_GROUPS
+      .find((group) => group.section_types.some((meta) => meta.section_type === code))?.chapter_label || ''
+  );
+};
 
 // 纯音频段（无文本、不经 Section-Raw）：由固定模板推导，不在此处硬编码。
 const PURE_AUDIO_SECTION_TYPES = MEDITATION_SECTION_TYPE_GROUPS
   .flatMap((group) => group.section_types)
   .filter((meta) => !meta.text_required)
   .map((meta) => meta.section_type);
+
+// 新建 Section-Raw 的默认段＝模板里第一个「需文本」的段（取权威段码，不再硬编码旧码）。
+const DEFAULT_NEW_SECTION_TYPE = MEDITATION_SECTION_TYPE_GROUPS
+  .flatMap((group) => group.section_types)
+  .find((meta) => meta.text_required)?.section_type || '';
 
 const formatAudioDuration = (seconds) => (
   Number(seconds) > 0 ? formatSeconds(Math.round(Number(seconds))) : '时长未知'
@@ -2846,7 +3000,7 @@ const MeditationRecordingControl = ({ disabled, busy, onCaptured }) => {
 
 // ─── 冥想轨道（med_tracks）────────────────────────────────────────────────────
 
-const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSave }) => {
+const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSave, onRefreshTrack }) => {
   const [draft, setDraft] = useState(() => track);
   const [saveNotice, setSaveNotice] = useState('');
   const [saveError, setSaveError] = useState('');
@@ -2856,6 +3010,80 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
     chapters: draft.chapters,
     sectionDurationSecondsByType
   });
+
+  // ── 混合音频（服务端预混产物）─────────────────────────────────────────────
+  // 产物台账＝med_tracks.mix_audio（云侧转码器回写）；「产物缺失或版本落后」＝无 mix_audio
+  // 或 mix_audio.version ≠ 当前 Track 版本。判据一律读**已保存版本**（`track` 传参、不读草稿）：
+  // 产物对应的就是库里那一版的章节配置。
+  const trackMixAudio = track.mix_audio || null;
+  const currentTrackVersion = resolveMeditationTrackMixTrackVersion(track);
+  const mixAudioStale = !trackMixAudio || Number(trackMixAudio.version) !== currentTrackVersion;
+
+  const [mixJob, setMixJob] = useState(null);
+  const [mixQueueing, setMixQueueing] = useState(false);
+  const [mixNotice, setMixNotice] = useState('');
+  const [mixError, setMixError] = useState('');
+  const mixJobId = mixJob?._id || '';
+  const mixPending = isMeditationTrackMixJobPending(mixJob || {});
+
+  // 刷新轨道数据的回调放进 ref：父组件每次渲染都会换新函数实例，直接进 effect 依赖会让轮询被
+  // 反复重建（父组件渲染比轮询间隔频繁时，定时器永远等不到触发）。
+  const refreshTrackRef = useRef(onRefreshTrack);
+  useEffect(() => {
+    refreshTrackRef.current = onRefreshTrack;
+  }, [onRefreshTrack]);
+
+  // 轮询风格与「音频库」tab 的转码状态轮询一致（定时轮询、终态即停）：成功 ⇒ 刷新 Track 数据
+  //（面板随即显示产物的 version / duration）；失败 ⇒ 显示 job 的 transcode_error 文案。
+  useEffect(() => {
+    if (!mixPending) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          const job = await DatabaseService.getMeditationAudioTranscodeJob(mixJobId);
+          if (!job) {
+            return;
+          }
+
+          if (job.status === MEDITATION_TRACK_MIX_JOB_STATUS.succeeded) {
+            setMixJob(null);
+            setMixNotice('混合音频已生成');
+            await refreshTrackRef.current?.();
+            return;
+          }
+
+          if (job.status === MEDITATION_TRACK_MIX_JOB_STATUS.failed) {
+            setMixJob(null);
+            setMixError(job.transcode_error || job.error_message || '混合音频生成失败');
+          }
+        } catch (err) {
+          setMixError(err?.message || '混合音频状态查询失败');
+        }
+      })();
+    }, MEDITATION_TRACK_MIX_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [mixPending, mixJobId]);
+
+  // 入队：人声段缺音频 / 无可用背景章时数据层会拒绝，错误文案原样上屏（含缺哪一段）。
+  const handleGenerateMixAudio = async () => {
+    setMixQueueing(true);
+    setMixNotice('');
+    setMixError('');
+    try {
+      const job = await DatabaseService.createMeditationTrackMixTranscodeJob({ track });
+      setMixJob(job);
+      setMixNotice(job?.reused ? '已有进行中的混音任务，沿用该任务' : '已入队，等待云侧转码器生成');
+    } catch (err) {
+      setMixJob(null);
+      setMixError(err?.message || '混音任务入队失败');
+    } finally {
+      setMixQueueing(false);
+    }
+  };
 
   const updateDraft = (patch) => {
     setSaveNotice('');
@@ -2910,7 +3138,7 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
           <div style={{ fontSize: '11px', color: '#94a3b8' }}>{chapter.chapter_key}</div>
         </div>
         <div style={{ flex: '1 1 260px', fontSize: '12px', color: '#64748b' }}>
-          Section 序列（固定只读）：{chapter.section_types.map(getSectionTypeLabel).join(' → ')}
+          Section 序列（固定只读）：{chapter.section_types.map(getSectionTypeDisplayLabel).join(' → ')}
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#475569' }}>
           <input
@@ -2959,7 +3187,12 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
         <span style={medBadgeStyle(estimate.estimated ? 'warning' : 'ok')}>{estimate.estimated ? '预估（含标称值）' : '全部实测'}</span>
       </div>
       <div style={{ marginTop: '4px', color: '#64748b' }}>
-        内容 {formatSeconds(estimate.content_seconds)} + 章间留白 {formatSeconds(estimate.gap_seconds)}；基准 15:00（软目标，不做尾部截断）
+        内容 {formatSeconds(estimate.content_seconds)} + 章间留白 {formatSeconds(estimate.gap_seconds)}
+      </div>
+      {/* 两条口径必须分开陈述：本面板「内容」在缺实测时＝各段时长上限之和（现为 970 秒）；
+          「15:00 软基准」是目标值、不做尾部截断。二者不互相推导（文案零编号）。 */}
+      <div style={{ marginTop: '2px', color: '#94a3b8' }}>
+        两条口径分开看：15:00 软基准（软目标，不做尾部截断）与上面「内容」不是同一把尺子——缺实测时「内容」＝各段时长上限之和，不得由任一口径推出另一个
       </div>
     </div>
   );
@@ -3003,6 +3236,32 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
         </button>
         {saveNotice && <span style={{ fontSize: '12px', color: '#16a34a' }}>✅ {saveNotice}</span>}
         {saveError && <span style={{ fontSize: '12px', color: '#ef4444' }}>❌ {saveError}</span>}
+      </div>
+
+      {/* 混合音频（服务端预混单流产物）：产物缺失或版本落后时才给「生成混合音频」入口；
+          入队后按钮转「生成中（已入队）」并按定时轮询读 job 状态。 */}
+      <div style={{ padding: '10px 12px', backgroundColor: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#334155', marginBottom: '12px' }}>
+        <div>
+          {trackMixAudio
+            ? `混合音频产物：v${trackMixAudio.version} · 时长 ${trackMixAudio.duration}s`
+            : '混合音频产物：尚未生成'}
+        </div>
+        {mixAudioStale && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+            <button
+              style={{ ...primaryBtnStyle, padding: '6px 14px' }}
+              onClick={handleGenerateMixAudio}
+              disabled={mixQueueing || mixPending}
+            >
+              {mixQueueing ? '入队中…' : mixPending ? '生成中（已入队）' : '生成混合音频'}
+            </button>
+            <span style={{ color: '#64748b' }}>
+              人声按章序拼接、背景循环铺满；产物版本跟随当前 Track 版本（v{currentTrackVersion}）
+            </span>
+          </div>
+        )}
+        {mixNotice && <div style={{ color: '#16a34a', marginTop: '4px' }}>✅ {mixNotice}</div>}
+        {mixError && <div role="alert" style={{ color: '#ef4444', marginTop: '4px' }}>❌ {mixError}</div>}
       </div>
 
       {draft.chapters.map((chapter, index) => renderChapterRow(chapter, index))}
@@ -3063,7 +3322,7 @@ const MeditationPage = ({
   const [sectionAudios, setSectionAudios] = useState([]);
   const [showSectionCreateForm, setShowSectionCreateForm] = useState(false);
   const [selectedParagraphIds, setSelectedParagraphIds] = useState([]);
-  const [newSectionType, setNewSectionType] = useState('sec-intro');
+  const [newSectionType, setNewSectionType] = useState(DEFAULT_NEW_SECTION_TYPE);
   const [sectionParagraphTypeFilter, setSectionParagraphTypeFilter] = useState('all');
   const [sectionAudioStatus, setSectionAudioStatus] = useState({}); // { [containerId]: { busy, notice, error } }
   const [pureAudioSectionType, setPureAudioSectionType] = useState('sec-nature');
@@ -3810,8 +4069,8 @@ const MeditationPage = ({
         // 追加到已有 Section-Raw：数据层读库取当前段落序列，只写段落引用与字数，音频仅留引用
         await DatabaseService.appendMedSectionRawParagraphs(targetId, [editParagraph._id]);
       } else {
-        // 新建 Section-Raw：section_type 按段落类型推荐取值
-        const sectionType = getMeditationRecommendedSectionType(editParagraph.paragraph_type) || 'sec-intro';
+        // 新建 Section-Raw：section_type 按段落类型推荐取值（无推荐时用默认段＝权威段码）
+        const sectionType = getMeditationRecommendedSectionType(editParagraph.paragraph_type) || DEFAULT_NEW_SECTION_TYPE;
         const targetCharCount = getMeditationSectionTargetCharCount(sectionType) ?? 0;
         const currentCharCount = countMeditationSectionChars([editText || editParagraph.text || '']);
         await DatabaseService.createMedSectionRaw({
@@ -3876,7 +4135,7 @@ const MeditationPage = ({
         {audios.map((audio) => (
           <div key={audio._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: '#475569' }}>
             <span>#{String(audio._id).slice(-6)}</span>
-            {showSectionType && <span>{audio.section_type || '未设置类型'}</span>}
+            {showSectionType && <span>{audio.section_type ? getMeditationSectionDisplayLabelWithCode(audio.section_type) : '未设置类型'}</span>}
             {audio.label && <span>{audio.label}</span>}
             <span>{formatAudioDuration(audio.duration)}</span>
             <span>{getSourceKindLabel(audio.source_kind)}</span>
@@ -3907,9 +4166,9 @@ const MeditationPage = ({
     return (
       <div key={raw.id} style={{ padding: '10px 8px', borderTop: index > 0 ? '1px solid #f1f5f9' : 'none', fontSize: '13px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <strong style={{ color: '#1e293b' }}>{getSectionTypeLabel(raw.section_type)}</strong>
+          <strong style={{ color: '#1e293b' }}>{getSectionTypeDisplayLabel(raw.section_type)}</strong>
           <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-            {raw.section_type || '未设置类型'} · {getSectionTypeChapterLabel(raw.section_type)}
+            {getSectionTypeChapterLabel(raw.section_type) || '未归属章节'}
           </span>
           <span style={medBadgeStyle(getMeditationWordCountStatusTone(raw.word_count_status))}>
             {MEDITATION_WORD_COUNT_STATUS_LABELS[raw.word_count_status] || '未计算'}
@@ -3949,7 +4208,7 @@ const MeditationPage = ({
     <div style={{ marginTop: '16px', padding: '10px', background: '#fafafa', borderRadius: '8px' }}>
       <div style={{ fontSize: '12px', fontWeight: '600', color: '#1e293b', marginBottom: '4px' }}>纯音频段（不建 Section-Raw）</div>
       <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px' }}>
-        sec-nature / sec-bowl 无文本，录音或上传后直接写入 med_section_audios（section_raw_id 允许为空）。
+        自然 / 颂钵 两段无文本，录音或上传后直接写入 med_section_audios（section_raw_id 允许为空）。
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
         {PURE_AUDIO_SECTION_TYPES.map((sectionType) => (
@@ -3958,7 +4217,7 @@ const MeditationPage = ({
             style={pillBtnStyle(pureAudioSectionType === sectionType)}
             onClick={() => setPureAudioSectionType(sectionType)}
           >
-            {getSectionTypeLabel(sectionType)}（{sectionType}）
+            {getSectionTypeDisplayLabel(sectionType)}
           </button>
         ))}
         <MeditationRecordingControl
@@ -3969,7 +4228,7 @@ const MeditationPage = ({
       {PURE_AUDIO_SECTION_TYPES.map((sectionType) => (
         <div key={sectionType} style={{ marginTop: '8px' }}>
           <div style={{ fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
-            {getSectionTypeChapterLabel(sectionType)} · {getSectionTypeLabel(sectionType)}（{sectionType}）
+            {getSectionTypeChapterLabel(sectionType)} · {getSectionTypeDisplayLabelWithCode(sectionType)}
           </div>
           {renderSectionAudioList(
             'audio-only',
@@ -4007,14 +4266,14 @@ const MeditationPage = ({
                 Section 类型
                 <select
                   value={newSectionType}
-                  style={{ ...inputStyle, width: '260px', padding: '4px 8px', marginLeft: '4px' }}
+                  style={{ ...inputStyle, width: '380px', padding: '4px 8px', marginLeft: '4px' }}
                   onChange={(event) => setNewSectionType(event.target.value)}
                 >
                   {MEDITATION_SECTION_TYPE_GROUPS.map((group) => (
                     <optgroup key={group.chapter_key} label={`${group.order}. ${group.chapter_label}（时长上限 ${group.max_duration_seconds}s）`}>
                       {group.section_types.map((meta) => (
                         <option key={meta.section_type} value={meta.section_type} disabled={!meta.text_required}>
-                          {meta.label}（{meta.section_type}{meta.text_required ? ` · 目标 ${meta.target_char_count} 字` : ' · 纯音频，不经 Section-Raw'}）
+                          {getSectionTypeDisplayLabel(meta.section_type)}（{meta.text_required ? `目标 ${meta.target_char_count} 字` : '纯音频，不经 Section-Raw'}）
                         </option>
                       ))}
                     </optgroup>
@@ -4022,7 +4281,7 @@ const MeditationPage = ({
                 </select>
               </label>
               <span style={{ color: '#64748b' }}>
-                推荐段落类型：{recommendedParagraphTypes.length > 0 ? recommendedParagraphTypes.join(' / ') : '无（纯音频段）'}
+                推荐段落类型：{recommendedParagraphTypes.length > 0 ? recommendedParagraphTypes.map((paragraphType) => getMeditationParagraphTypeDisplayLabel(paragraphType)).join(' / ') : '无（纯音频段）'}
               </span>
               <span style={{ color: '#64748b' }}>
                 字数 {currentCharCount}/{targetCharCount || '不判字数'}
@@ -4041,7 +4300,7 @@ const MeditationPage = ({
                   style={pillBtnStyle(sectionParagraphTypeFilter === paragraphType)}
                   onClick={() => setSectionParagraphTypeFilter(paragraphType)}
                 >
-                  {paragraphType === 'all' ? '全部' : paragraphType}
+                  {paragraphType === 'all' ? '全部' : getMeditationParagraphTypeDisplayLabel(paragraphType)}
                 </button>
               ))}
             </div>
@@ -4060,8 +4319,8 @@ const MeditationPage = ({
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {String(paragraph?.text || '').slice(0, 60)}
                   </span>
-                  <span style={{ color: '#94a3b8' }}>{paragraph?.paragraph_type}</span>
-                  <span style={{ color: '#64748b' }}>推荐 {recommendedSectionType || '—'}</span>
+                  <span style={{ color: '#94a3b8' }}>{getMeditationParagraphTypeDisplayLabel(paragraph?.paragraph_type)}</span>
+                  <span style={{ color: '#64748b' }}>推荐 {recommendedSectionType ? getMeditationSectionDisplayLabelWithCode(recommendedSectionType) : '—'}</span>
                   <span style={medBadgeStyle(matched ? 'ok' : 'warning')}>{matched ? '类型匹配' : '类型不匹配'}</span>
                 </label>
               );
@@ -4096,6 +4355,7 @@ const MeditationPage = ({
             sectionDurationSecondsByType={buildMeditationSectionDurationMap(sectionAudios)}
             saving={savingMedTracks}
             onSave={saveMedTrack}
+            onRefreshTrack={loadMedTracks}
           />
         </div>
       );
@@ -4108,7 +4368,8 @@ const MeditationPage = ({
         {tracksLoaded ? (
           <div>
             <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
-              尚无 med_tracks 记录；可初始化默认种子 Track（六章固定模板、各章时长上限 300/30/130/150/270/30、章间留白默认 141s）。
+              {/* 章上限序列与留白默认值一律**由权威常量派生**（此处不写字面量）⇒ 权威源常量再变时文案自动跟随。 */}
+              尚无 med_tracks 记录；可初始化默认种子 Track（六章固定模板、各章时长上限 {MEDITATION_TRACK_CHAPTER_TEMPLATE.map((chapter) => chapter.max_duration_seconds).join('/')}、章间留白默认 {MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT}s）。
             </div>
             <button style={{ ...primaryBtnStyle, padding: '6px 14px' }} onClick={handleCreateDefaultTrack} disabled={savingMedTracks}>
               {savingMedTracks ? '创建中…' : '初始化默认 Track'}
@@ -4120,6 +4381,11 @@ const MeditationPage = ({
       </div>
     );
   };
+
+  // D10 只读闸门 ②（渲染层，集中钳制）：老四 tab 即便被内部 state / hash / devtools 强制激活，
+  // `renderedSubTab` 一律为 null ⇒ 只渲染下方只读说明，老组件的渲染分支全部落空（不报错、不白屏）。
+  const frozenTabForced = isFrozenMeditationTab(activeSubTab);
+  const renderedSubTab = frozenTabForced ? null : activeSubTab;
 
   return (
     <div>
@@ -4139,6 +4405,16 @@ const MeditationPage = ({
       )}
 
       <div style={cardStyle}>
+        {/* D10 只读闸门 ②（渲染层）：老四 tab 被内部 state / hash / devtools 强制激活时，
+            不渲染老组件、不报错、不白屏，只给这段可见的只读说明。 */}
+        {frozenTabForced && (
+          <div
+            data-frozen-tab-readonly={activeSubTab}
+            style={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#475569', marginBottom: '12px', lineHeight: '1.6' }}
+          >
+            🔒 「{getFrozenMeditationTabLabel(activeSubTab)}」已冻结为只读，入口已下线。这里只保留历史数据的查看能力，当前版本不再提供任何修改入口；历史数据会在下个版本周期后清理。
+          </div>
+        )}
         {activeSubTab === 'paragraph' && (
           <div>
             <div style={sectionTitleStyle}>段落文本库</div>
@@ -4219,7 +4495,7 @@ const MeditationPage = ({
                             {isLocked && <span style={{ marginRight: '4px', fontSize: '12px', verticalAlign: 'middle' }} title="已加入音频库">🔒</span>}
                             {text.length > 120 ? text.slice(0, 120) + '...' : text}
                           </div>
-                          <div style={{ color: '#64748b', minWidth: '50px', fontSize: '12px' }}>{ptype}</div>
+                          <div style={{ color: '#64748b', minWidth: '50px', fontSize: '12px' }}>{getMeditationParagraphTypeDisplayLabel(ptype)}</div>
                           <div style={{ color: '#f59e0b', minWidth: '60px', fontSize: '12px', whiteSpace: 'nowrap', textAlign: 'center' }}>{stars}</div>
                           <button
                             style={{
@@ -4357,7 +4633,7 @@ const MeditationPage = ({
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {p?.source === 'ai' && '🤖 '}{p?.text?.slice(0, 80) || ''}
                     </span>
-                    <span style={{ color: '#94a3b8', fontSize: '11px', flexShrink: 0 }}>{p?.paragraph_type}</span>
+                    <span style={{ color: '#94a3b8', fontSize: '11px', flexShrink: 0 }}>{getMeditationParagraphTypeDisplayLabel(p?.paragraph_type)}</span>
                   </label>
                 );
               })}
@@ -4375,7 +4651,10 @@ const MeditationPage = ({
           </div>
         )}
 
-        {activeSubTab === 'library' && (
+        {/* D10 只读闸门 ③（写入口层，硬）：老组件的渲染分支只认 `renderedSubTab`（被闸门 ② 钳制），
+            且即便渲染，拿到的也是只读桩而非真实 writer —— 所以「强制激活老 tab」既无写入口，
+            也到不了 `updateMeditation*` / `queueMeditationAudioTranscodeJob`。老组件与老预览器原样保留。 */}
+        {renderedSubTab === 'library' && (
           <React.Fragment>
           <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
             ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。新数据请在「段落文本库」和「原始音频库」中管理。
@@ -4383,14 +4662,14 @@ const MeditationPage = ({
                 <AudioLibraryTab
                 library={localAudioLibrary}
                 saving={savingMeditationAudioLibrary}
-                onUpdate={updateMeditationAudioLibrary}
-                onQueueTranscodeJob={queueMeditationAudioTranscodeJob}
+                onUpdate={blockFrozenMeditationTabWrite(updateMeditationAudioLibrary)}
+                onQueueTranscodeJob={blockFrozenMeditationTabWrite(queueMeditationAudioTranscodeJob)}
                 onRefresh={refreshMeditationSection}
                 />
                 </React.Fragment>
                 )}
 
-        {activeSubTab === 'presets' && (
+        {renderedSubTab === 'presets' && (
           <React.Fragment>
           <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
             ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。
@@ -4400,11 +4679,11 @@ const MeditationPage = ({
             audioLibrary={localAudioLibrary}
             compositionSettings={localCompositionSettings}
             saving={savingMeditationLibrary}
-            onUpdate={updateMeditationLibrary}
+            onUpdate={blockFrozenMeditationTabWrite(updateMeditationLibrary)}
           />
           </React.Fragment>
         )}
-        {activeSubTab === 'composition' && (
+        {renderedSubTab === 'composition' && (
           <React.Fragment>
           <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
             ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。
@@ -4413,11 +4692,11 @@ const MeditationPage = ({
             settings={localCompositionSettings}
             library={localAudioLibrary}
             saving={savingMeditationCompositionSettings}
-            onUpdate={updateMeditationCompositionSettings}
+            onUpdate={blockFrozenMeditationTabWrite(updateMeditationCompositionSettings)}
           />
           </React.Fragment>
         )}
-        {activeSubTab === 'calendar' && (
+        {renderedSubTab === 'calendar' && (
           <React.Fragment>
           <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde047', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#713f12', marginBottom: '12px' }}>
             ⏳ 此标签页为旧版数据，未来将被 med_* 集合替代。
@@ -4426,7 +4705,7 @@ const MeditationPage = ({
             calendar={localCalendar}
             meditationLibrary={localLibrary}
             saving={savingMeditationCalendar}
-            onUpdate={updateMeditationCalendar}
+            onUpdate={blockFrozenMeditationTabWrite(updateMeditationCalendar)}
           />
           </React.Fragment>
         )}
@@ -4581,6 +4860,8 @@ const MeditationPage = ({
                         onClick={() => handleAddToSectionRaw(sr.id)}
                       >
                         <span style={{ flexShrink: 0 }}>
+                          {/* 窄位：本下拉固定 minWidth 240px 且标签列不可压缩（flexShrink: 0）⇒ 只出中文名；
+                              英文名并列见「纯音频段」分组标题与 Track 章节段列。 */}
                           {getSectionTypeLabel(sr.section_type)} · {sr.paragraph_ids.length}条
                         </span>
                         <span style={{ flex: 1, marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8', textAlign: 'right' }}>

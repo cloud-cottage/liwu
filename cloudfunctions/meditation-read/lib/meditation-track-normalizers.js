@@ -11,7 +11,7 @@
 //
 // 规范依据（docs/meditation.admin.partner.spec.md v4.6）：
 //   - §med_tracks 字段定义 + **R10**：章序 / 章内 Section 序列**只读**，脏文档一律折回六章模板；
-//   - `chapters` 长度必须为 6；`chapters[].gap_after_seconds` 末章（chapter-closing）固定 `0`；
+//   - `chapters` 长度必须为 6；`chapters[].gap_after_seconds` 末章（section-end）固定 `0`；
 //   - `version` 新建从 `1` 起、每次成功保存 +1（R5）——只读侧**原样透传**，不得自作改写。
 
 const {
@@ -19,7 +19,8 @@ const {
   MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
   MEDITATION_TRACK_BACKGROUND_CONFIG,
   MEDITATION_TRACK_VOICE_CONFIG,
-  DEFAULT_MEDITATION_SESSION_SECONDS
+  DEFAULT_MEDITATION_SESSION_SECONDS,
+  normalizeMeditationChapterCode
 } = require('./meditation-track-template.js')
 
 const MEDITATION_TRACK_COLLECTION = 'med_tracks'
@@ -53,7 +54,11 @@ const normalizeMedTrackChapters = (chapters = []) => {
   const sourceChapters = Array.isArray(chapters) ? chapters : []
 
   return MEDITATION_TRACK_CHAPTER_TEMPLATE.map((templateChapter, index) => {
-    const matchedChapter = sourceChapters.find((chapter) => chapter?.chapter_key === templateChapter.chapter_key)
+    // 读侧归一：库里的旧章 key 归一到新组 key 后与模板比对（旧值章也能取回自己的留白 / 上限 / 开关），
+    // 折回结果的章 key 与段码一律为新值（R10：数据不得覆盖模板顺序）。
+    const matchedChapter = sourceChapters.find((chapter) => (
+      normalizeMeditationChapterCode(chapter?.chapter_key) === templateChapter.chapter_key
+    ))
 
     return normalizeChapterEntry(
       matchedChapter || {},
@@ -64,6 +69,9 @@ const normalizeMedTrackChapters = (chapters = []) => {
 }
 
 const normalizeMedTrack = (doc = {}) => {
+  // 入参归一（C25，与权威源同口径）：显式 `null` 与 `undefined` **同等**处理，都走 `= {}` 的既有默认路径。
+  // 否则下一行取 `doc._id` 会抛 TypeError: Cannot read properties of null (reading '_id')。
+  doc = doc ?? {}
   const id = doc._id || doc.id || ''
 
   return {

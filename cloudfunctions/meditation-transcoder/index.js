@@ -22,6 +22,18 @@
 //   `attempt_count` / `error_message` 为**过渡期镜像**（老 worker 仍在读）——
 //   **待老 worker 退役后收敛为单一口径**。读取权威键优先，写入两键同写同值（见 lib/transcode-state.js）。
 //
+// 【Track 级混音（profile = 'track_mix'，本单新增）】**第二个队列分区**，与 section_audio **并列、零交叉**：
+//   · 领取：同样**过滤进查询**（fetchQueuedTrackMixJobs 的 where 带 `transcode_profile: 'track_mix'`），
+//     乐观锁条件亦带该 profile；非本分区 job 只跳过、**不写任何字段**。
+//   · 永久错误：缺 `track_key` / `track_version`（非正整数）/ `voice_section_audio_ids`（空数组）/
+//     三种背景来源全缺 / `background_section_type` 不在背景白名单 ⇒ **立即终结、不入重试**。
+//   · 处理：**一次 ffmpeg 调用**——人声 N 段按 job 给定顺序 concat → 背景 `-stream_loop -1` 铺满至人声全长
+//     → `amix` 混音（voice 1.0 / background 0.33）→ 双路输出（`.ogg` Opus 48k CBR ＋ `.mp3` 48k）。
+//   · 交付：`meditation-audio-mix/{track_key}/v{track_version}.ogg|.mp3`；回写 job 状态 ＋
+//     `med_tracks.mix_audio { version, duration, ogg_file_id, mp3_file_id }`。
+//   · 参数与命令构造见 `lib/track-mix-command.js`；配比/段白名单的精简副本见 `lib/meditation-track-mix.js`。
+//   · ⚠ file_id **不下发端侧**（下发范围由 D6 白名单管），本执行器只负责落库。
+//
 // 【响度归一（loudnorm）**未**在本链路实现】——老 worker 的做法、以及沿用需要什么，见 README
 //   「响度归一（待 Zang 拍板）」一节；本条**不由实现者自裁**，故本链路严格照抄既定参数，不加任何 -af。
 //
@@ -50,11 +62,21 @@ const {
   parseProbeJson
 } = require('./lib/transcode-command.js')
 
+// Track 级混音（profile = 'track_mix'）的命令构造（纯函数）：与上面的双路构造并列、互不调用。
+const { buildTrackMixArgs } = require('./lib/track-mix-command.js')
+
+// Track 双轨口径的精简副本（本执行器只取「集合名 + 背景段白名单」两项，其余口径由状态模块吃）。
+const {
+  MEDITATION_TRACK_COLLECTION,
+  isMeditationBackgroundSectionType
+} = require('./lib/meditation-track-mix.js')
+
 const {
   AUDIO_TRANSCODE_JOBS_COLLECTION,
   JOB_STATUS,
   MAX_JOBS_PER_RUN,
   SECTION_AUDIO_TRANSCODE_PROFILE,
+  TRACK_MIX_TRANSCODE_PROFILE,
   readJobIdentifier,
   readJobString,
   readJobAttemptCount,
@@ -70,7 +92,21 @@ const {
   buildMedSectionAudioFailurePatch,
   buildJobSuccessPatch,
   buildJobFailurePatch,
-  buildPermanentError
+  buildPermanentError,
+  isTrackMixJob,
+  resolveTrackMixTrackKey,
+  resolveTrackMixTrackVersion,
+  resolveTrackMixTrackDocumentId,
+  resolveTrackMixVoiceSectionAudioIds,
+  resolveTrackMixBackgroundFileId,
+  resolveTrackMixBackgroundSectionAudioId,
+  resolveTrackMixBackgroundSectionType,
+  resolveTrackMixVolumes,
+  resolveTrackMixJobSkipReason,
+  resolveTrackMixJobPreconditionError,
+  buildTrackMixDeliveryCloudBasePaths,
+  buildMedTrackMixAudioPatch,
+  getDocumentId
 } = require('./lib/transcode-state.js')
 
 const execFileAsync = promisify(execFile)
@@ -439,6 +475,363 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
   }
 }
 
+// ─── Track 级混音（profile = 'track_mix'）──────────────────────────────────────
+// 与上面的 section_audio 链路**并列**（独立查询 / 独立领取 / 独立回写），互不调用、互不影响：
+//   ① 输入：`voice_section_audio_ids`（有序 ⇒ 人声拼接顺序）＋ 背景来源（三选一）；
+//   ② 处理：一次 ffmpeg 调用（人声 concat → 背景 `-stream_loop -1` 铺满 → amix 混音 → 双路输出）；
+//   ③ 交付：`meditation-audio-mix/{track_key}/v{track_version}.ogg|.mp3`；
+//   ④ 回写：job 状态（沿用既有 patch 形状）＋ `med_tracks.mix_audio`。
+
+// 按 section_type 找背景时最多取几条候选（口径同 meditation-read：created_at 倒序后取“已转码的那条”）。
+const TRACK_MIX_BACKGROUND_CANDIDATE_LIMIT = 5
+
+// 失败收口：**只**写 job（track_mix 不写 med_section_audios：一条 job 对应整条 Track，
+// 不是某一段音频；结构性问题也不该把 Track 文档标脏）。
+const failTrackMixJob = async ({ db, jobId, failure, nowIso, requestId }) => {
+  await updateDocument({
+    db,
+    collectionName: AUDIO_TRANSCODE_JOBS_COLLECTION,
+    documentId: jobId,
+    patch: buildJobFailurePatch({ failure, nowIso })
+  }).catch((error) => {
+    logEvent(requestId, 'track_mix_job_failure_patch_failed', { jobId, message: error?.message || '' })
+  })
+
+  return {
+    jobId,
+    status: failure.job_status,
+    attempts: failure.attempts,
+    is_terminal: failure.is_terminal,
+    error: failure.message
+  }
+}
+
+// Track 文档定位：优先用 job 显式给的 `track_document_id`；否则按 `track_key` 查一条。
+const readMedTrackDocument = async ({ db, job }) => {
+  const explicitDocumentId = resolveTrackMixTrackDocumentId(job)
+  if (explicitDocumentId) {
+    return readDocument({
+      db,
+      collectionName: MEDITATION_TRACK_COLLECTION,
+      documentId: explicitDocumentId
+    })
+  }
+
+  const result = await db.collection(MEDITATION_TRACK_COLLECTION)
+    .where({ track_key: resolveTrackMixTrackKey(job) })
+    .limit(1)
+    .get()
+  assertCloudBaseResult(result, MEDITATION_TRACK_COLLECTION)
+
+  return getDocuments(result)[0] || null
+}
+
+// 人声输入解析：**严格按 job 数组顺序**逐条取 med_section_audios.file_id（Opus 主体），不排序、不去重。
+// 下列情形都是**永久错误**（重试不会变好，立即终结）：
+//   · 文档不存在            → VOICE_SECTION_AUDIO_NOT_FOUND
+//   · 该文档其实是背景段    → VOICE_SECTION_TYPE_INVALID（防止把背景混进人声轨）
+//   · 尚未转码完成(file_id 空) → VOICE_SOURCE_NOT_READY（应先把该段跑完 section_audio 链路）
+const resolveTrackMixVoiceInputs = async ({ db, job }) => {
+  const sectionAudioIds = resolveTrackMixVoiceSectionAudioIds(job)
+  const voiceInputs = []
+
+  for (const sectionAudioId of sectionAudioIds) {
+    const sectionAudio = await readDocument({
+      db,
+      collectionName: MEDITATION_SECTION_AUDIO_COLLECTION,
+      documentId: sectionAudioId
+    })
+    if (!sectionAudio) {
+      throw buildPermanentError(`VOICE_SECTION_AUDIO_NOT_FOUND：人声段文档不存在（${sectionAudioId}）`)
+    }
+
+    const sectionType = readJobString(sectionAudio, 'section_type', 'sectionType')
+    if (isMeditationBackgroundSectionType(sectionType)) {
+      throw buildPermanentError(`VOICE_SECTION_TYPE_INVALID：人声段列表里出现了背景段（${sectionAudioId} → ${sectionType}）`)
+    }
+
+    const fileId = readJobString(sectionAudio, 'file_id', 'fileId')
+    if (!fileId) {
+      throw buildPermanentError(`VOICE_SOURCE_NOT_READY：人声段尚未转码完成（${sectionAudioId} 的 file_id 为空），请先跑 section_audio 链路`)
+    }
+
+    voiceInputs.push({ section_audio_id: sectionAudioId, section_type: sectionType, file_id: fileId })
+  }
+
+  return voiceInputs
+}
+
+// 背景输入解析：三选一（优先级 file_id > section_audio_id > section_type）；
+// 解析不出可下载的 file_id 一律**永久错误**（缺段/未转码属于结构性问题，重试不会变好）。
+const resolveTrackMixBackgroundInput = async ({ db, job }) => {
+  const backgroundFileId = resolveTrackMixBackgroundFileId(job)
+  if (backgroundFileId) {
+    return { source: 'background_file_id', file_id: backgroundFileId, section_audio_id: '', section_type: '' }
+  }
+
+  const backgroundSectionAudioId = resolveTrackMixBackgroundSectionAudioId(job)
+  if (backgroundSectionAudioId) {
+    const sectionAudio = await readDocument({
+      db,
+      collectionName: MEDITATION_SECTION_AUDIO_COLLECTION,
+      documentId: backgroundSectionAudioId
+    })
+    if (!sectionAudio) {
+      throw buildPermanentError(`BACKGROUND_SECTION_AUDIO_NOT_FOUND：背景段文档不存在（${backgroundSectionAudioId}）`)
+    }
+
+    const fileId = readJobString(sectionAudio, 'file_id', 'fileId')
+    if (!fileId) {
+      throw buildPermanentError(`BACKGROUND_SOURCE_NOT_READY：背景段尚未转码完成（${backgroundSectionAudioId} 的 file_id 为空）`)
+    }
+
+    return {
+      source: 'background_section_audio_id',
+      file_id: fileId,
+      section_audio_id: backgroundSectionAudioId,
+      section_type: readJobString(sectionAudio, 'section_type', 'sectionType')
+    }
+  }
+
+  const backgroundSectionType = resolveTrackMixBackgroundSectionType(job)
+  const result = assertCloudBaseResult(
+    await db.collection(MEDITATION_SECTION_AUDIO_COLLECTION)
+      .where({ section_type: backgroundSectionType })
+      .orderBy('created_at', 'desc')
+      .limit(TRACK_MIX_BACKGROUND_CANDIDATE_LIMIT)
+      .get(),
+    MEDITATION_SECTION_AUDIO_COLLECTION
+  )
+  const candidate = getDocuments(result).find((document) => readJobString(document, 'file_id', 'fileId'))
+
+  if (!candidate) {
+    throw buildPermanentError(`BACKGROUND_SOURCE_NOT_READY：背景段类型 ${backgroundSectionType} 下没有已转码（file_id 非空）的音频`)
+  }
+
+  return {
+    source: 'background_section_type',
+    file_id: readJobString(candidate, 'file_id', 'fileId'),
+    section_audio_id: getDocumentId(candidate),
+    section_type: backgroundSectionType
+  }
+}
+
+// 临时输入文件扩展名：从 file_id 取（cloud:// 路径末段），取不到时用 .bin（ffmpeg 按内容探测格式）。
+const resolveTrackMixInputExtension = (fileId) => path.extname(String(fileId).split('?')[0]) || '.bin'
+
+const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
+  const jobId = readJobIdentifier(job)
+  const trackKey = resolveTrackMixTrackKey(job)
+  const trackVersion = resolveTrackMixTrackVersion(job)
+  const nowIso = new Date().toISOString()
+  const attemptCount = readJobAttemptCount(job) + 1
+
+  // 纵深防御（与 processJob 同构）：正常路径已在 fetchQueuedTrackMixJobs 的**查询条件**里按 profile 过滤；
+  // 手工 invoke / 直接调用时兜底——只跳过、**不写任何字段**。
+  if (!isTrackMixJob(job)) {
+    logEvent(requestId, 'job_profile_not_track_mix', {
+      jobId,
+      transcodeProfile: readJobString(job, 'transcode_profile', 'transcodeProfile')
+    })
+    return { jobId, status: 'skipped', skip_reason: 'not_track_mix_profile' }
+  }
+
+  const claimed = await claimTrackMixJob({ db, jobId, attemptCount, nowIso })
+  if (!claimed) {
+    logEvent(requestId, 'track_mix_job_claim_conflict', { jobId })
+    return { jobId, status: 'skipped', skip_reason: 'claim_conflict' }
+  }
+
+  const preconditionError = resolveTrackMixJobPreconditionError(job)
+  if (preconditionError) {
+    // 缺必需字段＝永久性结构错误 ⇒ buildPermanentError 标记 permanent，classifyFailure 立即终结
+    // （status='failed'，不退回 queued、不空耗 3 轮重试），与 section_audio 的 MISSING_* 同类处理。
+    return failTrackMixJob({
+      db,
+      jobId,
+      failure: classifyFailure({ attempts: attemptCount, error: buildPermanentError(preconditionError) }),
+      nowIso,
+      requestId
+    })
+  }
+
+  const deliveryPaths = buildTrackMixDeliveryCloudBasePaths(job)
+  const tmpRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'liwu-track-mix-'))
+  const opusOutputPath = path.join(tmpRoot, 'output.ogg')
+  const mp3OutputPath = path.join(tmpRoot, 'output.mp3')
+
+  try {
+    // D-B2-5：二进制缺失报明确错误（永久失败，不空耗重试轮次），不得静默。
+    const ffmpegPath = assertToolAvailable(resolveFfmpegPath(), 'ffmpeg')
+    const ffprobePath = assertToolAvailable(resolveFfprobePath(), 'ffprobe')
+
+    // 目标 Track 文档必须存在（上传前就失败 ⇒ COS 里不留孤儿产物，与 section_audio 同口径）。
+    const trackDocument = await readMedTrackDocument({ db, job })
+    if (!trackDocument) {
+      throw buildPermanentError(`TRACK_NOT_FOUND：med_tracks 中不存在 track_key=${trackKey} 的文档（且 job 未给可用的 track_document_id）`)
+    }
+
+    const voiceInputs = await resolveTrackMixVoiceInputs({ db, job })
+    const backgroundInput = await resolveTrackMixBackgroundInput({ db, job })
+    const volumes = resolveTrackMixVolumes(job)
+
+    const voiceInputPaths = []
+    for (const [index, voiceInput] of voiceInputs.entries()) {
+      const voicePath = path.join(tmpRoot, `voice-${index}${resolveTrackMixInputExtension(voiceInput.file_id)}`)
+      await app.downloadFile({ fileID: voiceInput.file_id, tempFilePath: voicePath })
+      voiceInputPaths.push(voicePath)
+    }
+
+    const backgroundInputPath = path.join(tmpRoot, `background${resolveTrackMixInputExtension(backgroundInput.file_id)}`)
+    await app.downloadFile({ fileID: backgroundInput.file_id, tempFilePath: backgroundInputPath })
+
+    // 单次调用：人声按序拼接 + 背景循环铺满 + amix 混音 + 双路输出。参数在 lib/track-mix-command.js，禁止在此改写。
+    const mixStartedAt = Date.now()
+    await execFileAsync(ffmpegPath, buildTrackMixArgs({
+      voiceInputPaths,
+      backgroundInputPath,
+      voiceVolume: volumes.voice,
+      backgroundVolume: volumes.background,
+      opusOutputPath,
+      mp3OutputPath
+    }), { maxBuffer: MAX_BUFFER_BYTES })
+    const mixMs = Date.now() - mixStartedAt
+
+    const opusOutputSize = assertOutputFile(opusOutputPath, 'opus(.ogg)')
+    const mp3OutputSize = assertOutputFile(mp3OutputPath, 'mp3')
+
+    // 时长只取**产物**实测值（D-B2-4 口径）；总长应等于人声拼接总长（背景循环铺满后自然收尾）。
+    const opusProbe = parseProbeJson((await execFileAsync(ffprobePath, buildProbeArgs(opusOutputPath), {
+      maxBuffer: MAX_BUFFER_BYTES
+    })).stdout)
+    const mp3Probe = parseProbeJson((await execFileAsync(ffprobePath, buildProbeArgs(mp3OutputPath), {
+      maxBuffer: MAX_BUFFER_BYTES
+    })).stdout)
+    const durationSeconds = opusProbe.duration_seconds > 0 ? opusProbe.duration_seconds : mp3Probe.duration_seconds
+
+    // 两份产物都传成功后才回写（不留「半个成功」）。
+    const [opusFileContent, mp3FileContent] = await Promise.all([
+      fs.promises.readFile(opusOutputPath),
+      fs.promises.readFile(mp3OutputPath)
+    ])
+    const opusFileId = resolveUploadFileId({
+      uploadResult: await app.uploadFile({ cloudPath: deliveryPaths.opus, fileContent: opusFileContent }),
+      envId,
+      cloudPath: deliveryPaths.opus
+    })
+    const mp3FileId = resolveUploadFileId({
+      uploadResult: await app.uploadFile({ cloudPath: deliveryPaths.mp3, fileContent: mp3FileContent }),
+      envId,
+      cloudPath: deliveryPaths.mp3
+    })
+    const tempUrlMap = await resolveTempFileUrls({ app, fileIds: [opusFileId, mp3FileId] })
+    const opusUrl = tempUrlMap.get(opusFileId) || ''
+    const mp3Url = tempUrlMap.get(mp3FileId) || ''
+
+    // med_tracks.mix_audio：整体覆盖 4 个约定字段（幂等）；file_id 不下发端侧（D6 白名单管）。
+    const wroteTrack = await updateDocument({
+      db,
+      collectionName: MEDITATION_TRACK_COLLECTION,
+      documentId: getDocumentId(trackDocument) || resolveTrackMixTrackDocumentId(job),
+      patch: {
+        ...buildMedTrackMixAudioPatch({
+          trackVersion,
+          durationSeconds,
+          opusFileId,
+          mp3FileId
+        }),
+        updated_at: new Date().toISOString()
+      }
+    })
+    if (!wroteTrack) {
+      throw new Error(`TRACK_MIX_WRITEBACK_NOT_APPLIED：mix_audio 未落到 med_tracks 文档（track_key=${trackKey}）`)
+    }
+
+    const wroteJob = await updateDocument({
+      db,
+      collectionName: AUDIO_TRANSCODE_JOBS_COLLECTION,
+      documentId: jobId,
+      patch: buildJobSuccessPatch({
+        deliveryPaths,
+        opusFileId,
+        opusUrl,
+        mp3FileId,
+        mp3Url,
+        durationSeconds,
+        probe: opusProbe,
+        nowIso: new Date().toISOString()
+      })
+    })
+    if (!wroteJob) {
+      logEvent(requestId, 'track_mix_job_success_patch_not_applied', { jobId })
+    }
+
+    return {
+      jobId,
+      track_key: trackKey,
+      track_version: trackVersion,
+      status: JOB_STATUS.succeeded,
+      attempts: attemptCount,
+      voice_section_count: voiceInputs.length,
+      background_source: backgroundInput.source,
+      volumes,
+      duration_seconds: durationSeconds,
+      mix_ms: mixMs,
+      opus: { cloud_path: deliveryPaths.opus, size_bytes: opusOutputSize, probe: opusProbe },
+      mp3: { cloud_path: deliveryPaths.mp3, size_bytes: mp3OutputSize, probe: mp3Probe }
+    }
+  } catch (error) {
+    // 单条失败只收口本条 job（attempt_count+1；>=3 置 failed），不影响整批其它 job（D-B2-3）。
+    logEvent(requestId, 'track_mix_job_failed', {
+      jobId,
+      trackKey,
+      attempts: attemptCount,
+      message: error?.message || 'TRACK_MIX_FAILED'
+    })
+
+    return failTrackMixJob({
+      db,
+      jobId,
+      failure: classifyFailure({ attempts: attemptCount, error }),
+      nowIso: new Date().toISOString(),
+      requestId
+    })
+  } finally {
+    await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+// D-B2-9 同型分区（filter 进查询，不是先领后筛）：
+//   只领 `transcode_profile === 'track_mix'` 的 queued job；section_audio / 老 profile 一律不碰。
+const fetchQueuedTrackMixJobs = async ({ db, limit }) => {
+  const result = await db.collection(AUDIO_TRANSCODE_JOBS_COLLECTION)
+    .where({
+      status: JOB_STATUS.queued,
+      transcode_profile: TRACK_MIX_TRANSCODE_PROFILE
+    })
+    .limit(limit)
+    .get()
+  assertCloudBaseResult(result, AUDIO_TRANSCODE_JOBS_COLLECTION)
+
+  return getDocuments(result)
+}
+
+// 乐观锁领取（where 条件**必须**带 transcode_profile ⇒ 只有 track_mix 的 job 领得走）。
+const claimTrackMixJob = async ({ db, jobId, attemptCount, nowIso }) => {
+  const result = assertCloudBaseResult(
+    await db.collection(AUDIO_TRANSCODE_JOBS_COLLECTION)
+      .where({
+        _id: jobId,
+        status: JOB_STATUS.queued,
+        transcode_profile: TRACK_MIX_TRANSCODE_PROFILE
+      })
+      .update(buildClaimPatch({ attemptCount, nowIso })),
+    AUDIO_TRANSCODE_JOBS_COLLECTION
+  )
+
+  return Number(result?.updated || 0) > 0
+}
+
 const runBatch = async ({ app, db, envId, limit, requestId }) => {
   const jobs = await fetchQueuedJobs({ db, limit })
   const results = []
@@ -461,7 +854,30 @@ const runBatch = async ({ app, db, envId, limit, requestId }) => {
     }
   }
 
-  return { envId, claimed: jobs.length, results }
+  // 【本单新增】Track 级混音分区（profile = 'track_mix'）：**独立查询**、独立串行消费，
+  // 与上面的 section_audio 循环零交叉（各自 limit 计数，互不占用对方的名额）。
+  // 分区纪律：过滤进查询 ⇒ 本循环只可能拿到 track_mix 的 job；缺必需字段即永久失败（一次即终结）。
+  const trackMixJobs = await fetchQueuedTrackMixJobs({ db, limit })
+
+  for (const job of trackMixJobs) {
+    const jobId = readJobIdentifier(job)
+    const skipReason = resolveTrackMixJobSkipReason(job)
+
+    if (skipReason) {
+      results.push({ jobId, status: 'skipped', skip_reason: skipReason })
+      continue
+    }
+
+    try {
+      results.push(await processTrackMixJob({ app, db, envId, job, requestId }))
+    } catch (error) {
+      logEvent(requestId, 'track_mix_job_unhandled_error', { jobId, message: error?.message || '' })
+      results.push({ jobId, status: JOB_STATUS.failed, error: error?.message || 'UNHANDLED_TRACK_MIX_ERROR' })
+    }
+  }
+
+  // `claimed` 语义**不变**（仍＝ section_audio 分区本轮领取条数）；track_mix 分区另计一个字段。
+  return { envId, claimed: jobs.length, track_mix_claimed: trackMixJobs.length, results }
 }
 
 const resolveBatchLimit = (rawLimit) => {
@@ -497,6 +913,7 @@ exports.main = async (event = {}) => {
     logEvent(requestId, 'completed', {
       durationMs: Date.now() - startedAt,
       claimed: result.claimed,
+      trackMixClaimed: result.track_mix_claimed,
       results: result.results
     })
 
@@ -514,4 +931,21 @@ exports.main = async (event = {}) => {
 // 本地自测/QA 用：暴露内部函数以便用桩对象驱动**真实执行路径**（SCF 只会调用 exports.main，
 // 额外导出无副作用）。自测脚本：
 // /Users/kevin/.hermes/profiles/zang/cache/scratch/kong-b2-transcoder/selftest.mjs
-exports.__test__ = { processJob, runBatch, claimJob, fetchQueuedJobs, readDocument, updateDocument }
+// Track 级混音（profile = 'track_mix'）自测脚本：
+// /Users/kevin/.hermes/profiles/zang/cache/scratch/kong-track-mix/selftest.cjs（桩 db / 桩 app 驱动真实 runBatch）
+exports.__test__ = {
+  processJob,
+  runBatch,
+  claimJob,
+  fetchQueuedJobs,
+  readDocument,
+  updateDocument,
+  // Track 级混音分区（本单新增）——与上面 section_audio 的导出并列，互不调用
+  processTrackMixJob,
+  fetchQueuedTrackMixJobs,
+  claimTrackMixJob,
+  readMedTrackDocument,
+  resolveTrackMixVoiceInputs,
+  resolveTrackMixBackgroundInput,
+  failTrackMixJob
+}

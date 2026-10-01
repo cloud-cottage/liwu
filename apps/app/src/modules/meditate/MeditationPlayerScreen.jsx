@@ -13,6 +13,7 @@ import {
   MEDITATION_TRACK_KEYS
 } from '@liwu/shared-utils/meditation-session-plan.js';
 import {
+  MEDITATION_PLAYBACK_SOURCES,
   buildMeditationTrackPlaybackPlan,
   buildSessionSolidification
 } from '@liwu/shared-utils/meditation-track-playback-plan.js';
@@ -104,6 +105,23 @@ const MEDITATION_SEGMENT_SKIPPED_MESSAGE = '部分音频暂不可播放，已跳
 // 段内 playlist 的定位键：重签覆盖 / 重入防护都以「轨 + 段」为粒度（同一段最多重调 1 次）。
 const buildSegmentPlaylistKey = (trackKey, segment) => `${trackKey}:${String(segment?.id || '')}`;
 
+// ─── 混音单流（R45，v4.22）：App 用**单个音频元素**播服务端预混版 ───────────────────────
+// 数据源＝D6 Track 响应的 `mix_audio`（共享 plan 已解析成 `mix_audio` ＋ `playback_source`）；
+// **播放形态只由它决定**：有可播混音产物 ⇒ 单元素播整场；缺失 ⇒ 现有双轨（**双轨代码保留**）。
+//   · 键名与响应字段同名（`mix_audio`），**不自造别名**；它是本播放器运行时的第三个「轨键」，
+//     与老双轨的 `MEDITATION_TRACK_KEYS` **并列而不并入**（那份常量属老 `meditation-session-plan.js`
+//     冻结层，不得改写 ⇒ 本页各自持有单流键）；
+//   · 混音是**单条**现签 URL（opus 在前、mp3 兜底），段窗口＝`[0, 混音时长]` ⇒ 整场由**这一个**
+//     音频元素推进；端侧**不再**叠加配比（voice 1.0 / background 0.33 已烘焙进产物）⇒ 音量恒 1；
+//   · 双轨口径、失败可见、同参重调、格式降级等既有机制**两条路径共用**（不另起一套）。
+const MEDITATION_MIX_TRACK_KEY = 'mix_audio';
+// 运行时轨键全集：**同步 / 暂停 / 收尾一律全覆盖**（混音单流时另两个元素本就空闲：
+// `pause()` 与清 `src` 对空闲元素都无副作用）⇒ 两种来源共用同一套运行时循环，不按来源分叉。
+const MEDITATION_RUNTIME_TRACK_KEYS = Object.freeze([
+  ...MEDITATION_TRACK_KEYS,
+  MEDITATION_MIX_TRACK_KEY
+]);
+
 const formatTime = (seconds) => {
   const normalizedSeconds = Math.max(0, Math.ceil(Number(seconds) || 0));
   const minutes = Math.floor(normalizedSeconds / 60);
@@ -127,12 +145,14 @@ const describeMeditationReadError = (error) => {
   return `${baseMessage}${suffix}`;
 };
 
-// ─── 新版（D9）播放计划 → 播放器运行时双轨计划 ────────────────────────────────
+// ─── 新版（D9）播放计划 → 播放器运行时计划（R45：混音单流优先，缺失回退双轨） ──────────
 // 数据源＝D6 `getTrack` 响应 + 共享 plan（`buildMeditationTrackPlaybackPlan`）；
 // **不做任何本地兜底**：无老音频库、无本地兜底 plan、无 fixture 开关、无桩分支。
+//   · **R45 混音单流**：响应 Track 带可播 `mix_audio` ⇒ 运行时计划＝**单个音频元素**的单段；
+//     否则＝下面这套既有双轨（回退路径，**代码保留、语义未改**）；
 //   · 背景轨：单条已抽中音频 `loop` 铺底，覆盖整场（含章间留白；规范「播放模型（双轨）」）；
 //   · 人声轨：按响应给定顺序逐段 `sequence`，段间按段上挂的 `gap_after_seconds` 留白；
-//   · 音量取响应值（缺省才由共享 plan 回退常量）；
+//   · 音量取响应值（缺省才由共享 plan 回退常量；**混音单流不取响应音量**——配比已烘焙进产物）；
 //   · **每段 playlist 按响应 `formats[]` 顺序一条格式一项**（opus 在前、mp3 兜底，R41-⑥）
 //     ⇒ 「opus 失败降级 mp3」在网络层（fetch 403）与解码层（`audio.onerror`）都能成立；
 //   · playlist 项**不含 `fileId`**：响应刻意不下发长期标识（R39 ⑤），链接失效只能**同参重调 getTrack**
@@ -166,6 +186,55 @@ const buildRuntimeUrlPolicy = ({ urlPolicy = null, receivedAtMs = Date.now() } =
   };
 };
 
+// 混音单流运行时计划（R45）：**单个音频元素、单段覆盖整场**。
+// 不满足（无混音产物 / 无可播 URL / 时长非正）⇒ 返回 `null`（调用方走既有双轨）。
+// 段形态与双轨段同形（`playlist` / `startSeconds` / `endSeconds` / `playbackMode`）⇒ 段推进、
+// 格式降级、同参重调等既有运行时机制**不需要分叉**。
+const buildRuntimeMixTrackPlan = ({
+  playbackPlan,
+  trackName = '',
+  now = new Date(),
+  urlPolicy = null,
+  receivedAtMs = Date.now()
+}) => {
+  if (playbackPlan?.playback_source !== MEDITATION_PLAYBACK_SOURCES.mixAudio) {
+    return null;
+  }
+
+  const mixAudio = playbackPlan?.mix_audio || null;
+  const sessionDuration = Math.max(0, Number(mixAudio?.duration_seconds) || 0);
+  const playlist = buildRuntimePlaylistItems({
+    audio: mixAudio?.audio,
+    durationSeconds: sessionDuration
+  });
+
+  if (playlist.length === 0 || sessionDuration <= 0) {
+    return null;
+  }
+
+  return {
+    playbackSource: MEDITATION_PLAYBACK_SOURCES.mixAudio,
+    segments: [{
+      id: 'mix-audio-session',
+      // 混音产物不是 `med_section_audios` 行（无 `_id` / `section_type`）⇒ 空串；同参重调后的
+      // 段匹配按「轨键 ＋ sectionType」进行，两侧恒等空串 ⇒ 命中同一条单流段。
+      sectionType: '',
+      trackKey: MEDITATION_MIX_TRACK_KEY,
+      startSeconds: 0,
+      durationSeconds: sessionDuration,
+      endSeconds: sessionDuration,
+      playbackMode: 'sequence',
+      playlist
+    }],
+    sessionDuration,
+    // 配比已烘焙进混音产物 ⇒ 端侧音量恒 1（空对象 ⇒ 播放时 `?? 1` 兜底，不写死常量覆盖响应）。
+    volumes: {},
+    urlPolicy: buildRuntimeUrlPolicy({ urlPolicy, receivedAtMs }),
+    presetName: String(trackName || '').trim() || '冥想',
+    sessionKey: getMeditationSessionKey(now)
+  };
+};
+
 const buildRuntimeTrackPlan = ({
   playbackPlan,
   trackName = '',
@@ -173,6 +242,14 @@ const buildRuntimeTrackPlan = ({
   urlPolicy = null,
   receivedAtMs = Date.now()
 }) => {
+  // R45：混音单流优先——有可播混音产物 ⇒ **单个音频元素**播整场（时长＝混音产物时长）；
+  // 返回 null ⇒ 落到下面的既有双轨组装（回退路径，**代码与语义一字未改**）。
+  const mixPlan = buildRuntimeMixTrackPlan({ playbackPlan, trackName, now, urlPolicy, receivedAtMs });
+
+  if (mixPlan) {
+    return mixPlan;
+  }
+
   const sessionDuration = Math.max(0, Number(playbackPlan?.totals?.total_seconds) || 0);
   const backgroundAudio = playbackPlan?.background?.audio || null;
   const backgroundVolume = Number(playbackPlan?.background?.volume);
@@ -224,6 +301,8 @@ const buildRuntimeTrackPlan = ({
     : null;
 
   return {
+    // R45：双轨（回退）路径的显式来源标注——与单流分支同形，供运行时分流与质检断言。
+    playbackSource: MEDITATION_PLAYBACK_SOURCES.dualTrack,
     segments: [backgroundSegment, ...voiceSegments].filter(Boolean),
     sessionDuration,
     volumes: {
@@ -255,19 +334,22 @@ const MeditationPlayer = () => {
   const [sessionStorageError, setSessionStorageError] = useState('');
   const backgroundAudioRef = useRef(new Audio());
   const voiceAudioRef = useRef(new Audio());
+  // R45：混音单流的**那一个**音频元素（双轨路径下恒空闲）。
+  const mixAudioRef = useRef(new Audio());
   const timerRef = useRef(null);
   const sessionStartMsRef = useRef(null);
   const elapsedBeforePauseRef = useRef(0);
   const sessionPersistedRef = useRef(false);
   const listenedSecondsRef = useRef(0);
   const blobUrlCacheRef = useRef(new Map());
-  const trackLoadTokenRef = useRef({ background: 0, voice: 0 });
+  const trackLoadTokenRef = useRef({ background: 0, voice: 0, [MEDITATION_MIX_TRACK_KEY]: 0 });
   const isPlayingRef = useRef(false);
   const sessionPlanRef = useRef(null);
   const completionHandledRef = useRef(false);
   const trackRuntimeRef = useRef({
     background: { segmentId: '', itemIndex: 0, completed: false },
-    voice: { segmentId: '', itemIndex: 0, completed: false }
+    voice: { segmentId: '', itemIndex: 0, completed: false },
+    [MEDITATION_MIX_TRACK_KEY]: { segmentId: '', itemIndex: 0, completed: false }
   });
   // ─── 恢复路径（R39 ⑤ / R41-⑥⑦）的四个防护 ref ────────────────────────────────
   // ① 首读与重签**必须完全同参**：端侧不持有 file_id ⇒ 重签＝用这份参数再调一次 `getTrack`。
@@ -283,9 +365,14 @@ const MeditationPlayer = () => {
   const segmentPlaylistOverrideRef = useRef(new Map());
   const canPlayMeditation = !authLoading && Boolean(authStatus?.isAuthenticated);
 
-  const getAudioRef = useCallback((trackKey) => (
-    trackKey === 'background' ? backgroundAudioRef : voiceAudioRef
-  ), []);
+  const getAudioRef = useCallback((trackKey) => {
+    // R45：混音单流用它自己的那一个元素；双轨仍是既有两个元素。
+    if (trackKey === MEDITATION_MIX_TRACK_KEY) {
+      return mixAudioRef;
+    }
+
+    return trackKey === 'background' ? backgroundAudioRef : voiceAudioRef;
+  }, []);
 
   // 段内 playlist：优先用重签后的覆盖（同 `sectionType` 的新链接），否则用计划里的原 playlist。
   const resolveSegmentPlaylist = useCallback((trackKey, segment) => {
@@ -438,11 +525,13 @@ const MeditationPlayer = () => {
     elapsedBeforePauseRef.current = getElapsedSeconds();
     stopTicker();
     isPlayingRef.current = false;
-    backgroundAudioRef.current.pause();
-    voiceAudioRef.current.pause();
+    // R45：全覆盖（混音单流时另两个元素本就空闲；`pause()` 对空闲元素无副作用）。
+    MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => {
+      getAudioRef(trackKey).current.pause();
+    });
     setIsPlaying(false);
     setIsBuffering(false);
-  }, [getElapsedSeconds, stopTicker]);
+  }, [getAudioRef, getElapsedSeconds, stopTicker]);
 
   const clearTrackRuntime = useCallback((trackKey) => {
     const audio = getAudioRef(trackKey).current;
@@ -658,7 +747,7 @@ const MeditationPlayer = () => {
       return;
     }
 
-    MEDITATION_TRACK_KEYS.forEach((trackKey) => {
+    MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => {
       const activeSegment = plan.segments.find((segment) => (
         segment.trackKey === trackKey &&
         elapsedSeconds >= segment.startSeconds &&
@@ -689,8 +778,7 @@ const MeditationPlayer = () => {
     isPlayingRef.current = false;
     setIsPlaying(false);
     setIsBuffering(false);
-    clearTrackRuntime('background');
-    clearTrackRuntime('voice');
+    MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => clearTrackRuntime(trackKey));
     elapsedBeforePauseRef.current = Math.max(elapsedBeforePauseRef.current, duration || 0);
     listenedSecondsRef.current = Math.max(listenedSecondsRef.current, elapsedBeforePauseRef.current);
 
@@ -726,7 +814,7 @@ const MeditationPlayer = () => {
       setTimeLeft(Math.max(0, Math.ceil(sessionDuration - elapsedSeconds)));
       syncTrackPlayback(elapsedSeconds);
 
-      const stillHasPlayableContent = MEDITATION_TRACK_KEYS.some((trackKey) => {
+      const stillHasPlayableContent = MEDITATION_RUNTIME_TRACK_KEYS.some((trackKey) => {
         const trackSegments = (sessionPlanRef.current?.segments || []).filter((segment) => segment.trackKey === trackKey);
         const futureSegmentExists = trackSegments.some((segment) => elapsedSeconds < segment.startSeconds);
         if (futureSegmentExists) {
@@ -871,8 +959,7 @@ const MeditationPlayer = () => {
     return () => {
       active = false;
       stopTicker();
-      clearTrackRuntime('background');
-      clearTrackRuntime('voice');
+      MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => clearTrackRuntime(trackKey));
       blobUrlCache.forEach((blobUrl) => {
         try {
           URL.revokeObjectURL(blobUrl);
@@ -896,7 +983,9 @@ const MeditationPlayer = () => {
     setIsPlaying(true);
     setIsBuffering(true);
 
-    const playableAudios = [backgroundAudioRef.current, voiceAudioRef.current].filter((audio) => audio.src);
+    const playableAudios = MEDITATION_RUNTIME_TRACK_KEYS
+      .map((trackKey) => getAudioRef(trackKey).current)
+      .filter((audio) => audio.src);
     const playbackResults = await Promise.allSettled(playableAudios.map((audio) => audio.play()));
     if (playbackResults.some((result) => result.status === 'rejected')) {
       const rejectedResult = playbackResults.find((result) => result.status === 'rejected');
@@ -908,7 +997,7 @@ const MeditationPlayer = () => {
     setSessionError('');
     setIsBuffering(false);
     startTicker();
-  }, [canPlayMeditation, isLoaded, pausePlayback, startTicker, syncTrackPlayback]);
+  }, [canPlayMeditation, getAudioRef, isLoaded, pausePlayback, startTicker, syncTrackPlayback]);
 
   const elapsedTime = duration > 0 ? Math.max(duration - timeLeft, 0) : 0;
   const segmentProgress = duration > 0 ? Math.min((elapsedTime / duration) * 100, 100) : 0;
@@ -921,6 +1010,8 @@ const MeditationPlayer = () => {
     : sessionPlan
       ? `${SESSION_LABELS[sessionPlan.sessionKey] || '冥想'} · ${sessionPlan.presetName}`
       : '吸气，感受当下；呼气，放下杂念。';
+  // 页脚＝**复用既有可见提示位**：播放错误优先，其次会话固化（本地 storage 写失败）——两者都可见、都不静默。
+  const footerMessage = sessionError || sessionStorageError;
 
   const togglePlay = async () => {
     if (!canPlayMeditation) {
@@ -943,8 +1034,7 @@ const MeditationPlayer = () => {
   const handleClose = () => {
     if (window.confirm('确定要结束冥想吗？单次冥想超过 3 分钟会自动记入一次。')) {
       stopTicker();
-      clearTrackRuntime('background');
-      clearTrackRuntime('voice');
+      MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => clearTrackRuntime(trackKey));
       void (async () => {
         await persistMeditationSession({
           durationMinutes: toMeditationMinutes(Math.max(listenedSecondsRef.current, getElapsedSeconds())),
@@ -1307,7 +1397,7 @@ const MeditationPlayer = () => {
             opacity: 0.82
           }}
         >
-          {sessionError ? `${footerLabel} · ${sessionError}` : footerLabel}
+          {footerMessage ? `${footerLabel} · ${footerMessage}` : footerLabel}
         </div>
       </div>
     </div>

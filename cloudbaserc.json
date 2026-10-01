@@ -1,6 +1,7 @@
 {
   "envId": "liwu-d8gek6jjdab1d087c",
   "functionRoot": "cloudfunctions",
+  "//layers": "meditation-transcoder 的 ffmpeg 层已由用户在控制台发布并回填到下方 functions[] 条目（meditation-ffmpeg / meditation-ffprobe，各 version 1，2026-09-28）。层内为 bin/ ⇒ 挂载点为 /opt/bin/ffmpeg 与 /opt/bin/ffprobe，与 envVariables 的 FFMPEG_PATH 一致。层版本创建后不可修改；换版本须① 控制台发布新版本 ② 改此处 version ③ 同步 scripts/deploy-meditation-functions.sh 里 assert_cfg 的期望值。配方见 cloudfunctions/meditation-transcoder/README.md §4（含 50MB 层上限与拆两层）。",
   "functions": [
     {
       "name": "fortuneDailySettlement",
@@ -31,13 +32,28 @@
       "name": "meditation-read",
       "timeout": 30,
       "memorySize": 128,
-      "runtime": "Nodejs18.15"
+      "runtime": "Nodejs18.15",
+      "installDependency": true
     },
     {
       "name": "meditation-transcoder",
-      "timeout": 60,
+      "timeout": 300,
       "memorySize": 256,
       "runtime": "Nodejs18.15",
+      "installDependency": true,
+      "envVariables": {
+        "FFMPEG_PATH": "/opt/bin/ffmpeg"
+      },
+      "layers": [
+        {
+          "name": "meditation-ffmpeg",
+          "version": 1
+        },
+        {
+          "name": "meditation-ffprobe",
+          "version": 1
+        }
+      ],
       "triggers": [
         {
           "name": "meditation-transcoder-trigger",

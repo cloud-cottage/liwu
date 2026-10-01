@@ -16,6 +16,7 @@
     "navigationBarTextStyle": "black",
     "backgroundColor": "#F3F0EA"
   },
+  "requiredBackgroundModes": ["audio"],
   "tabBar": {
     "custom": true,
     "color": "#6B7280",

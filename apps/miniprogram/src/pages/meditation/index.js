@@ -1,26 +1,37 @@
-// ─── 小程序冥想页：D6 数据源 ＋ 端侧双轨播放（R44 ①~⑬） ─────────────────────────────
+// ─── 小程序冥想页：D6 数据源 ＋ 端侧播放（R45 混音单流优先，缺失回退双轨） ───────────────
 //
-// 【规范依据】docs/meditation.admin.partner.spec.md（v4.13）R44（小程序端侧接入口径 ①~⑬）
-//   与 R41 / R42（端侧通用条款；R44-⑤ 是 R42-④ 的**明文例外，且仅限小程序**）。
-//   · ① 数据源**只经 D6**（`utils/meditation-read.js` 注入 `wx.cloud.callFunction`）：本页取数
-//     入口**没有** `wx.cloud.database()`、不读老 5 项 `app_settings`、不算老 plan（D9）；
-//   · ② 前台**双轨不降级**：两个**独立** `InnerAudioContext`（背景 `loop = true` 铺底 ＋
+// 【规范依据】docs/meditation.admin.partner.spec.md（v4.22）R45（端侧混合播放口径 ①~⑨）
+//   与 R41 / R42 / R44（端侧通用条款；R44-⑤ 是 R42-④ 的**明文例外，且仅限小程序**）。
+//   · **R45（本批新增）**：产品口径＝人声与背景**必须同时出声**；技术路径＝**服务端预混单流**
+//     ⇒ 本页**有可播混音产物时**用 `BackgroundAudioManager` 播混音版（**前后台同源**：该 API 是
+//     平台唯一能后台续播的形态）；**混音产物缺失 ⇒ 回退下面这套双轨**（两个 `InnerAudioContext`，
+//     **仅前台**——R44-③ 的「切后台停播属平台限制」对**回退路径**仍然成立，R45-⑦ 的改判只针对单流）。
+//   · ① 数据源**只经 D6**（`utils/meditation-read.js` 注入的只读云函数客户端）：本页取数
+//     入口**不直连数据库**、不读老 5 项 `app_settings`、不算老 plan（D9）；
+//   · ② 前台**双轨不降级**（**回退路径**）：两个**独立** `InnerAudioContext`（背景 `loop = true` 铺底 ＋
 //     人声 `sequence` 顺序播放）——**不得**因「担心叠加播放」降为单轨；
-//   · ③ 本批**只支持前台**（切后台微信会停 JS 线程；`BackgroundAudioManager` 全局单例且无
-//     `loop` ⇒ 双轨后台原理不可得）⇒ 切后台停播属**平台限制、不判缺陷**，也**不引入**该 API；
-//   · ④ 格式**只取 mp3**（ogg 仅 Android、iOS 不支持）⇒ 取 `resolveMeditationPlayableFormats`
-//     结果后**过滤为 mp3**；**不用 `canPlayType`**（该 API 属 HTML5，小程序不存在）；
-//   · ⑤ `onError` ⇒ **同参整场重调 `getTrack` 至多 1 次**（闸门级）；仍 `onError` ⇒ 跳段 ＋
-//     warning ＋ 可见提示（背景轨继续、**不整场失败**、**不得无限重试**）；
-//   · ⑥ 取源＝**直设 `ctx.src`**（零部署前置；不做 `wx.downloadFile` 预取、不用 `wx.cloud.downloadFile`
-//     ——D6 不下发 `file_id`，端侧无句柄可取）；
+//   · ③ 本批**只支持前台**（切后台微信会停 JS 线程；**回退路径**的音频单例 API 无 `loop` 属性 ⇒
+//     双轨后台原理不可得）；**R45 起**：有混音产物时走 `BackgroundAudioManager`，**前后台同源**；
+//   · ④ 格式**只取 mp3**（跨端唯一公共格式；其余格式 iOS 不支持）⇒ 取
+//     `resolveMeditationPlayableFormats` 结果后**过滤为 mp3**；**不用浏览器侧的格式探测 API**
+//     （该类 API 在小程序不存在，用了即结论无效）——**混音单流同样只取 mp3**；
+//   · ⑤ `onError` ⇒ **同参整场重调 `getTrack` 至多 1 次**（闸门级、单流与双轨**共用同一额度**）；
+//     仍 `onError` ⇒ 跳段 ＋ warning ＋ 可见提示（背景轨继续、**不整场失败**、**不得无限重试**）；
+//     **单流仍失败 ⇒ 回退双轨**（仅前台）＋ warning ＋ 可见提示——**不得无限重试**（额度已用尽即回退，
+//     单流侧不再自动换源；**不在恢复路径反复改判**：一次回退定音，此后按双轨语义走）；
+//   · ⑥ 取源＝**直设 `ctx.src`**（零部署前置；**不做**本地预取——预取需下载域名白名单，
+//     须单独立项；端侧也不持有长期文件句柄，D6 不下发）；
 //   · ⑦ 卸载时对**两个实例**`destroy()`（资源不自动释放，否则计内存泄漏）；
+//     **单流的 `BackgroundAudioManager` 是全局单例、不随页面销毁** ⇒ 卸载 / 重新取数 / 重复进页时
+//     先摘回调（`offEnded` / `offError`）再 `stop()`（否则留悬挂回调或后台仍在出声）；
 //   · ⑧ `wx.setInnerAudioOption`（iOS 静音模式出声；**真机效果未实测**）；
 //   · ⑨ 音量**取响应值**（缺省才由共享层回退常量）＋ **计时按 Track 组装结果**
-//     （Σ 人声实测 ＋ Σ 章间留白，**背景 loop 不计入**；**弃 900s 固定值**）；
+//     （Σ 人声实测 ＋ Σ 章间留白，**背景 loop 不计入**；**弃固定 15 分钟基准**）；
+//     **混音单流**：配比已由服务端烘焙进产物 ⇒ 端侧不设音量，计时基准取混音产物时长；
 //   · ⑩ 会话固化**先落本地** `liwu_meditation_session_v1`、**不写云**（C18 未裁）；
 //   · ⑬ 五类错误码**各自可见文案 ＋ `requestId`**、可重试；空池 / 缺段 ⇒ 跳段 ＋ warning、
-//     **不整场失败**、**不回退老音频库 / 本地兜底 plan**；**零 fixture 分支**（桩只打测试侧）。
+//     **不整场失败**、**不回退老音频库 / 本地兜底 plan**；本页**没有任何开发开关 / 测试替身分支**
+//     （测试替身只存在于测试侧，不进产品包）。
 
 const {
   MIN_VALID_MEDITATION_SECONDS,
@@ -33,6 +44,8 @@ const { getPageMastheadSettings } = require('../../utils/pageMasthead')
 const { meditationReadClient } = require('../../utils/meditation-read')
 const {
   MEDITATION_PLAYBACK_TRACK_KEYS,
+  MEDITATION_PLAYBACK_SOURCES,
+  MEDITATION_PLAYBACK_WARNING_CODES,
   buildMeditationTrackPlaybackPlan,
   buildSessionSolidification,
   resolveMeditationPlayableFormats
@@ -40,16 +53,34 @@ const {
 
 // ─── 常量（页面展示文案 ＋ 本地键名；播放口径一律取自共享层，不另抄一份） ──────────────
 const MEDITATION_SESSION_STORAGE_KEY = 'liwu_meditation_session_v1'
-// R44-④：**mp3 是唯一跨端公共格式**（ogg 仅 Android、iOS 不支持）⇒ 播放清单只保留 mp3。
+// R44-④：**mp3 是唯一跨端公共格式**（其余格式 iOS 不支持）⇒ 播放清单只保留 mp3。
 const MINIPROGRAM_PLAYABLE_FORMAT = 'mp3'
+// 单流（`BackgroundAudioManager`）的展示标题：该 API 的 `title` 是锁屏 / 通知栏的必填展示项。
+const MEDITATION_BACKGROUND_AUDIO_TITLE = '静寂冥想'
 
 // 运行时 warning 码（`console.warn` 载荷可检索；跳段**不整场失败**）。
 const MEDITATION_TRACK_WARNING_CODES = Object.freeze({
   segmentSkipped: 'SEGMENT_SKIPPED',
   noPlayableMp3: 'NO_PLAYABLE_MP3',
   reissueAttempt: 'SEGMENT_REISSUE_ATTEMPT',
-  reissueFailed: 'SEGMENT_REISSUE_FAILED'
+  reissueFailed: 'SEGMENT_REISSUE_FAILED',
+  // 混音产物**在计划里标注为可播、但本页取不到 mp3 链接**（例如只下发 ogg）⇒ 本页不可播、回退双轨。
+  mixAudioUnplayable: 'MIX_AUDIO_UNPLAYABLE',
+  // 单流**运行期失败**（重调额度已用尽或重调后仍不可播）⇒ 回退双轨。
+  singleStreamFallback: 'SINGLE_STREAM_FALLBACK'
 })
+
+// 回退可见提示（**计划级 / 单流级，无 `section_type` ⇒ 不是段级跳过**、不并入跳段计数）：
+// 只用用户语言表述，**零规范编号、零内部代号**。
+const MEDITATION_MIX_UNAVAILABLE_MESSAGE = '本次冥想暂未生成混合音轨，已切换为人声与背景分开播放'
+const MEDITATION_MIX_UNPLAYABLE_MESSAGE = '混合音轨在本机暂不可播放，已切换为人声与背景分开播放'
+const MEDITATION_SINGLE_STREAM_FALLBACK_MESSAGE = '混合音轨播放中断，已切换为人声与背景分开播放'
+// 码 → 可见文案。`MIX_AUDIO_UNAVAILABLE` 取自**共享层常量**（不另抄字面量：它是计划级标注的权威来源）。
+const MEDITATION_PLAYBACK_NOTICE_MESSAGES = {
+  [MEDITATION_PLAYBACK_WARNING_CODES.mixAudioUnavailable]: MEDITATION_MIX_UNAVAILABLE_MESSAGE,
+  [MEDITATION_TRACK_WARNING_CODES.mixAudioUnplayable]: MEDITATION_MIX_UNPLAYABLE_MESSAGE,
+  [MEDITATION_TRACK_WARNING_CODES.singleStreamFallback]: MEDITATION_SINGLE_STREAM_FALLBACK_MESSAGE
+}
 
 // D6（meditation-read）失败码 → 用户可见文案（R44-⑬）。
 // **只按 `error.code` 归类**：不解析服务端 message 文本、也不把 message 当真假判据（R39-③）。
@@ -127,10 +158,50 @@ const buildSectionLabelIndex = (chapterTemplate = []) => {
 }
 
 // 只取 mp3（R44-④）：取共享层 `resolveMeditationPlayableFormats` 的结果后**过滤为 mp3**
-//（保持响应给的格式顺序，不按扩展名猜；不播 ogg、**不用 `canPlayType`**）。
+//（保持响应给的格式顺序，不按扩展名猜；只播 mp3、**不用浏览器侧的格式探测 API**）。
 const resolveMiniProgramPlaylist = (audio) => resolveMeditationPlayableFormats(audio)
   .filter((format) => format.format === MINIPROGRAM_PLAYABLE_FORMAT)
   .map((format) => ({ format: format.format, url: format.url, mime_type: format.mime_type }))
+
+// ─── 单流（R45-⑥）：混音产物的可播判定 ＋ 播放源解析 ────────────────────────────────
+//
+// 【为何用 `BackgroundAudioManager`】**该 API 是平台唯一能「切后台 / 锁屏仍续播」的音频形态**
+//   （依据硬＝iOS 切后台后 JS 被挂起 ⇒ 端侧无法在那一刻换源；两个 `InnerAudioContext` 的前台双轨
+//   在后台原理不可得）⇒ 单流**前后台同源**：只设一次源，前后台是同一路声音，**不需要** onHide /
+//   onShow 换源或 seek 对齐。
+// 【为何单流只取 mp3】该 API 与 `InnerAudioContext` 同属平台音频接口，**跨端公共格式只有 mp3**
+//   （其余格式 iOS 不支持）⇒ 与页内既有双轨口径一致：共享层给的格式序列**过滤为 mp3**，
+//   不按扩展名猜、也不用浏览器侧的格式探测 API。
+// 【可播判据】计划来源标注为混音单流 **且** 混音产物里有 **mp3 链接** 且有 **正的产物时长**
+//   （时长即计时基准）；其余（产物缺失 / 只有 ogg / 链接为空 / 时长非正）⇒ 返回 `null`
+//   ＝本页不可播 ⇒ 回退双轨。
+// 【音量】混音产物的配比（voice 1.0 / background 取常量）已由服务端烘焙进单流 ⇒ 端侧**不设音量**，
+//   也不读 `plan.*.volume`（那两项只服务双轨回退路径）。
+const resolveSingleStreamPlayback = (plan) => {
+  if (plan?.playback_source !== MEDITATION_PLAYBACK_SOURCES.mixAudio) {
+    return null
+  }
+
+  const mixAudio = plan?.mix_audio
+  const playlist = resolveMiniProgramPlaylist(mixAudio?.audio)
+
+  if (playlist.length === 0) {
+    return null
+  }
+
+  // 计时基准＝**混音产物时长**（单流是整场成品，不是 Σ 人声 ＋ Σ 章间留白）。
+  const durationSeconds = Math.max(0, Number(mixAudio?.duration_seconds) || 0)
+
+  if (durationSeconds <= 0) {
+    return null
+  }
+
+  return {
+    version: Number(mixAudio?.version) || 0,
+    durationSeconds,
+    url: playlist[0].url
+  }
+}
 
 const resolveTrackId = (track) => readTrimmedString(track?._id || track?.id)
 
@@ -167,6 +238,8 @@ Page({
     // 数据源就绪且**有可播段**才允许开始（空池 / 无可播格式 ⇒ 见 `emptyPlanNotice`）。
     audioReady: false,
     emptyPlanNotice: '',
+    // 回退可见提示（混音不可播 / 单流失败 ⇒ 双轨）：**计划级**，与段级跳段计数分开呈现。
+    playbackNotice: '',
     errorMessage: '',
     errorCode: '',
     errorRequestId: '',
@@ -180,7 +253,7 @@ Page({
       pastCount: 0
     },
     meditationSlogan: MEDITATION_DEFAULT_SLOGAN,
-    // 计时节流＝Track 组装结果（Σ 人声实测 ＋ Σ 章间留白；背景 loop 不计入）——**不用 900s 固定值**。
+    // 计时节流＝Track 组装结果（Σ 人声实测 ＋ Σ 章间留白；背景 loop 不计入）——**不用固定 15 分钟基准**。
     trackTotalSeconds: 0,
     timeLabel: formatTime(0),
     remainingSeconds: 0,
@@ -209,9 +282,17 @@ Page({
     this.sessionStarted = false
     // 重调闸门（**闸门级**：整场至多 1 次，R44-⑤）。
     this.trackReissueAttempted = false
+    // 运行时 warning 状态
     this.segmentWarnings = []
     this.segmentWarningSeen = new Set()
     this.solidificationPayload = null
+    // 播放来源（`mix_audio` ＝ 单流混音版；`dual_track` ＝ 回退双轨）与单流运行时状态。
+    this.playbackSource = ''
+    this.mixAudioPlayback = null
+    this.backgroundAudioManager = null
+    this.singleStreamHandlers = null
+    this.singleStreamActive = false
+    this.sessionCompleted = false
 
     applyMiniProgramInnerAudioOptions()
 
@@ -220,10 +301,8 @@ Page({
   },
 
   onUnload() {
-    this.clearTimer()
-    this.clearGapTimer()
-    // 资源释放（R44-⑦，硬）：两个实例都要 `destroy()`。
-    this.destroyAudioContexts()
+    // 单流（全局单例）与双轨（两个实例）**都要收干净**：停播 ＋ 摘回调 ＋ `destroy()`。
+    this.teardownPlayback()
   },
 
   async onPullDownRefresh() {
@@ -253,9 +332,8 @@ Page({
   // ─── D6 取数（唯一数据源：`meditation-read` / action `getTrack`）＋ 共享层计划组装 ──────
   async loadTrack() {
     this.setData({ loading: true, errorMessage: '', errorCode: '', errorRequestId: '' })
-    this.clearTimer()
-    this.clearGapTimer()
-    this.destroyAudioContexts()
+    // 重新取数＝重复进页的同一情形：旧的单流 / 双轨播放资源先收干净，避免残留回调与残留出声。
+    this.teardownPlayback()
 
     try {
       const { data } = await meditationReadClient.getTrack(this.trackRequestParams)
@@ -279,14 +357,26 @@ Page({
     }
   },
 
-  // 计划 → 双轨播放运行时：背景轨一条 `loop` 音频铺底，人声轨按计划顺序排段（只取 mp3）。
+  // 计划 → 播放运行时：**有可播混音产物 ⇒ 单流**（`BackgroundAudioManager` 播混音版、前后台同源）；
+  // 否则 ⇒ 双轨（背景轨一条 `loop` 铺底 ＋ 人声轨按计划顺序排段，**仅前台**，只取 mp3）。
+  // **双轨数据两种来源都照旧装配**：单流运行期失败时可直接回退，不必重建整场时间轴。
   applySessionPlan(plan) {
     const voiceSegments = []
-    const planWarnings = []
+    const segmentWarningEntries = []
+    const playbackNoticeEntries = []
 
-    // 计划级 warning（**空池** / **池非空但无可用格式**）：共享层已判定「跳过该段」（R44-⑬）。
+    // 计划级 warning 分流：**带 `section_type` ⇒ 段级跳过**；
+    // **不带 `section_type` ⇒ 计划级提示**（混音缺失那条即属此类：按提示呈现，**不得当跳段处理**、
+    // 不并入跳段计数、也不占用 `section_type` 去重集合）。
     ;(Array.isArray(plan.warnings) ? plan.warnings : []).forEach((warning) => {
-      planWarnings.push({ section_type: warning?.section_type, code: warning?.code })
+      const entry = { section_type: warning?.section_type, code: warning?.code }
+
+      if (readTrimmedString(entry.section_type)) {
+        segmentWarningEntries.push(entry)
+        return
+      }
+
+      playbackNoticeEntries.push({ code: entry.code })
     })
 
     ;(Array.isArray(plan.segments) ? plan.segments : []).forEach((segment) => {
@@ -298,7 +388,7 @@ Page({
 
       // 该段抽中了音频但**没有 mp3**（R44-④）⇒ 同样跳段 ＋ warning，不整场失败。
       if (playlist.length === 0) {
-        planWarnings.push({
+        segmentWarningEntries.push({
           section_type: segment.section_type,
           code: MEDITATION_TRACK_WARNING_CODES.noPlayableMp3
         })
@@ -315,20 +405,37 @@ Page({
     })
 
     const backgroundPlaylist = resolveMiniProgramPlaylist(plan.background?.audio)
-    const hasPlayableAudio = voiceSegments.length > 0 || backgroundPlaylist.length > 0
-    const totalSeconds = Math.max(0, Number(plan.totals?.total_seconds) || 0)
+    const mixPlayback = resolveSingleStreamPlayback(plan)
+
+    // 计划里标注为单流、但**本页取不到 mp3**（例如只下发 ogg）⇒ 本页不可播：同样回退双轨 ＋ 提示。
+    if (!mixPlayback && plan.playback_source === MEDITATION_PLAYBACK_SOURCES.mixAudio) {
+      playbackNoticeEntries.push({ code: MEDITATION_TRACK_WARNING_CODES.mixAudioUnplayable })
+    }
+
+    const hasDualTrackAudio = voiceSegments.length > 0 || backgroundPlaylist.length > 0
+    const hasPlayableAudio = Boolean(mixPlayback) || hasDualTrackAudio
+    // 计时基准：单流＝**混音产物时长**（整场成品）；双轨＝Σ 人声实测 ＋ Σ 章间留白（背景 loop 不计入）。
+    const totalSeconds = mixPlayback
+      ? mixPlayback.durationSeconds
+      : Math.max(0, Number(plan.totals?.total_seconds) || 0)
 
     this.sessionPlan = plan
+    this.playbackSource = mixPlayback
+      ? MEDITATION_PLAYBACK_SOURCES.mixAudio
+      : MEDITATION_PLAYBACK_SOURCES.dualTrack
+    this.mixAudioPlayback = mixPlayback
     this.voiceSegments = voiceSegments
     this.voiceSegmentIndex = 0
     this.backgroundPlaylist = backgroundPlaylist
     this.backgroundSectionType = readTrimmedString(plan.background?.audio?.section_type)
-    // 音量**取响应值**（共享层仅在响应缺省时回退常量）——页面绝不用常量覆盖响应值（R41-② / R44-⑨）。
+    // 音量**取响应值**（共享层仅在响应缺省时回退常量）——页面绝不用常量覆盖响应值（R41-② / R44-⑨）；
+    // 单流路径不设音量（配比已烘焙进产物），这两项只服务双轨回退路径。
     this.backgroundVolume = plan.background?.volume
     this.voiceVolume = plan.voice?.volume
     this.pendingVoiceIndex = null
     this.sessionStarted = false
     this.trackReissueAttempted = false
+    this.sessionCompleted = false
     this.segmentWarnings = []
     this.segmentWarningSeen = new Set()
 
@@ -336,6 +443,8 @@ Page({
       loading: false,
       audioReady: hasPlayableAudio,
       emptyPlanNotice: hasPlayableAudio ? '' : MEDITATION_EMPTY_PLAN_MESSAGE,
+      // 先清上一次的提示：本函数末尾按本轮计划重记（无可播音频时走更强的空态提示）。
+      playbackNotice: '',
       trackTotalSeconds: totalSeconds,
       remainingSeconds: totalSeconds,
       timeLabel: formatTime(totalSeconds),
@@ -343,8 +452,14 @@ Page({
       completed: false
     })
 
-    this.setupAudioContexts()
-    this.pushSegmentWarnings(planWarnings)
+    if (this.playbackSource === MEDITATION_PLAYBACK_SOURCES.mixAudio) {
+      this.setupSingleStreamPlayback()
+    } else {
+      this.setupAudioContexts()
+    }
+
+    this.pushSegmentWarnings(segmentWarningEntries)
+    this.pushPlaybackNotices(hasPlayableAudio ? playbackNoticeEntries : [])
   },
 
   // ─── 双轨实例（R44-② / ⑥） ────────────────────────────────────────────────────
@@ -376,6 +491,226 @@ Page({
     }
   },
 
+  // ─── 单流实例（R45-⑥：`BackgroundAudioManager`） ────────────────────────────────
+  // **为何用该 API**：它是平台唯一能「切后台 / 锁屏仍续播」的音频形态（iOS 切后台后 JS 被挂起
+  // ⇒ 端侧无法在那一刻换源）⇒ 单流**前后台同源**，不需要 onHide / onShow 换源与 seek 对齐。
+  // **它是全局单例**（不随页面销毁）⇒ 回调与播放都必须在页内显式收口（见 releaseSingleStreamPlayback）。
+  // 与页面实例的对应关系：本页 setup 前先 release 本页已挂的一份；页面销毁（`onUnload`）/ 重新取数
+  // 时 release ⇒ 「重复进页」不会在单例上留旧页回调（旧页回调也会因 `singleStreamActive=false` 空转）。
+  setupSingleStreamPlayback() {
+    // 重复进页 / 重新取数：先把上一份单流收干净，再挂新的。
+    this.releaseSingleStreamPlayback()
+
+    const manager = wx.getBackgroundAudioManager()
+    const handlers = {
+      // 只挂两个回调（结束 / 失败）：结束＝整场结束，失败＝回退双轨；其余事件本页不需要。
+      ended: () => this.handleSingleStreamEnded(),
+      error: (error) => this.handleSingleStreamError(error)
+    }
+
+    // `title` 是该 API 的展示必填项（锁屏 / 通知栏标题），须在 `src` 之前就位。
+    manager.title = MEDITATION_BACKGROUND_AUDIO_TITLE
+    manager.onEnded(handlers.ended)
+    manager.onError(handlers.error)
+
+    this.backgroundAudioManager = manager
+    this.singleStreamHandlers = handlers
+    // 尚未起播（起播由 `startSession` 触发）⇒ 先置 false，避免上一份状态影响本轮。
+    this.singleStreamActive = false
+  },
+
+  // 单流收口（页内唯一「停单流」入口）：**先摘回调、再 `stop()`**，最后清引用。
+  // `offEnded` / `offError` 自基础库 2.9.0 起提供 ⇒ `typeof` 是**基础库能力守卫**（低版本无该 API），
+  // **不是**开发开关 / 测试分支；即便守卫不成立，回调体内的 `singleStreamActive` 闸门也会让旧回调空转。
+  releaseSingleStreamPlayback() {
+    const manager = this.backgroundAudioManager
+    const handlers = this.singleStreamHandlers
+
+    this.singleStreamActive = false
+
+    if (!manager) {
+      this.singleStreamHandlers = null
+      return
+    }
+
+    if (handlers && typeof manager.offEnded === 'function') {
+      manager.offEnded(handlers.ended)
+    }
+
+    if (handlers && typeof manager.offError === 'function') {
+      manager.offError(handlers.error)
+    }
+
+    manager.stop()
+    this.backgroundAudioManager = null
+    this.singleStreamHandlers = null
+  },
+
+  // 当前生效的单流播放器（`null` ＝ 此刻走双轨）：暂停 / 恢复 / 结束 / 重置都按它分流。
+  resolveActiveSingleStreamManager() {
+    return this.playbackSource === MEDITATION_PLAYBACK_SOURCES.mixAudio
+      ? this.backgroundAudioManager
+      : null
+  },
+
+  // 单流起播：**设置 `src` 即自动播放**（官方行为）⇒ 无需先 `play()`；「重新开始 / 重复进页」时
+  // `src` 取值未变（同一份现签链接）⇒ 补一次 `play()` 兜底，保证从头出声。
+  // **不设音量**：混音产物的配比已由服务端烘焙进单流。
+  startSingleStreamPlayback() {
+    const manager = this.backgroundAudioManager
+
+    if (!manager || !this.mixAudioPlayback?.url) {
+      return
+    }
+
+    this.singleStreamActive = true
+    manager.title = MEDITATION_BACKGROUND_AUDIO_TITLE
+    manager.src = this.mixAudioPlayback.url
+    manager.play()
+  },
+
+  // 单流播完＝**整场结束**（单流即整场）⇒ 与计时归零走同一条收尾路径。
+  // 与计时归零可能几乎同时到达 ⇒ `data.completed` 与 `sessionCompleted` 双重去重，**整场只结算一次**。
+  handleSingleStreamEnded() {
+    if (!this.singleStreamActive || this.data.completed) {
+      return
+    }
+
+    this.clearTimer()
+    this.clearGapTimer()
+    this.setData({
+      running: false,
+      completed: true,
+      remainingSeconds: 0,
+      timeLabel: formatTime(0)
+    })
+    void this.handleCompleteMeditation()
+  },
+
+  // 单流 `onError`：**整场至多 1 次**同参重调（与双轨**共用同一闸门**、同一「单段重签上限」语义，
+  // **不得无限重试**）；重调不可用 / 额度已用尽 ⇒ **回退双轨**（仅前台）＋ warning ＋ 可见提示。
+  handleSingleStreamError(error) {
+    if (!this.singleStreamActive) {
+      return
+    }
+
+    if (this.trackReissueAttempted) {
+      this.fallbackToDualTrack({ error, code: MEDITATION_TRACK_WARNING_CODES.singleStreamFallback })
+      return
+    }
+
+    void this.reissueSingleStream({ error })
+  },
+
+  async reissueSingleStream({ error = null } = {}) {
+    // 闸门：**先置位再 await** ⇒ 并发 / 连续失败都只重调 1 次（与双轨路径同一闸门、同一语义）。
+    this.trackReissueAttempted = true
+
+    console.warn(`[meditation] ${MEDITATION_TRACK_WARNING_CODES.reissueAttempt}`, {
+      playback_source: MEDITATION_PLAYBACK_SOURCES.mixAudio,
+      track_key: MEDITATION_PLAYBACK_TRACK_KEYS.voice,
+      reason: readTrimmedString(error?.errMsg || error?.message)
+    })
+
+    let refreshedPlan = null
+
+    try {
+      // **同参整场重调**：`this.trackRequestParams` 就是首读那一份，入参**逐字相同**（R42-① / R44-⑤）。
+      const { data } = await meditationReadClient.getTrack(this.trackRequestParams)
+      refreshedPlan = buildMeditationTrackPlaybackPlan({
+        track: data?.track || null,
+        chapterTemplate: data?.chapter_template || null,
+        sectionAudioPools: data?.section_audio_pools || null
+      })
+    } catch (reissueError) {
+      console.warn(`[meditation] ${MEDITATION_TRACK_WARNING_CODES.reissueFailed}`, {
+        playback_source: MEDITATION_PLAYBACK_SOURCES.mixAudio,
+        reason: readTrimmedString(reissueError?.message)
+      })
+      refreshedPlan = null
+    }
+
+    const refreshedMix = refreshedPlan ? resolveSingleStreamPlayback(refreshedPlan) : null
+
+    if (!refreshedMix) {
+      // 重调失败 / 重调后仍不可播 ⇒ 回退双轨（**整场时间轴不重建**：双轨数据用首读那一次）。
+      this.fallbackToDualTrack({
+        error,
+        code: refreshedPlan
+          ? MEDITATION_TRACK_WARNING_CODES.singleStreamFallback
+          : MEDITATION_TRACK_WARNING_CODES.reissueFailed
+      })
+      return
+    }
+
+    // 重调成功 ⇒ **只换单流播放源**（计时基准与整场时间轴不重建）；暂停态下不擅自起播：
+    // 恢复时若旧链接已失效，`onError` 会按上面这条回退路径处理（额度已用尽 ⇒ 回退、不重试）。
+    this.mixAudioPlayback = refreshedMix
+
+    if (this.data.running) {
+      this.startSingleStreamPlayback()
+    }
+  },
+
+  // 单流不可用（可播产物缺失 / 播放失败且重调额度用尽）⇒ **回退现有双轨**（仅前台）：
+  // 双轨代码与数据**保留**（R45-⑨ 明文封堵：不得据「端侧仍存在双轨代码」判负）；
+  // 按既有 warning 机制给**可见提示**（计划级，不并入跳段计数）；**不无限重试**（单流侧不再换源，
+  // 双轨此后沿用同一个整场闸门）。
+  fallbackToDualTrack({ error = null, code = MEDITATION_TRACK_WARNING_CODES.singleStreamFallback } = {}) {
+    this.releaseSingleStreamPlayback()
+    this.playbackSource = MEDITATION_PLAYBACK_SOURCES.dualTrack
+    this.mixAudioPlayback = null
+    this.setupAudioContexts()
+
+    const hasPlayableAudio = this.voiceSegments.length > 0 || this.backgroundPlaylist.length > 0
+
+    // 双轨也没有可播音频 ⇒ 走更强的空态提示（不再提示「已切换播放」）。
+    if (!hasPlayableAudio) {
+      this.setData({
+        running: false,
+        audioReady: false,
+        emptyPlanNotice: MEDITATION_EMPTY_PLAN_MESSAGE
+      })
+      return
+    }
+
+    this.pushPlaybackNotices([
+      { code, reason: readTrimmedString(error?.errMsg || error?.message) }
+    ])
+
+    if (this.data.running) {
+      // 从「已播时长」对应的那一段续播（背景轨铺底从头开始；音量仍取响应值）。
+      this.startDualTrackPlayback({
+        fromIndex: this.resolveVoiceSegmentIndexForElapsed(this.resolveElapsedSeconds())
+      })
+    }
+  },
+
+  // 已播时长＝整场计时基准 − 剩余（单流失败后双轨的续播位置基准）。
+  resolveElapsedSeconds() {
+    const totalSeconds = Number(this.data.trackTotalSeconds) || 0
+    const remainingSeconds = Number(this.data.remainingSeconds) || 0
+
+    return Math.max(0, totalSeconds - remainingSeconds)
+  },
+
+  // 已播时长 → 人声段下标（段时长按计划给出）；超出末段（含章间留白）⇒ 播最后一段。
+  resolveVoiceSegmentIndexForElapsed(elapsedSeconds) {
+    let cursor = 0
+
+    for (let index = 0; index < this.voiceSegments.length; index += 1) {
+      const durationSeconds = Number(this.voiceSegments[index]?.duration_seconds) || 0
+
+      if (elapsedSeconds < cursor + durationSeconds) {
+        return index
+      }
+
+      cursor += durationSeconds
+    }
+
+    return Math.max(0, this.voiceSegments.length - 1)
+  },
+
   // ─── 会话控制 ─────────────────────────────────────────────────────────────────
   handleToggleMeditation() {
     if (this.data.running) {
@@ -398,11 +733,23 @@ Page({
 
   startSession() {
     this.sessionStarted = true
+    this.sessionCompleted = false
     this.setData({ running: true, completed: false })
     // 会话固化**先落本地、不写云**（R44-⑩；云侧写入＝C18 未裁）。
     this.persistSessionSolidification()
     this.startTimer()
 
+    // 来源分流：单流（`BackgroundAudioManager`、前后台同源）／双轨（两个 `InnerAudioContext`、仅前台）。
+    if (this.resolveActiveSingleStreamManager()) {
+      this.startSingleStreamPlayback()
+      return
+    }
+
+    this.startDualTrackPlayback({ fromIndex: this.voiceSegmentIndex || 0 })
+  },
+
+  // 双轨起播：背景轨 `loop` 铺底 ＋ 人声轨从 `fromIndex` 顺序播（音量取响应值）。
+  startDualTrackPlayback({ fromIndex = 0 } = {}) {
     if (this.backgroundContext && this.backgroundPlaylist.length > 0) {
       this.backgroundContext.volume = this.backgroundVolume
       this.backgroundContext.play()
@@ -410,7 +757,7 @@ Page({
 
     if (this.voiceContext) {
       this.voiceContext.volume = this.voiceVolume
-      this.playVoiceFrom(this.voiceSegmentIndex || 0)
+      this.playVoiceFrom(fromIndex)
     }
   },
 
@@ -418,6 +765,13 @@ Page({
     this.clearTimer()
     this.clearGapTimer()
     this.setData({ running: false })
+
+    const manager = this.resolveActiveSingleStreamManager()
+
+    if (manager) {
+      manager.pause()
+      return
+    }
 
     if (this.backgroundContext) {
       this.backgroundContext.pause()
@@ -430,6 +784,15 @@ Page({
 
   resumeSession() {
     this.setData({ running: true, completed: false })
+
+    const manager = this.resolveActiveSingleStreamManager()
+
+    if (manager) {
+      // 单流：暂停即 `pause()`，恢复即 `play()`（同一路声音、前后台同源；不需要重新设源）。
+      manager.play()
+      this.startTimer()
+      return
+    }
 
     if (this.backgroundContext && this.backgroundPlaylist.length > 0) {
       this.backgroundContext.play()
@@ -452,20 +815,29 @@ Page({
     this.clearGapTimer()
     this.setData({ running: false, completed: false })
     this.sessionStarted = false
+    this.sessionCompleted = false
     this.voiceSegmentIndex = 0
     this.pendingVoiceIndex = null
     // 重调闸门按「整场」计，重新开始 ⇒ 重新计一次（R44-⑤ 的「整场」＝一次运行）。
+    // 单流与双轨**共用**这一个闸门（额度不因来源切换而增加）。
     this.trackReissueAttempted = false
 
-    if (this.backgroundContext) {
-      this.backgroundContext.stop()
-    }
+    const manager = this.resolveActiveSingleStreamManager()
 
-    if (this.voiceContext) {
-      this.voiceContext.stop()
+    if (manager) {
+      // 单流：停播即可（实例与回调保留，重新开始时重设 `src` 从头播）。
+      manager.stop()
+    } else {
+      if (this.backgroundContext) {
+        this.backgroundContext.stop()
+      }
 
-      if (this.voiceSegments.length > 0) {
-        this.voiceContext.src = this.voiceSegments[0].playlist[0].url
+      if (this.voiceContext) {
+        this.voiceContext.stop()
+
+        if (this.voiceSegments.length > 0) {
+          this.voiceContext.src = this.voiceSegments[0].playlist[0].url
+        }
       }
     }
 
@@ -579,6 +951,34 @@ Page({
       segmentWarningSummary: `本次冥想有 ${this.segmentWarnings.length} 段暂无可播放音频，已跳过（继续播放）`,
       skippedSectionTypes: this.segmentWarnings.map((warning) => warning.section_type)
     })
+  },
+
+  // 计划级 / 单流级提示（**无 `section_type`**）：`console.warn` ＋ 可见提示。
+  // **不得当跳段处理**：`segmentWarnings` / `segmentWarningCount` / `skippedSectionTypes` 一律不动
+  //（它不是段级跳过，也不占用 `section_type` 去重；同一码只保留最后一条文案）。
+  pushPlaybackNotices(entries = []) {
+    let latestNotice = ''
+
+    ;(Array.isArray(entries) ? entries : []).forEach((entry) => {
+      const code = readTrimmedString(entry?.code)
+      const message = MEDITATION_PLAYBACK_NOTICE_MESSAGES[code]
+
+      if (!message) {
+        return
+      }
+
+      console.warn(`[meditation] ${code}`, {
+        playback_source: this.playbackSource,
+        reason: readTrimmedString(entry?.reason)
+      })
+      latestNotice = message
+    })
+
+    if (!latestNotice) {
+      return
+    }
+
+    this.setData({ playbackNotice: latestNotice })
   },
 
   // 段内取不到可用音频 ⇒ **跳段后直接进下一段**（不补走该段留白：留白属正常播放的章间静默，
@@ -709,7 +1109,7 @@ Page({
     this.playVoiceFrom(this.voiceSegmentIndex)
   },
 
-  // ─── 计时（按 Track 组装结果，弃 900s 固定值） ───────────────────────────────────
+  // ─── 计时（按 Track 组装结果，弃固定 15 分钟基准） ────────────────────────────────
   clearTimer() {
     if (this.timerId) {
       clearInterval(this.timerId)
@@ -750,6 +1150,14 @@ Page({
   },
 
   stopAudioPlayback() {
+    // 整场已结束（计时归零）⇒ 单流状态一并作废：此后到达的 `onEnded` / `onError` 只空转，不再换源 / 回退。
+    this.singleStreamActive = false
+
+    // 单流：`stop()`（单例，停掉才是真的停；回调由 `releaseSingleStreamPlayback` 负责摘）。
+    if (this.backgroundAudioManager) {
+      this.backgroundAudioManager.stop()
+    }
+
     if (this.backgroundContext) {
       this.backgroundContext.stop()
     }
@@ -757,6 +1165,17 @@ Page({
     if (this.voiceContext) {
       this.voiceContext.stop()
     }
+  },
+
+  // 播放资源统一收口（页面卸载 / 重新取数 / 重复进页都走这里）：
+  //  · 单流＝`BackgroundAudioManager`（**全局单例、不随页面销毁**）⇒ 摘回调 ＋ `stop()`
+  //    （否则留悬挂回调，或退出页面后后台仍在出声）；
+  //  · 双轨＝两个 `InnerAudioContext`（资源不自动释放）⇒ `destroy()`（R44-⑦）。
+  teardownPlayback() {
+    this.clearTimer()
+    this.clearGapTimer()
+    this.releaseSingleStreamPlayback()
+    this.destroyAudioContexts()
   },
 
   // 资源释放（R44-⑦）：`InnerAudioContext` 资源**不自动释放** ⇒ 卸载 / 重载计划前销毁两个实例。
@@ -796,6 +1215,13 @@ Page({
 
   // 结算：门禁 `MIN_VALID_MEDITATION_SECONDS = 180`（两端不变，R44-⑨）；完成时长按 Track 组装结果。
   async handleCompleteMeditation() {
+    // 去重：计时归零与单流 `onEnded` 可能几乎同时到达 ⇒ 整场**只结算一次**（不重复记入）。
+    if (this.sessionCompleted) {
+      return
+    }
+
+    this.sessionCompleted = true
+
     const totalSeconds = Number(this.data.trackTotalSeconds) || 0
     const completedSeconds = Math.max(0, totalSeconds - Number(this.data.remainingSeconds || 0))
 

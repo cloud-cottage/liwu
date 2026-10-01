@@ -18,8 +18,8 @@
 //   · R43-⑦ 恢复策略简化＝**403 / 签名失败 ⇒ 同参整场重调 `getTrack` 至多 1 次（只做闸门级）**；
 //     **不做段级覆盖表**、**不依赖 R42-⑥**；重调一次后仍失败 ⇒ 直接进 R43-⑥ 的错误态。
 //   · R43-⑧ 时长**两把尺子并存**（面板估算原地不动、不改算法；此处并列「实测预览总时长」＝
-//     Σ 人声段实测 ＋ Σ 章间留白（**背景 loop 不计入**），并标注与 15:00 软基准 / 910s 章上限之和
-//     **不是同一把尺子**、不得互推）。
+//     Σ 人声段实测 ＋ Σ 章间留白（**背景 loop 不计入**），并标注与 15:00 软基准 / 章时长上限之和
+//     （数值由响应模板派生，不写死）**不是同一把尺子**、不得互推）。
 //   · R43-⑨ UI 显示**实际音量取值**并标明来源「响应值」/「回退常量」（响应为准、绝不覆盖）。
 //   · R43-⑩ 零夹具纪律：本文件**无环境开关 / 无测试分支 / 无固定种子 / 无调试组件**；测试替身只打**测试侧**
 //     （拦 `/api/cloudbase-proxy`，或注入 `callFunction` / `readClient` / `rng`）。
@@ -39,18 +39,24 @@ import {
 } from '@liwu/shared-utils/meditation-track-playback-plan.js';
 import { MEDITATION_READ_ERROR_CODES } from '@liwu/shared-utils/meditation-read-client.js';
 import {
+  getMeditationSectionDisplayLabel,
   getMeditationSectionTypeMeta,
   MEDITATION_CHAPTER_LABELS,
-  MEDITATION_SECTION_TYPE_LABELS
+  MEDITATION_TRACK_CHAPTER_TEMPLATE,
+  normalizeMeditationChapterCode,
+  normalizeMeditationSectionCode
 } from '@liwu/shared-utils/meditation-track-template.js';
 import { meditationReadClient as cloudbaseMeditationReadClient } from '../../services/cloudbase.js';
 
 // ─── 常量 / 文案 ─────────────────────────────────────────────────────────────
 
 // R43-② 的纪律（零写盘 / 抽签只在内存）属**实现约束**，不是给管理员看的产品文案 ⇒ UI 只说
-// 管理员关心的那件事；编号 / 「口径」/「零写盘」/「落盘」/「夹具」这类工程术语一律不进 UI。
+// 管理员关心的那件事；规范编号（R4x / D6 / X2x）与「口径」/「零写盘」/「落盘」/「夹具」这类
+// 工程术语一律不进 UI（编号只留在源码注释里，供对 spec 溯源）。
 const PREVIEW_INSURANCE_NOTICE = '预览仅在本面板试听，不会保存任何数据。';
-const PREVIEW_VOLUME_SOURCE_LABELS = Object.freeze({ response: '响应值', fallback: '回退常量' });
+// R43-⑨：音量**来源标注**是硬要求（保留）——「响应值」＝接口给了值；「默认值」＝接口没给（或给了
+// 0 / 非法值）、用了兜底常量。工程叫法「回退常量」对管理员不通 ⇒ 改叫「默认值」，语义不变。
+const PREVIEW_VOLUME_SOURCE_LABELS = Object.freeze({ response: '响应值', fallback: '默认值' });
 const PREVIEW_RUNTIME_TAKE_FAILED_CODE = 'SEGMENT_TAKE_FAILED';
 const PREVIEW_AUDIO_SIGNATURE_ERROR_PATTERN = /^AUDIO_FETCH_(401|403)$/;
 
@@ -126,19 +132,32 @@ const buildPreviewRequestParams = ({ trackId = '', trackKey = '' } = {}) => {
   return params;
 };
 
-// 段级文案的「{章节名 · section 名}」：章节名 / section 名按 R21 权威对照表的**常量值**拼写
-// （`MEDITATION_CHAPTER_LABELS` ＋ `MEDITATION_SECTION_TYPE_LABELS`，源＝代码常量）。
+// 段级文案的「{章节名 · section 名}」：章节名 / section 名一律**走共享归一器 ＋ 共享 display helper**
+//（`MEDITATION_CHAPTER_LABELS` ＋ `getMeditationSectionDisplayLabel`，源＝代码常量；本文件**不自带归一份**）。
+// 中英并列符与中文名内部分隔符逐字由共享层给出，不在本文件重拼。
 const resolvePreviewSectionLabel = (sectionType, chapters = []) => {
-  const normalizedType = toText(sectionType).trim();
+  const normalizedType = normalizeMeditationSectionCode(toText(sectionType).trim());
   const meta = getMeditationSectionTypeMeta(normalizedType);
   const chapter = (Array.isArray(chapters) ? chapters : []).find((entry) => (
-    (Array.isArray(entry?.section_types) ? entry.section_types : []).map(toText).includes(normalizedType)
+    (Array.isArray(entry?.section_types) ? entry.section_types : [])
+      .map((value) => normalizeMeditationSectionCode(toText(value)))
+      .includes(normalizedType)
   )) || null;
-  const chapterKey = toText(meta?.chapter_key || chapter?.chapter_key).trim();
+  const chapterKey = normalizeMeditationChapterCode(toText(meta?.chapter_key || chapter?.chapter_key).trim());
   const chapterLabel = MEDITATION_CHAPTER_LABELS[chapterKey] || toText(chapter?.label).trim() || chapterKey || '未知章节';
-  const sectionLabel = MEDITATION_SECTION_TYPE_LABELS[normalizedType] || toText(meta?.label).trim() || normalizedType || '未知 Section';
+  const sectionLabel = getMeditationSectionDisplayLabel(normalizedType) || normalizedType || '未知 Section';
 
   return `${chapterLabel} · ${sectionLabel}`;
+};
+
+// 章时长上限之和（＝各章 `max_duration_seconds` 相加；响应未给模板时退回共享模板常量）。
+// 与「15:00 软基准」是两把尺子：本条只描述上方面板估算所用的上限尺，不参与任何推算。
+const sumPreviewChapterCapSeconds = (chapterTemplate = []) => {
+  const list = Array.isArray(chapterTemplate) && chapterTemplate.length > 0
+    ? chapterTemplate
+    : MEDITATION_TRACK_CHAPTER_TEMPLATE;
+
+  return list.reduce((sum, chapter) => sum + (Number(chapter?.max_duration_seconds) || 0), 0);
 };
 
 const buildPreviewSegmentSkipMessage = (sectionType, chapters) => (
@@ -183,7 +202,7 @@ const describePreviewLoadError = (error = null) => {
       code,
       requestId,
       title: '库里没有该 Track（TRACK_NOT_FOUND）',
-      detail: 'D6 只读云函数可用，但库里找不到该 Track——这是数据问题：请先在「冥想轨道」保存该 Track 后再预览。'
+      detail: '只读云函数（meditation-read）可用，但库里找不到该 Track——这是数据问题：请先在「冥想轨道」保存该 Track 后再预览。'
     };
   }
 
@@ -192,8 +211,8 @@ const describePreviewLoadError = (error = null) => {
       bucket: PREVIEW_ERROR_BUCKETS.trackDisabled,
       code,
       requestId,
-      title: '该 Track 已停用，D6 拒绝下发（TRACK_DISABLED）',
-      detail: 'Track 存在但 enabled=false（不可发布）⇒ 预览被 D6 拒绝。请在「冥想轨道」启用该 Track 并保存后再预览（未保存的启用改动不生效）。'
+      title: '该 Track 已停用，已被只读云函数拒绝下发（TRACK_DISABLED）',
+      detail: 'Track 存在但 enabled=false（不可发布）⇒ 预览被拒绝下发。请在「冥想轨道」启用该 Track 并保存后再预览（未保存的启用改动不生效）。'
     };
   }
 
@@ -203,7 +222,7 @@ const describePreviewLoadError = (error = null) => {
       code: code || MEDITATION_READ_ERROR_CODES.callFailed,
       requestId,
       title: '预览数据源不可用：函数未部署 / 调用失败',
-      detail: 'D6 只读云函数（meditation-read）可能尚未部署，或代理 / 网络不可达、callFunction 抛错、响应不是合法信封——这是环境 / 部署问题，不是数据问题。请确认函数已部署、代理可达后点「重试」。'
+      detail: '只读云函数（meditation-read）可能尚未部署，或代理 / 网络不可达、callFunction 抛错、响应不是合法信封——这是环境 / 部署问题，不是数据问题。请确认函数已部署、代理可达后点「重试」。'
     };
   }
 
@@ -212,7 +231,7 @@ const describePreviewLoadError = (error = null) => {
     code,
     requestId,
     title: `读取失败（${code}）`,
-    detail: 'D6 返回了错误码，预览无法组装播放计划（只按 error 码分支，不解析服务端 message 文本）。请核对 Track 入参与 D6 版本后点「重试」。'
+    detail: '只读云函数返回了错误码，预览无法组装播放计划（只按 error 码分支，不解析服务端 message 文本）。请核对 Track 入参与云函数版本后点「重试」。'
   };
 };
 
@@ -259,9 +278,11 @@ const MeditationTrackPreview = ({
   const [errorInfo, setErrorInfo] = useState(null);
   const [plan, setPlan] = useState(null);
   const [chapters, setChapters] = useState([]);
+  // 章时长上限之和（响应模板派生、随着模板改动自动更新；渲染期不读 ref）——只用于「两把尺子」说明文案。
+  const [chapterCapSeconds, setChapterCapSeconds] = useState(() => sumPreviewChapterCapSeconds());
   const [requestId, setRequestId] = useState('');
   const [trackInfo, setTrackInfo] = useState({ name: '', trackKey: '', version: 0 });
-  // R43-⑨：音量的**来源**（响应给了值＝响应值；响应缺省才回退常量）由响应计算后落 state，渲染期不读 ref。
+  // R43-⑨：音量的**来源**（接口给了值＝响应值；接口缺省才用默认值）由响应计算后落 state，渲染期不读 ref。
   const [volumeSources, setVolumeSources] = useState({ background: null, voice: null });
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackStarted, setPlaybackStarted] = useState(false);
@@ -408,6 +429,7 @@ const MeditationTrackPreview = ({
       version: Number(data?.track?.version) || 0
     });
     setChapters(resolvePreviewChapters(data));
+    setChapterCapSeconds(sumPreviewChapterCapSeconds(data?.chapter_template));
     setVolumeSources({
       background: readResponseVolume(data?.track?.background_track?.volume),
       voice: readResponseVolume(data?.track?.voice_track?.volume)
@@ -855,7 +877,7 @@ const MeditationTrackPreview = ({
   const totals = plan?.totals || null;
   const backgroundVolume = Number(plan?.background?.volume ?? MEDITATION_PLAYBACK_VOLUME_DEFAULTS.background);
   const voiceVolume = Number(plan?.voice?.volume ?? MEDITATION_PLAYBACK_VOLUME_DEFAULTS.voice);
-  // R43-⑨：标明音量来源——响应给了值＝「响应值」，响应缺省（或给 0 / 非法值）才回退常量。
+  // R43-⑨：标明音量来源——接口给了值＝「响应值」，接口缺省（或给 0 / 非法值）才用「默认值」。
   const backgroundVolumeSourceLabel = volumeSources.background === null
     ? PREVIEW_VOLUME_SOURCE_LABELS.fallback
     : PREVIEW_VOLUME_SOURCE_LABELS.response;
@@ -916,7 +938,7 @@ const MeditationTrackPreview = ({
     <div style={previewContainerStyle} data-preview-root="meditation-track-preview">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
         <div style={sectionTitleStyle}>
-          Track 预览（R43）：数据源＝D6 只读云函数 getTrack
+          Track 预览：数据源＝只读云函数 getTrack（meditation-read）
         </div>
         <button style={ghostBtnStyle} onClick={handleClose}>关闭预览</button>
       </div>
@@ -930,7 +952,7 @@ const MeditationTrackPreview = ({
       </div>
 
       {status === 'loading' && (
-        <div style={{ fontSize: '12px', color: '#475569' }}>正在经 D6（meditation-read）读取已保存版本…</div>
+        <div style={{ fontSize: '12px', color: '#475569' }}>正在经只读云函数（meditation-read）读取已保存版本…</div>
       )}
 
       {renderErrorState()}
@@ -950,8 +972,9 @@ const MeditationTrackPreview = ({
               （背景 loop 不计入）
             </div>
             <div style={{ fontSize: '12px', color: '#0c4a6e', marginTop: '4px' }}>
-              两把尺子（不是同一把尺子、不得互推）：① 上方面板「预估 Track 总时长」（内容口径＝章 max_duration_seconds 上限之和 910s，算法不动）；
-              ② 本条实测预览总时长（本次 D6 响应实测值之和）；③ 15:00（total_target_seconds=900）是软基准。
+              两个时长是两把不同的尺子、不能互相推算：① 上方面板「预估 Track 总时长」＝各章时长上限相加，
+              合计 {chapterCapSeconds}s（算法不变）；② 本条实测预览总时长＝本次读取回来的音频实测相加。15:00（900 秒）
+              是设定的基准时长（目标值），既不是上限、也不是实测。
             </div>
           </div>
 
@@ -960,9 +983,9 @@ const MeditationTrackPreview = ({
               音量（实际取值）：背景轨 {backgroundVolume}（{backgroundVolumeSourceLabel}）／ 人声轨 {voiceVolume}（{voiceVolumeSourceLabel}）
             </div>
             <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-              响应给了值即以响应为准、绝不覆盖；回退常量（
+              响应给了值就以响应为准、不覆盖；默认值（
               {`${MEDITATION_PLAYBACK_VOLUME_DEFAULTS.background} / ${MEDITATION_PLAYBACK_VOLUME_DEFAULTS.voice}`}
-              ）只在响应缺省时使用，不是规范音量。
+              ）只在响应缺省（或给 0 / 非法值）时使用，只是兜底，不是接口下发的音量。
             </div>
           </div>
 
@@ -982,11 +1005,11 @@ const MeditationTrackPreview = ({
           </div>
 
           <div style={{ marginTop: '10px', fontSize: '12px', color: '#334155' }}>
-            <div style={{ fontWeight: '600', marginBottom: '4px' }}>段序（只读模板序；禁用章不产生段，末「有可用段」章 gap=0）：</div>
+            <div style={{ fontWeight: '600', marginBottom: '4px' }}>段序（章顺序固定、不可调整；已停用的章不产生段；最后一段有内容的章后面不计章间留白）：</div>
             <ol style={{ margin: '0 0 0 18px', padding: 0 }}>
               {segments.map((segment, index) => (
                 <li key={`${segment.section_type}-${index}`} style={{ color: segment.track === MEDITATION_PLAYBACK_TRACK_KEYS.background ? '#0369a1' : '#334155' }}>
-                  {resolvePreviewSectionLabel(segment.section_type, chapters)}（{segment.section_type}）·
+                  {resolvePreviewSectionLabel(segment.section_type, chapters)} ·
                   {segment.track === MEDITATION_PLAYBACK_TRACK_KEYS.background ? ' background loop' : ' voice sequence'} ·
                   实测 {formatPreviewSeconds(segment.duration_seconds)} · 章间留白 {formatPreviewSeconds(segment.gap_after_seconds)}
                 </li>

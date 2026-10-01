@@ -38,6 +38,11 @@ const SUPER_ADMIN_ROLE_TAG_NAME = '超级管理员'
 const ADMIN_ROLE_TAG_NAME = '管理员'
 const AGENT_ROLE_TAG_NAME = '代理商'
 const PARTNER_ROLE_SWITCH_COLLAPSED_KEY = 'liwu_partner_role_switch_collapsed'
+// 门户位「解析中」文案的硬上界（毫秒）。身份真就绪的信号是「合作方用户列表 + 该用户角色标签」
+// 这条链（adminAuthorized 依赖它），冷启动实测约 t≈11–15s 才出现 uid/标签（入台配方见
+// docs/meditation.admin.partner.spec.md R36-⑦）；给 22s 兜底：超时即回落到原有定性文案，
+// 绝不让门户位永久停在「解析中」。
+const IDENTITY_RESOLVE_TIMEOUT_MS = 22000
 const OVERVIEW_RANGE_OPTIONS = [
   { key: 'all', label: '全部' },
   { key: 'week', label: '近 7 天' },
@@ -1027,6 +1032,11 @@ const Partner = () => {
   const { themePreset } = useTheme()
   const liwuSession = readSession()
   const [resolvedProfileUser, setResolvedProfileUser] = useState(null)
+  // 身份解析状态：identityResolveSettled = 真正产出已解析身位的那条链（用户标签取数）已结束（成功或失败）；
+  // identityResolveTimedOut = 超过 IDENTITY_RESOLVE_TIMEOUT_MS 仍未结束，此时按既有逻辑回落原文案。
+  // 二者仅用于门户位文案呈现，不参与门禁判定与授权条件。
+  const [identityResolveSettled, setIdentityResolveSettled] = useState(false)
+  const [identityResolveTimedOut, setIdentityResolveTimedOut] = useState(false)
   const effectiveAuthStatus = authStatus?.isAuthenticated || liwuSession?.phone
     ? {
         ...authStatus,
@@ -1379,6 +1389,11 @@ const Partner = () => {
           console.error('Partner page failed to load current user tags:', error)
           setLiveCurrentUserTags([])
         }
+      } finally {
+        // 身位（用户 + 角色标签）到此才真正可判定；失败也算解析结束，不新增请求
+        if (!cancelled) {
+          setIdentityResolveSettled(true)
+        }
       }
     })()
 
@@ -1386,6 +1401,17 @@ const Partner = () => {
       cancelled = true
     }
   }, [resolvedPartnerUser?.id])
+  // 硬上界：解析链迟迟不结束（网络异常、标签服务无响应等）就按既有逻辑回落原文案，
+  // 不允许门户位永久停在「解析中」。
+  useEffect(() => {
+    if (identityResolveSettled) {
+      return undefined
+    }
+
+    const timer = setTimeout(() => setIdentityResolveTimedOut(true), IDENTITY_RESOLVE_TIMEOUT_MS)
+
+    return () => clearTimeout(timer)
+  }, [identityResolveSettled])
   const currentRoleTagNames = useMemo(
     () => (effectiveUserTags || []).map(getTagName).filter(Boolean),
     [effectiveUserTags]
@@ -2528,6 +2554,17 @@ const Partner = () => {
     }
   }
 
+  // 门户页（sidebar）身份状态文案：解析期只用中性文案，解析完成（含超时回落）后保留原有定性文案
+  const identityResolving = !identityResolveSettled && !identityResolveTimedOut
+  const portalIdentityMessage = identityResolving
+    ? '正在解析登录身份，请稍候…'
+    : hasEffectiveSession
+      ? '当前账号已登录，但未识别为管理员。如需进入管理员后台，请联系现有管理员为你的账号分配【管理员】或【超级管理员】标签。'
+      : '当前尚未登录。如需进入管理员后台，请先登录，再联系现有管理员为你的账号分配【管理员】或【超级管理员】标签。'
+  const portalIdentityActionLabel = !identityResolving && !hasEffectiveSession
+    ? '前往我的页面登录'
+    : '前往我的页面'
+
   if (loading && !hasEffectiveSession) {
     return (
       <div style={{ minHeight: '100vh', padding: '32px 24px', boxSizing: 'border-box' }}>
@@ -2678,9 +2715,7 @@ const Partner = () => {
         {!adminAuthorized && (
           <div style={{ padding: '16px', borderTop: '1px solid var(--color-border)', display: 'grid', gap: '10px' }}>
             <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
-              {hasEffectiveSession
-                ? '当前账号已登录，但未识别为管理员。如需进入管理员后台，请联系现有管理员为你的账号分配【管理员】或【超级管理员】标签。'
-                : '当前尚未登录。如需进入管理员后台，请先登录，再联系现有管理员为你的账号分配【管理员】或【超级管理员】标签。'}
+              {portalIdentityMessage}
             </div>
             <Link
               to="/profile"
@@ -2697,7 +2732,7 @@ const Partner = () => {
                 fontSize: '13px'
               }}
             >
-              {hasEffectiveSession ? '前往我的页面' : '前往我的页面登录'}
+              {portalIdentityActionLabel}
             </Link>
           </div>
         )}

@@ -8,12 +8,20 @@
 //   · R10 / R39 ⑦：**章序与章内 Section 顺序只读** —— 一律取自 `chapter_template`（缺省时取 Track 响应
 //     的 `chapters`），端侧**不得重排**、不得用数据覆盖顺序。
 //   · §「播放模型（双轨，唯一口径）」：背景轨 `background`（`sec-nature` / `sec-bowl`）`loop`
-//     铺底、音量 **0.33**；人声轨 `voice`（9 个 `section_type`）`sequence` 顺序拼接、音量 **1**。
+//     铺底、音量 **0.33**；人声轨 `voice`（10 个 `section_type`，新代号 1~10）`sequence` 顺序拼接、
+//     音量 **1**。
 //     音量**取自响应**里的 `background_track.volume` / `voice_track.volume`，响应缺省时才回退常量。
 //   · §「留白配置层级（章间级）」＋ R11：`gap_after_seconds` 只在**章间**、末章固定 `0`、
 //     **禁用章的 gap 不计入**；实现层禁止写死 `141`（读 `med_tracks.chapters[].gap_after_seconds`）。
 //   · D7：抽中候选**固化**（`section_type` → 抽中 `med_section_audios._id` ＋ Track `version`）
 //     —— 本模块只**组装载荷**（`buildSessionSolidification`），**不落盘**（落点待裁）。
+//   · **R45（v4.22，端侧混合播放口径）**：产品口径＝人声与背景**必须同时出声**；技术路径＝
+//     **服务端预混单流**（App 单个音频元素 / 小程序 `BackgroundAudioManager`，前后台同源）
+//     ⇒ D6 Track 响应里的 **`mix_audio`**（`version` / `duration` / `ogg_url` / `mp3_url`）
+//     决定播放来源：**有可播混音产物 ⇒ 单流播混音**；**混音产物缺失 ⇒ 回退现有双轨（仅前台）**，
+//     并在本计划里**标注**（`playback_source` ＋ `mix_audio` ＋ warning 码 `MIX_AUDIO_UNAVAILABLE`）。
+//     **回退路径的双轨数据照旧组装**（`background` / `voice` / `segments` / `selections` / `totals`
+//     语义与取值不变）⇒ 两种来源共用同一份计划结构，端侧按 `playback_source` 分流。
 //
 // 【设计口径】（本模块自有，规范未逐字规定，已报告 Zang）
 //   ① `segments` 覆盖**启用章**的全部 `section_type`（含背景轨成员），顺序＝模板顺序；每段附
@@ -45,6 +53,21 @@ const MEDITATION_PLAYBACK_MODES = Object.freeze({
   voice: 'sequence'
 })
 
+// 播放来源（R45：混音单流 / 回退双轨）——由响应 `track.mix_audio` 是否可播决定，**不可配**。
+// 【键名】`mix_audio` 与 D6 响应字段**同名**（不自造别名）；`dual_track` 指既有双轨口径
+//   （背景 loop ＋ 人声 sequence，仅前台）。
+const MEDITATION_PLAYBACK_SOURCES = Object.freeze({
+  mixAudio: 'mix_audio',
+  dualTrack: 'dual_track'
+})
+
+// 混音产物两键 → 播放格式名：与权威源 `MEDITATION_SECTION_AUDIO_FORMATS` 的取值**逐字一致**
+// （`opus` / `mp3`，opus 在前、mp3 兜底）。本模块零 import ⇒ 只能逐字镜像，口径改动时须同步本处。
+const MEDITATION_PLAYBACK_MIX_FORMATS = Object.freeze({
+  opus: 'opus',
+  mp3: 'mp3'
+})
+
 // 音量回退常量（响应缺省时才用）：与 `MEDITATION_TRACK_VOLUMES` 同值（0.33 / 1）。
 const MEDITATION_PLAYBACK_VOLUME_DEFAULTS = Object.freeze({
   background: 0.33,
@@ -52,38 +75,46 @@ const MEDITATION_PLAYBACK_VOLUME_DEFAULTS = Object.freeze({
 })
 
 // 轨道成员（回退常量：响应里的 `background_track.section_types` / `voice_track.section_types` 优先）。
+// 【防漂移】本两处名单与权威源 `meditation-track-template.js` 的 `MEDITATION_TRACK_BACKGROUND_SECTION_TYPES`
+//   / `MEDITATION_TRACK_VOICE_SECTION_TYPES` / `MEDITATION_SECTION_TYPE_ORDER` **必须同值同序**；
+//   本模块按规范 §D9 保持零 import（不 import 老 `meditation-session-plan.js`，也不 import 模板模块），
+//   故**不直接引用**模板常量 ⇒ 模板改段名单时**必须同步本文件**（同步脚本产物见 miniprogram utils/shared）。
 const MEDITATION_PLAYBACK_BACKGROUND_SECTION_TYPES = Object.freeze(['sec-nature', 'sec-bowl'])
 
 const MEDITATION_PLAYBACK_VOICE_SECTION_TYPES = Object.freeze([
-  'sec-intro',
-  'sec-place',
-  'sec-posture',
-  'sec-bridge',
-  'sec-prelude',
-  'sec-breath',
-  'sec-verse',
-  'sec-chorus',
-  'sec-outro'
+  'anchorGreeting', // 1 旧 sec-intro
+  'basePreparation', // 2 旧 sec-place
+  'corpusAlignment', // 3 旧 sec-posture
+  'deeperAwareness', // 4 旧 sec-bridge
+  'essentialBreath', // 5 旧 sec-prelude
+  'flowingRespiration', // 6 旧 sec-breath
+  'gnosisElaboration', // 7 旧 sec-verse
+  'heartAffirmation', // 8 旧 sec-chorus
+  'innerIntegration', // 9 新增段（无旧码）
+  'joyfulClosing' // 10 旧 sec-outro
 ])
 
 // 固定段顺序（固化载荷排序用；与六章模板的章内序列一致）。
 const MEDITATION_PLAYBACK_SECTION_TYPE_ORDER = Object.freeze([
   'sec-nature',
   'sec-bowl',
-  'sec-intro',
-  'sec-place',
-  'sec-posture',
-  'sec-bridge',
-  'sec-prelude',
-  'sec-breath',
-  'sec-verse',
-  'sec-chorus',
-  'sec-outro'
+  'anchorGreeting',
+  'basePreparation',
+  'corpusAlignment',
+  'deeperAwareness',
+  'essentialBreath',
+  'flowingRespiration',
+  'gnosisElaboration',
+  'heartAffirmation',
+  'innerIntegration',
+  'joyfulClosing'
 ])
 
 const MEDITATION_PLAYBACK_WARNING_CODES = Object.freeze({
   emptyPool: 'EMPTY_POOL',
-  noPlayableFormat: 'NO_PLAYABLE_FORMAT'
+  noPlayableFormat: 'NO_PLAYABLE_FORMAT',
+  // R45-⑥：混音产物缺失 ⇒ 回退双轨（计划级标注，**无 `section_type`**：不是段级跳过）。
+  mixAudioUnavailable: 'MIX_AUDIO_UNAVAILABLE'
 })
 
 const MEDITATION_PLAYBACK_PLAN_ERROR_CODES = Object.freeze({
@@ -258,6 +289,70 @@ const selectMeditationPlayableAudio = ({ sectionType = '', pool = null, rng = Ma
   return { ok: true, audio: playableCandidates[Math.min(index, playableCandidates.length - 1)] }
 }
 
+// ─── 混音单流（R45）：响应 `track.mix_audio` → 可播混音条目 ────────────────────────────
+//
+// 口径（**只认响应，不拼路径、不猜 URL**）：
+//   ① 可播判据＝`mix_audio` 是对象 **且** `duration > 0` **且** 至少一条链接（`ogg_url` / `mp3_url`）非空；
+//      任一不满足 ⇒ 返回 `null`＝「混音产物缺失」（端侧回退双轨，见 buildMeditationTrackPlaybackPlan）；
+//   ② 格式顺序＝**opus 在前、mp3 兜底**（与候选音频同序）：本模块零 import ⇒ 两键到格式名的映射
+//      逐字镜像 `MEDITATION_SECTION_AUDIO_FORMATS`（见 MEDITATION_PLAYBACK_MIX_FORMATS）；
+//   ③ 音量**不在此处**：混音产物的配比（voice 1.0 / background 0.33）已由服务端烘焙进单流
+//      ⇒ 端侧按 `1` 播放（不得再叠加配比）；
+//   ④ `version` 原样透传（缺省填 `0`）——**不做**「与 `track.version` 比对」这类端侧改判
+//      （R45 未规定该比对，端侧不得自创失效规则）；
+//   ⑤ 产出形状与段内 `audio` 同形（`formats[]` / `duration_seconds`），端侧可直接复用播放清单构造。
+const resolveMeditationMixPlayback = (track = null) => {
+  const mixAudio = track?.mix_audio
+
+  if (!isPlainObject(mixAudio)) {
+    return null
+  }
+
+  const durationSeconds = toPositiveSecondsOrZero(mixAudio.duration)
+
+  if (durationSeconds <= 0) {
+    return null
+  }
+
+  const formats = resolveMeditationPlayableFormats({
+    formats: [
+      {
+        format: MEDITATION_PLAYBACK_MIX_FORMATS.opus,
+        url: getString(mixAudio.ogg_url).trim(),
+        is_fallback: false
+      },
+      {
+        format: MEDITATION_PLAYBACK_MIX_FORMATS.mp3,
+        url: getString(mixAudio.mp3_url).trim(),
+        is_fallback: true
+      }
+    ]
+  })
+
+  if (formats.length === 0) {
+    return null
+  }
+
+  const version = Number(mixAudio.version)
+
+  return {
+    version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 0,
+    duration_seconds: durationSeconds,
+    // 混音产物**没有**单条音频的 `_id` / `section_type`（它不是 `med_section_audios` 行）
+    // ⇒ 这两项恒为空串（端侧不得据此回查 DB）。
+    audio: {
+      id: '',
+      section_type: '',
+      label: '',
+      duration_seconds: durationSeconds,
+      format: formats[0].format,
+      url: formats[0].url,
+      mime_type: formats[0].mime_type,
+      formats
+    }
+  }
+}
+
 // ─── 播放计划组装（D9） ───────────────────────────────────────────────────────
 
 const buildMeditationTrackPlaybackPlan = ({
@@ -280,6 +375,12 @@ const buildMeditationTrackPlaybackPlan = ({
   const warnings = []
   const selections = []
   const chapterEntries = []
+
+  // R45：播放来源由响应的 `mix_audio` 是否可播决定（混音单流 / 回退双轨）。
+  // 双轨数据**两种来源都照旧组装**（回退路径随时可用、`totals` 语义不变）；
+  // 混音缺失时记一条**计划级** warning（无 `section_type`：不是段级跳过，端侧不得当跳段处理）——
+  // 该条**追加在所有段级 warning 之后**（原有段级 warning 的相对次序与含义不变）。
+  const mixAudio = resolveMeditationMixPlayback(track)
 
   // 第一遍：按模板顺序逐章抽签（章序 / 段序只读，不重排、不排序）。
   chapters.forEach((chapter) => {
@@ -352,7 +453,16 @@ const buildMeditationTrackPlaybackPlan = ({
     .reduce((sum, segment) => sum + segment.duration_seconds, 0)
   const gapSeconds = segments.reduce((sum, segment) => sum + segment.gap_after_seconds, 0)
 
+  // 混音产物缺失 ⇒ 追加计划级标注（无 `section_type`）。
+  if (!mixAudio) {
+    warnings.push({ code: MEDITATION_PLAYBACK_WARNING_CODES.mixAudioUnavailable })
+  }
+
   return {
+    // R45-⑥：播放来源标注（`mix_audio` ＝ 单流播混音版；`dual_track` ＝ 回退既有双轨、仅前台）。
+    playback_source: mixAudio ? MEDITATION_PLAYBACK_SOURCES.mixAudio : MEDITATION_PLAYBACK_SOURCES.dualTrack,
+    // 可播混音产物（`{version, duration_seconds, audio}`）或 `null`（＝产物缺失 ⇒ 回退双轨）。
+    mix_audio: mixAudio,
     background: {
       audio: backgroundSegment ? backgroundSegment.audio : null,
       playback_mode: MEDITATION_PLAYBACK_MODES.background,
@@ -462,6 +572,7 @@ const buildSessionSolidification = ({
 module.exports = {
   MEDITATION_PLAYBACK_TRACK_KEYS,
   MEDITATION_PLAYBACK_MODES,
+  MEDITATION_PLAYBACK_SOURCES,
   MEDITATION_PLAYBACK_VOLUME_DEFAULTS,
   MEDITATION_PLAYBACK_BACKGROUND_SECTION_TYPES,
   MEDITATION_PLAYBACK_VOICE_SECTION_TYPES,
@@ -474,6 +585,7 @@ module.exports = {
   resolveMeditationPlaybackTrackKey,
   resolveMeditationPlayableFormats,
   selectMeditationPlayableAudio,
+  resolveMeditationMixPlayback,
   buildMeditationTrackPlaybackPlan,
   buildSessionSolidification
 }

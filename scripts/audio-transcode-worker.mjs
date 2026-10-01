@@ -27,6 +27,7 @@ const TRANSCODE_PROFILE = Object.freeze({
   // D-B2-9 队列分区：新链路（冥想段落音频，云函数 meditation-transcoder）专用 profile。
   // 字面值与排队方一致（MeditationPage.jsx `transcode_profile: 'section_audio'`）；本 worker
   // **必须跳过**带该 profile 的 job，否则会把新链路的 job 吃掉（见下方 fetchQueuedJobs 守卫）。
+  // v4.22 / R45 起另有 `track_mix`（Track 级服务端预混）分区：**不在下方白名单内 ⇒ 同样跳过**。
   sectionAudio: 'section_audio'
 });
 // Kevin（用户）2026-09-24 裁定：Opus 主体改 **48k 立体声硬 CBR** ⇒ `-b:a 48k -vbr off -ac 2 -ar 48000`。
@@ -261,16 +262,61 @@ const updateJob = async ({ db, jobId, patch }) => {
     .update(patch);
 };
 
+// 【队列领取白名单（**白名单而非黑名单**，D-B2-9 分区守卫的正确形态）】
+// 本 worker 只领取**它自己实现得了**的 profile —— 即本文件真正带处理分支的那三个：
+// `default`（两遍 loudnorm）/ `nature`（两遍 loudnorm ＋ volume=0.2）/ `tts_simple`（单遍 Opus），
+// 分支见 processTranscode / buildLoudnormSecondPassFilter / runFfmpegSimpleOpusTranscode。
+// **凡不在本清单的 profile 一律跳过**（不领取、不改状态、不写任何回写字段）——当前命中：
+//   · `section_audio`（云函数 meditation-transcoder 的段落音频分区，D-B2-9）
+//   · `track_mix`（Track 级服务端预混分区，R45；排队方 meditationTrackMixJob.js）
+//   · 以及**任何未来新增的 profile 字面值**。
+// ⚠ **为什么必须是白名单**：旧写法是黑名单 `job.transcode_profile !== 'section_audio'`，
+//   含义是「除 section_audio 以外都领」⇒ 新增 profile 时**默认失败**：`track_mix` 一上线就被本地
+//   worker 当自己的活吃掉，用旧的单输入双路链路处理它（错产物）并回写老字段（误写）。
+//   白名单把「新增 profile」默认划到**跳过侧**：必须显式加进本清单才会被领取
+//   ⇒ 未来新增分区不会再踩同一个坑（这就是本次改动的理由，不是为 track_mix 打单点补丁）。
+const WORKER_CLAIMABLE_PROFILES = Object.freeze([
+  TRANSCODE_PROFILE.default,
+  TRANSCODE_PROFILE.nature,
+  TRANSCODE_PROFILE.ttsSimple
+]);
+
+// 老口径保留：profile 缺失/空串一律按 `default` 处理（排队方默认值也是 'default'，
+// 见 database.js#createMeditationAudioTranscodeJob 的 `jobData.transcodeProfile || 'default'`）。
+const normalizeJobProfile = (job) => String(job?.transcode_profile || '').trim() || TRANSCODE_PROFILE.default;
+
+const isClaimableByThisWorker = (job) => WORKER_CLAIMABLE_PROFILES.includes(normalizeJobProfile(job));
+
 const fetchQueuedJobs = async ({ db, limit = 1 }) => {
   const result = await db.collection(AUDIO_TRANSCODE_JOBS_COLLECTION)
     .where({ status: JOB_STATUS.queued })
     .limit(limit)
     .get();
 
-  // D-B2-9 队列分区守卫（本 worker 侧唯一改动，其余逻辑/字段口径一律不动）：
-  // section_audio job 归云函数 meditation-transcoder 消费，本 worker 一律跳过。
+  // D-B2-9 队列分区守卫（**白名单**，理由见 WORKER_CLAIMABLE_PROFILES 上方注释）：
+  // section_audio 归云函数 meditation-transcoder、track_mix 归云侧混音消费，本 worker 一律跳过。
+  // 跳过 ＝ 不领取、不改状态、不写回写字段（跳过而非失败；绝不把别的分区的 job 置 processing / failed）。
   // ⚠ 上线纪律：启用新执行器前先停掉 `npm run audio:transcode-worker:loop`，且同一时刻只允许一侧消费。
-  return (result?.data || []).filter((job) => String(job?.transcode_profile || '').trim() !== TRANSCODE_PROFILE.sectionAudio);
+  const queuedJobs = result?.data || [];
+  const skippedByProfile = {};
+  const claimableJobs = [];
+
+  for (const job of queuedJobs) {
+    if (isClaimableByThisWorker(job)) {
+      claimableJobs.push(job);
+      continue;
+    }
+
+    const profileKey = normalizeJobProfile(job);
+    skippedByProfile[profileKey] = (skippedByProfile[profileKey] || 0) + 1;
+  }
+
+  // 跳过计数：一行汇总，按 profile 分列；仅在确有跳过时打印 ⇒ 不刷屏、无调试代码。
+  if (claimableJobs.length !== queuedJobs.length) {
+    console.log(`[audio-transcode-worker] 跳过非本 worker profile 的 job ${queuedJobs.length - claimableJobs.length} 条：${JSON.stringify(skippedByProfile)}`);
+  }
+
+  return claimableJobs;
 };
 
 const processJob = async ({ app, db, envId, job }) => {

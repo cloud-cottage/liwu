@@ -89,10 +89,10 @@
 
 `.gitignore` 已排除静态二进制。两条取法：
 
-**A. 云函数层（推荐）**：把 linux x64 静态构建打成层后挂载，默认路径 `/opt/ffmpeg`、`/opt/ffprobe`。
+**A. 云函数层（推荐）**：把 linux x64 静态构建打成层后挂载。**层 zip 内为 `bin/` 目录** ⇒ 挂载后函数内路径为 **`/opt/bin/ffmpeg`** 与 **`/opt/bin/ffprobe`**（与 `cloudbaserc.json` 里实设的 `FFMPEG_PATH=/opt/bin/ffmpeg` 对应）。
 
 ```bash
-# 1) 取静态构建（示例：johnvansickle 静态包，linux x64）
+# 1) 取静态构建（示例：johnvansickle 静态包，linux x64；实测 7.0.2 版含 libopus / libmp3lame / amix）
 curl -LO https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
 tar -xf ffmpeg-release-amd64-static.tar.xz
 mkdir -p layer/bin && cp ffmpeg-*-amd64-static/{ffmpeg,ffprobe} layer/bin/
@@ -100,6 +100,28 @@ mkdir -p layer/bin && cp ffmpeg-*-amd64-static/{ffmpeg,ffprobe} layer/bin/
 cd layer && zip -r ../ffmpeg-layer.zip bin
 # 3) 在云函数「层管理」挂载后，函数内路径为 /opt/bin/ffmpeg ⇒ 设 FFMPEG_PATH=/opt/bin/ffmpeg
 ```
+
+**层包体上限（实测，硬）**：CloudBase 官方限制 **「层的总大小限制为 50MB」**，且单函数**最多绑定 5 个层**。
+上例两个静态二进制各约 76MB，合并 zip 约 **56MB ⇒ 超限**。此时**拆成两个层**（各约 28MB）：
+
+```bash
+mkdir -p layerA/bin layerB/bin
+cp layer/bin/ffmpeg  layerA/bin/          # 层一：内含 bin/ffmpeg
+cp layer/bin/ffprobe layerB/bin/          # 层二：内含 bin/ffprobe
+(cd layerA && zip -r ../ffmpeg-layer-a.zip bin)
+(cd layerB && zip -r ../ffmpeg-layer-b.zip bin)
+```
+
+两层分别发布后**同时绑定**到函数（加载顺序无关：层内无同名文件，互不覆盖），
+挂载路径仍为 `/opt/bin/ffmpeg` 与 `/opt/bin/ffprobe` ⇒ `FFMPEG_PATH` / `FFPROBE_PATH` 不必改。
+
+**控制台发布层（本仓实际采用；CLI 不可用）**：官方 CLI 1.5.2 的层子命令实测不可用（`functions:layer:*` 报「不是有效的命令」/ 未知选项）⇒ 层只能在控制台发布：
+
+1. 云开发控制台 → 环境 `liwu-d8gek6jjdab1d087c` → 云函数 → **层管理** → 新建
+2. 层名 `meditation-ffmpeg`（运行环境 Nodejs18.15）上传 `bin/ffmpeg` 那一个 zip；层名 `meditation-ffprobe` 上传 `bin/ffprobe` 那一个 zip
+3. 记下**两个层的版本号**（新建后通常为 1），回填 `cloudbaserc.json` 里 `meditation-transcoder` 的 `layers` 数组（每项含层名与版本号），再跑 `./scripts/deploy-meditation-functions.sh transcoder --yes`
+
+**层版本一旦创建不可修改**，更新需新建版本（改 `layers` 里的版本号后重部署）。
 
 **B. 自建静态构建**：自行编译带 `libopus` / `libmp3lame` 的 linux x64 构建，随层下发；
 或（仅内网/自建环境）把二进制放到函数目录**之外**的挂载点，用 `FFMPEG_PATH` / `FFPROBE_PATH` 指定。
@@ -120,8 +142,8 @@ ffmpeg -hide_banner -h muxer=ogg   # 确认 ogg 复用器可用（本执行器 -
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `FFMPEG_PATH` | `/opt/ffmpeg` | ffmpeg 可执行文件路径（层挂载点，D-B2-5） |
-| `FFPROBE_PATH` | ffmpeg 同目录 `ffprobe`，否则 `/opt/ffprobe` | ffprobe 路径 |
+| `FFMPEG_PATH` | `/opt/ffmpeg`（**代码内兜底**）；**本仓部署实设为 `/opt/bin/ffmpeg`**（见 `cloudbaserc.json` 的 `envVariables`，与 §4 层内 `bin/ffmpeg` 对应） | ffmpeg 可执行文件路径（层挂载点，D-B2-5） |
+| `FFPROBE_PATH` | ffmpeg 同目录 `ffprobe`，否则 `/opt/ffprobe`（**代码内兜底**）；**本仓部署实设为 `/opt/bin/ffprobe`** | ffprobe 路径 |
 | `CLOUDBASE_ENV_ID` / `TCB_ENV` / `SCF_NAMESPACE` | `liwu-d8gek6jjdab1d087c` | 环境 ID（函数内优先用运行环境变量） |
 | `TENCENT_SECRET_ID` → `TENCENTCLOUD_SECRET_ID` → `VITE_TENCENT_SECRET_ID` | 空 | **云函数内不用填**（用 SCF 角色内置凭证）；命名与 worker 一致，仅本地手动 invoke 时用。密钥**不入日志** |
 

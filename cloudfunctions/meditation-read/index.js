@@ -13,6 +13,11 @@
 //     （`getTempFileURL` `maxAge = 7200`）⇒ **本函数承担 `file_id` → 临时 URL 的重新签发**；
 //     **不得透传已落库的（可能已过期的）`audio_url`**，端侧不缓存过期 URL（长期标识只有 `file_id`）。
 //   · R10：章序 / 章内 Section 序列**只读** ⇒ 返回的 Track 一律折回六章固定模板（normalizers 副本）。
+//   · **R45-⑤（v4.22）**：产品口径＝人声与背景**必须同时出声**、技术路径＝**服务端预混单流** ⇒
+//     Track 下发新增 **`mix_audio` 对象（`version` / `duration` / `ogg_url` / `mp3_url` 四键逐字）**，
+//     其两个链接＝把库内 `ogg_file_id` / `mp3_file_id` **现签**成临时链接（与候选音频**同一次批量签发**）；
+//     **`file_id` 仍不下发**（R46-⑥ 白名单增量，原 15 项禁发与其余白名单不变）；
+//     **缺失 / 不齐 / 签发失败 ⇒ 不下发该键**（端侧据此回退双轨，端侧口径见 R45-⑥）。
 //   · D8：音频**唯一口径**是 `med_section_audios`（绝不从 `med_section_raws` 读 `file_id` / `audio_url`）。
 //
 // 【只读（硬）】本函数**没有任何写路径**——不 `update` / 不 `add` / 不 `remove` / 不 `set` 任何集合；
@@ -62,7 +67,9 @@ const {
   resolveTrackQueryPlan,
   buildSectionAudioPools,
   collectSignableFileIds,
+  collectTrackMixAudioFileIds,
   buildTrackEntry,
+  buildTrackMixAudioEntry,
   buildChapterTemplate,
   buildUrlPolicy
 } = require('./lib/read-contract.js')
@@ -221,9 +228,14 @@ const signFileUrls = async ({ app, fileIds = [], requestId = '' }) => {
 
 // ─── action 实现 ─────────────────────────────────────────────────────────────
 
-const loadDeliverableAudioPools = async ({ db, app, sectionTypes, requestId }) => {
+const loadDeliverableAudioPools = async ({ db, app, sectionTypes, requestId, extraFileIds = [] }) => {
   const candidates = await fetchSectionAudioCandidates({ db, sectionTypes })
-  const signableFileIds = collectSignableFileIds(candidates)
+  // 待签发 file_id ＝ 候选音频（可交付的那些）＋ 调用方附加项（如 Track 混音产物的两个 file_id）：
+  // **同一次批量签发**（R39-⑤「去重后一次批量签发」；`signFileUrls` 内部再去重一次）。
+  const signableFileIds = [
+    ...collectSignableFileIds(candidates),
+    ...(Array.isArray(extraFileIds) ? extraFileIds : [])
+  ]
   const urlMap = await signFileUrls({ app, fileIds: signableFileIds, requestId })
   const { pools, stats } = buildSectionAudioPools({
     requestedSectionTypes: sectionTypes,
@@ -233,6 +245,8 @@ const loadDeliverableAudioPools = async ({ db, app, sectionTypes, requestId }) =
 
   return {
     pools,
+    // 本次批量签发的 file_id → 临时链接映射（混音产物在这里取自己的两个链接，不额外再签一次）。
+    urlMap,
     stats: {
       ...stats,
       requested_section_types: [...sectionTypes],
@@ -298,12 +312,25 @@ const handleGetTrack = async ({ app, db, event, requestId }) => {
 
   // 只下发该 Track **启用章**覆盖的 section_type（禁用章不取音频）。
   const sectionTypes = resolveTrackSectionTypes(track)
-  const { pools, stats } = await loadDeliverableAudioPools({ db, app, sectionTypes, requestId })
+  const { pools, stats, urlMap } = await loadDeliverableAudioPools({
+    db,
+    app,
+    sectionTypes,
+    requestId,
+    // R45-⑤：混音产物的两个 file_id 与候选音频**同一次批量签发**。
+    extraFileIds: collectTrackMixAudioFileIds(track)
+  })
+  // R45-⑤：`mix_audio` 只在**可交付**时下发（四键逐字 version / duration / ogg_url / mp3_url）；
+  // 缺失 / 不齐 / 签发失败 ⇒ **不下发该键**（**不置 null、不返回半条混音**）⇒ 端侧回退双轨。
+  const mixAudio = buildTrackMixAudioEntry({ track, urls: urlMap })
 
   return {
     ok: true,
     data: {
-      track: buildTrackEntry(track),
+      track: {
+        ...buildTrackEntry(track),
+        ...(mixAudio ? { mix_audio: mixAudio } : {})
+      },
       chapter_template: buildChapterTemplate(),
       section_audio_pools: pools,
       url_policy: buildUrlPolicy({ issuedAtMs: Date.now() }),
@@ -438,5 +465,7 @@ exports.__test__ = {
   readTrackByPlanStep,
   signFileUrls,
   assertCloudBaseResult,
+  buildTrackMixAudioEntry,
+  collectTrackMixAudioFileIds,
   ACTION_HANDLERS
 }

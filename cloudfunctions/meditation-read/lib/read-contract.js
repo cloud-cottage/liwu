@@ -26,10 +26,11 @@ const {
 
 const {
   MEDITATION_SECTION_TYPE_ORDER,
-  MEDITATION_SECTION_TYPE_LABELS,
   MEDITATION_TRACK_CHAPTER_TEMPLATE,
   MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
-  isMeditationSectionType
+  getMeditationSectionDisplayLabel,
+  isMeditationSectionType,
+  normalizeMeditationSectionCode
 } = require('./meditation-track-template.js')
 
 // 结构化错误码（调用方按 code 分支，不解析 message）。
@@ -147,8 +148,9 @@ const resolveRequestedSectionTypes = (event = {}, { required = false } = {}) => 
     }
   }
 
+  // 读侧归一：库/端侧传来的旧 `sec-*` 码一律归一到新代号（写侧只写新值）。
   const requested = (Array.isArray(rawValues) ? rawValues : [])
-    .map((value) => getString(value).trim())
+    .map((value) => normalizeMeditationSectionCode(getString(value)))
     .filter(Boolean)
 
   if (required && requested.length === 0) {
@@ -233,7 +235,8 @@ const resolveSectionAudioDeliverability = (audio = {}) => {
 // 出参裁剪（最小化白名单）：只给端侧播放与计划所需字段，不含任何后台管理字段。
 const buildSectionAudioEntry = ({ audio = {}, sectionType = '', urls = {} }) => ({
   _id: getString(audio._id || audio.id).trim(),
-  section_type: sectionType || getString(audio.section_type).trim(),
+  // 段码一律出新值：调用方给的（已归一的）段码优先，缺省时把库中段码归一再输出。
+  section_type: sectionType || normalizeMeditationSectionCode(getString(audio.section_type)),
   section_raw_id: getString(audio.section_raw_id).trim(),
   label: getString(audio.label),
   duration: Number(audio.duration) > 0 ? Number(audio.duration) : 0,
@@ -266,7 +269,113 @@ const buildTrackEntry = (track = {}) => ({
   chapters: Array.isArray(track.chapters) ? track.chapters : [],
   background_track: track.background_track || null,
   voice_track: track.voice_track || null
+  // ⚠ `mix_audio` **不在本函数内**（R45-⑤）：它的两个链接必须**现签**，而 `listTracks`
+  //   按口径「不签发链接、不读音频集合」⇒ 只有 `getTrack` 在签发之后才挂上该键
+  //   （见 `buildTrackMixAudioEntry` 与 index.js 的 handleGetTrack）。
 })
+
+// ─── Track 级混音产物（R45-⑤：D6 下发 `mix_audio`；**file_id 仍不下发**） ─────────────
+//
+// 库内形状（写侧＝cloudfunctions/meditation-transcoder，落 `med_tracks.mix_audio`）：
+//   { version, duration, ogg_file_id, mp3_file_id } —— **逐字 4 键、整体覆盖写**。
+// 下发形状（本文件）：`mix_audio = { version, duration, ogg_url, mp3_url }` —— 两个 `*_file_id`
+//   一律换成**现签临时链接**（与 section_audio 的 `formats[].url` 同一签发机制 / 同一次批量签发 /
+//   同一 `maxAge`）；**长期标识绝不下发**（R46-⑥ 白名单增量：`ogg_file_id` / `mp3_file_id` 禁发）。
+//
+// 混音产物**不是**逐条音频的可交付判定（那是 R39-④：`transcoded_formats` 双格式 ＋ file_id 齐备）：
+// 它本身就是交付产物 ⇒ 判据＝① `mix_audio` 存在且为对象、② `version` 为正整数、③ `duration > 0`、
+// ④ 两个 `*_file_id` 非空、⑤ 两个链接**都签发成功**。任一不满足 ⇒ **不下发 `mix_audio` 键**
+// （**不返回半条混音**，对齐 R39-⑤；端侧据此回退双轨，见 packages/shared-utils/meditation-track-playback-plan.js）。
+const MEDITATION_TRACK_MIX_AUDIO_KEYS = Object.freeze({
+  version: 'version',
+  duration: 'duration',
+  oggUrl: 'ogg_url',
+  mp3Url: 'mp3_url'
+})
+
+// 库内 `mix_audio` 的源键名（写侧落库口径，读侧原样取；**不下发**）。
+const MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS = Object.freeze({
+  version: 'version',
+  duration: 'duration',
+  oggFileId: 'ogg_file_id',
+  mp3FileId: 'mp3_file_id'
+})
+
+const roundHundredths = (value) => Math.round((Number(value) || 0) * 100) / 100
+
+// 待签发链接的混音 file_id（顺序＝opus / mp3；缺项一律过滤 ⇒ 不齐时后续判据会拒绝下发）。
+const collectTrackMixAudioFileIds = (track = {}) => {
+  const mixAudio = track?.mix_audio
+
+  if (!mixAudio || typeof mixAudio !== 'object' || Array.isArray(mixAudio)) {
+    return []
+  }
+
+  return [
+    getString(mixAudio[MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS.oggFileId]).trim(),
+    getString(mixAudio[MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS.mp3FileId]).trim()
+  ].filter(Boolean)
+}
+
+const resolveTrackMixAudioDeliverability = ({ track = {}, urls = new Map() } = {}) => {
+  const mixAudio = track?.mix_audio
+
+  if (!mixAudio || typeof mixAudio !== 'object' || Array.isArray(mixAudio)) {
+    return { deliverable: false, reason: 'missing_mix_audio' }
+  }
+
+  const version = Number(mixAudio[MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS.version])
+  if (!Number.isFinite(version) || version <= 0) {
+    return { deliverable: false, reason: 'missing_mix_version' }
+  }
+
+  const duration = Number(mixAudio[MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS.duration])
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return { deliverable: false, reason: 'missing_mix_duration' }
+  }
+
+  const oggFileId = getString(mixAudio[MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS.oggFileId]).trim()
+  const mp3FileId = getString(mixAudio[MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS.mp3FileId]).trim()
+  if (!oggFileId || !mp3FileId) {
+    return { deliverable: false, reason: 'missing_mix_file_id' }
+  }
+
+  const urlMap = urls instanceof Map ? urls : new Map()
+  const oggUrl = getString(urlMap.get(oggFileId)).trim()
+  const mp3Url = getString(urlMap.get(mp3FileId)).trim()
+  if (!oggUrl || !mp3Url) {
+    return { deliverable: false, reason: 'signing_failed' }
+  }
+
+  return {
+    deliverable: true,
+    reason: '',
+    version: Math.max(1, Math.floor(version)),
+    duration: roundHundredths(duration),
+    file_ids: { [MEDITATION_SECTION_AUDIO_FORMATS.opus]: oggFileId, [MEDITATION_SECTION_AUDIO_FORMATS.mp3]: mp3FileId },
+    urls: {
+      [MEDITATION_TRACK_MIX_AUDIO_KEYS.oggUrl]: oggUrl,
+      [MEDITATION_TRACK_MIX_AUDIO_KEYS.mp3Url]: mp3Url
+    }
+  }
+}
+
+// 出参（最小化白名单，**逐字 4 键**）：`version` / `duration` / `ogg_url` / `mp3_url`。
+// 不可交付（缺失 / 不齐 / 签发失败）⇒ **返回 null**（调用方不下发该键；端侧回退双轨）。
+const buildTrackMixAudioEntry = ({ track = {}, urls = new Map() } = {}) => {
+  const assessment = resolveTrackMixAudioDeliverability({ track, urls })
+
+  if (!assessment.deliverable) {
+    return null
+  }
+
+  return {
+    [MEDITATION_TRACK_MIX_AUDIO_KEYS.version]: assessment.version,
+    [MEDITATION_TRACK_MIX_AUDIO_KEYS.duration]: assessment.duration,
+    [MEDITATION_TRACK_MIX_AUDIO_KEYS.oggUrl]: assessment.urls[MEDITATION_TRACK_MIX_AUDIO_KEYS.oggUrl],
+    [MEDITATION_TRACK_MIX_AUDIO_KEYS.mp3Url]: assessment.urls[MEDITATION_TRACK_MIX_AUDIO_KEYS.mp3Url]
+  }
+}
 
 // 六章固定模板（端侧按此顺序拼接；章序 / 章内序列只读，R10）。
 // 内容源＝代码常量（R21：章名 / Section 名的源是代码常量），端侧**不得**用数据覆盖顺序。
@@ -282,7 +391,12 @@ const buildChapterTemplate = () => MEDITATION_TRACK_CHAPTER_TEMPLATE.map((chapte
     : MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
   section_types: [...chapter.section_types],
   section_labels: Object.fromEntries(
-    chapter.section_types.map((sectionType) => [sectionType, MEDITATION_SECTION_TYPE_LABELS[sectionType] || ''])
+    // 上屏标签＝「中文名｜英文名」（共享 display helper 拼写；背景两轨英文名空缺 ⇒ 只出中文名，不自拟）。
+    // 一律先归一：库里的旧码行也能出中文名（不得显示为原始代码或空白）。
+    chapter.section_types.map((sectionType) => [
+      sectionType,
+      getMeditationSectionDisplayLabel(sectionType)
+    ])
   )
 }))
 
@@ -291,7 +405,10 @@ const resolveTrackSectionTypes = (track = {}) => {
   const chapters = Array.isArray(track.chapters) ? track.chapters : []
 
   return MEDITATION_SECTION_TYPE_ORDER.filter((sectionType) => chapters.some((chapter) => (
-    chapter?.enabled !== false && Array.isArray(chapter?.section_types) && chapter.section_types.includes(sectionType)
+    chapter?.enabled !== false
+    && Array.isArray(chapter?.section_types)
+    // 读侧归一：库中旧码也要能与新代号模板序列对上。
+    && chapter.section_types.map((value) => normalizeMeditationSectionCode(value)).includes(sectionType)
   )))
 }
 
@@ -325,7 +442,10 @@ const buildSectionAudioPools = ({ requestedSectionTypes = [], candidates = [], u
   let deliveredAudioCount = 0
 
   requestedSectionTypes.forEach((sectionType) => {
-    const sectionCandidates = candidates.filter((audio) => getString(audio?.section_type).trim() === sectionType)
+    // 读侧归一：库中 `med_section_audios.section_type` 为旧 `sec-*` 码时也要能落进新代号候选池。
+    const sectionCandidates = candidates.filter((audio) => (
+      normalizeMeditationSectionCode(getString(audio?.section_type)) === sectionType
+    ))
     const deliverableEntries = []
     let accepted = 0
 
@@ -426,6 +546,11 @@ module.exports = {
   resolveSectionAudioDeliverability,
   buildSectionAudioEntry,
   buildTrackEntry,
+  MEDITATION_TRACK_MIX_AUDIO_KEYS,
+  MEDITATION_TRACK_MIX_AUDIO_SOURCE_KEYS,
+  collectTrackMixAudioFileIds,
+  resolveTrackMixAudioDeliverability,
+  buildTrackMixAudioEntry,
   buildChapterTemplate,
   resolveTrackSectionTypes,
   resolveTrackQueryPlan,

@@ -87,6 +87,10 @@ import {
   countMeditationSectionChars,
   resolveMeditationWordCountStatus
 } from '@liwu/shared-utils/meditation-track-template.js';
+import {
+  buildMeditationTrackMixJobPayload,
+  MEDITATION_TRACK_MIX_JOB_STATUS
+} from '../utils/meditationTrackMixJob.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -1782,6 +1786,26 @@ const toMeditationLibraryPayload = (data = {}) => ({
     )
   })) : []
 });
+
+// med_tracks.mix_audio（Track 级混音产物台账，由云侧转码器回写）：读侧**只读透传**，
+// 只取 UI 需要的 version / duration 与两个 file_id；字段缺失或非法 ⇒ null（＝产物缺失）。
+// 说明：本单只加在**后台自己的读路径**上（不加进 shared-utils 的 Track 归一化器——那是与
+// 云函数手维护副本成对的读契约文件，改它要同步改云函数目录，而本单零云函数改动）。
+const normalizeMedTrackMixAudio = (mixAudio) => {
+  if (!mixAudio || typeof mixAudio !== 'object') {
+    return null;
+  }
+
+  const version = Math.floor(Number(mixAudio.version));
+  const duration = Number(mixAudio.duration);
+
+  return {
+    version: Number.isFinite(version) && version > 0 ? version : 0,
+    duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
+    ogg_file_id: mixAudio.ogg_file_id || '',
+    mp3_file_id: mixAudio.mp3_file_id || ''
+  };
+};
 
 class DatabaseService {
   static async ensureAllProductsAssignedToStore102() {
@@ -6065,7 +6089,11 @@ class DatabaseService {
         return [];
       }
       return (getDocuments(result) || [])
-        .map((doc) => normalizeMedTrack(doc))
+        .map((doc) => ({
+          ...normalizeMedTrack(doc),
+          // 混音产物台账（云侧执行器回写）：后台要按它判断「产物缺失 / 版本落后」，故一并带出。
+          mix_audio: normalizeMedTrackMixAudio(doc.mix_audio)
+        }))
         .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
     } catch (error) {
       if (isMissingCollectionIssue(error)) {
@@ -6160,6 +6188,85 @@ class DatabaseService {
       return { ...payload, _id: result.id, id: result.id };
     } catch (error) {
       console.error('Error creating audio transcode job:', error);
+      throw error;
+    }
+  }
+
+  // ── Track 级混音入队（profile = 'track_mix'）────────────────────────────────
+  // 混合播放（人声与背景必须同时出声）靠**服务端预混单流** ⇒ 后台需要一个「排队方」把整条
+  // Track 的混音任务写进 `audio_transcode_jobs`，由云侧执行器消费、回写 `med_tracks.mix_audio`。
+  //
+  // 幂等：同一 `track_key` ＋ `track_version` 已有 **queued / processing** 的 track_mix job ⇒
+  // **不重复入队**，把已有 job 如实返回（`reused: true`）。判据用**只读查询**，
+  // 不依赖写入副作用（写入返回的 `updated` / 新增 id 都不能拿来判「是否已存在」）。
+  // 终态（succeeded / failed）不占名额：失败后允许重新排队；成功但 Track 版本已推进的也要能再排一版。
+  //
+  // 版本与载荷：`track_version` 取**当前 Track 文档的 `version`**（缺号则常量默认 1，依据见
+  // `admin/utils/meditationTrackMixJob.js` 的 resolveMeditationTrackMixTrackVersion）；人声段
+  // 按章序取、缺段**拒绝入队**并指明缺哪一段（不静默跳过）；背景来源三选一。
+  static async createMeditationTrackMixTranscodeJob({ track = null } = {}) {
+    try {
+      await ensureAnonymousLogin();
+      // 人声段与背景段的候选池：音频唯一口径＝med_section_audios（整表读，后台已限 2000 条）。
+      const sectionAudios = await this.getMedSectionAudios();
+      const payload = buildMeditationTrackMixJobPayload({
+        track,
+        sectionAudios,
+        now: new Date().toISOString()
+      });
+
+      const pendingResult = await db.collection('audio_transcode_jobs')
+        .where({
+          transcode_profile: payload.transcode_profile,
+          track_key: payload.track_key,
+          track_version: payload.track_version,
+          status: db.command.in([
+            MEDITATION_TRACK_MIX_JOB_STATUS.queued,
+            MEDITATION_TRACK_MIX_JOB_STATUS.processing
+          ])
+        })
+        .limit(1)
+        .get();
+
+      if (!isMissingCollectionIssue(pendingResult)) {
+        const existingJob = getFirstDocument(pendingResult, 'audio_transcode_jobs');
+        if (existingJob) {
+          return { ...existingJob, _id: getDocumentId(existingJob) || '', reused: true };
+        }
+      }
+
+      const result = assertCloudBaseCreateResult(
+        await db.collection('audio_transcode_jobs').add(payload),
+        'audio_transcode_jobs'
+      );
+      return { ...payload, _id: result.id, id: result.id, reused: false };
+    } catch (error) {
+      console.error('Error creating meditation track mix transcode job:', error);
+      throw error;
+    }
+  }
+
+  // 读单个转码 job（只读）：混音入队后按既有轮询风格查状态用（成功取 mix_audio、失败取文案）。
+  // 集合不存在或文档已不在（例如被清理）⇒ 返回 null，由调用方按「查不到」处理，不打爆轮询。
+  static async getMeditationAudioTranscodeJob(jobId = '') {
+    if (!jobId) {
+      return null;
+    }
+
+    try {
+      await ensureAnonymousLogin();
+      const result = await db.collection('audio_transcode_jobs').doc(jobId).get();
+
+      if (isMissingCollectionIssue(result)) {
+        return null;
+      }
+
+      return (Array.isArray(result?.data) ? result.data : [])[0] || null;
+    } catch (error) {
+      if (isMissingCollectionIssue(error) || /not\s*exist/i.test(error?.message || '')) {
+        return null;
+      }
+      console.error('Error fetching audio transcode job:', error);
       throw error;
     }
   }

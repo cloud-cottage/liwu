@@ -36,6 +36,10 @@
       <view class="meditation-warning-line" wx:for="{{segmentWarnings}}" wx:key="*this">{{item}}</view>
     </view>
 
+    <view class="meditation-notice" wx:if="{{playbackNotice}}">
+      <view class="meditation-notice-text">{{playbackNotice}}</view>
+    </view>
+
     <button
       class="primary-button meditation-button"
       loading="{{saving}}"
