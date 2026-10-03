@@ -3388,7 +3388,7 @@ const MeditationPage = ({
   const handleCreateParagraph = async () => {
     // 写侧白名单：超出权威 10 类的值一律拒绝，不落库。
     if (!isMeditationParagraphTypeAllowed(newType)) {
-      alert(`段落类型不合法，仅允许权威 10 类：${String(newType ?? '') || '（空）'}`);
+      alert(`段落类型不合法，仅允许权威 10 类：${getMeditationParagraphTypeDisplayLabel(newType)}`);
       return;
     }
     try {
@@ -3844,7 +3844,7 @@ const MeditationPage = ({
       setAudioStatus(paragraphId, {
         busy: false,
         notice: '',
-        error: `${MEDITATION_PARAGRAPH_SECTION_TYPE_MISSING_MESSAGE}（当前段落类型：${String(paragraph?.paragraph_type || '（空）')}）`
+        error: `${MEDITATION_PARAGRAPH_SECTION_TYPE_MISSING_MESSAGE}（当前段落类型：${getMeditationParagraphTypeDisplayLabel(paragraph?.paragraph_type)}）`
       });
       return;
     }
@@ -4205,7 +4205,7 @@ const MeditationPage = ({
     if (!editParagraph?._id) return;
     // 写侧白名单：超出权威 10 类的值一律拒绝，不落库（弹窗保持打开并给出可见原因）。
     if (!isMeditationParagraphTypeAllowed(editType)) {
-      setEditSaveError(`段落类型不合法，仅允许权威 10 类：${String(editType ?? '') || '（空）'}`);
+      setEditSaveError(`段落类型不合法，仅允许权威 10 类：${getMeditationParagraphTypeDisplayLabel(editType)}`);
       return;
     }
 

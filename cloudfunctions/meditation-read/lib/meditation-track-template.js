@@ -334,9 +334,32 @@ const MEDITATION_PARAGRAPH_TYPE_LABELS = Object.freeze({
   outro: '圆满回向'
 })
 
-// 上屏标签＝「中文名（代号）」；括号**全角**（U+FF08 / U+FF09）。
-// 归一风格与同文件 getMeditationSectionDisplayLabel 一致：空值 / null / undefined ⇒ 空串；
-// 未知非空码**原样返回**（不吞、不猜、不自拟中文名）。
+// 段落类型权威序（与权威源 MEDITATION_PARAGRAPH_TYPE_ORDER 同值同序）。
+const MEDITATION_PARAGRAPH_TYPE_ORDER = Object.freeze([
+  'intro',
+  'place',
+  'posture',
+  'bridge',
+  'prelude',
+  'breath',
+  'verse',
+  'chorus',
+  'integration',
+  'outro'
+])
+
+// 段落类型上屏字母前缀（A~J）＝**按 MEDITATION_PARAGRAPH_TYPE_ORDER 的序派生**（A=intro …
+// J=outro）。**单点权威：字母↔段落类型映射只此一处，禁止在别处硬编码第二份。**
+const MEDITATION_PARAGRAPH_TYPE_LETTERS = Object.freeze(
+  MEDITATION_PARAGRAPH_TYPE_ORDER.reduce((accumulator, paragraphType, index) => ({
+    ...accumulator,
+    [paragraphType]: String.fromCharCode(65 + index)
+  }), {})
+)
+
+// 上屏标签＝「字母 空格 中文名（代号）」（如 `A 开场（intro）`）；字母由 ORDER 序派生；括号**全角**
+// （U+FF08 / U+FF09）。归一风格与同文件 getMeditationSectionDisplayLabel 一致：空值 / null /
+// undefined ⇒ 空串；未知非空码**原样返回**（不吞、不猜、不自拟中文名）。
 const getMeditationParagraphTypeDisplayLabel = (paragraphType = '') => {
   const code = String(paragraphType ?? '').trim()
   if (!code) {
@@ -344,7 +367,12 @@ const getMeditationParagraphTypeDisplayLabel = (paragraphType = '') => {
   }
 
   const chinese = MEDITATION_PARAGRAPH_TYPE_LABELS[code]
-  return chinese ? `${chinese}（${code}）` : code
+  if (!chinese) {
+    return code
+  }
+
+  const letter = MEDITATION_PARAGRAPH_TYPE_LETTERS[code]
+  return letter ? `${letter} ${chinese}（${code}）` : `${chinese}（${code}）`
 }
 
 const MEDITATION_TRACK_BACKGROUND_SECTION_TYPES = Object.freeze(['sec-nature', 'sec-bowl'])
@@ -392,6 +420,8 @@ module.exports = {
   MEDITATION_SECTION_CODE_ALIASES,
   MEDITATION_CHAPTER_CODE_ALIASES,
   MEDITATION_PARAGRAPH_TYPE_LABELS,
+  MEDITATION_PARAGRAPH_TYPE_ORDER,
+  MEDITATION_PARAGRAPH_TYPE_LETTERS,
   getMeditationParagraphTypeDisplayLabel,
   normalizeMeditationSectionCode,
   normalizeMeditationChapterCode,

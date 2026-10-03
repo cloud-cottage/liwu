@@ -1,4 +1,5 @@
 import {
+  getMeditationParagraphTypeDisplayLabel,
   MEDITATION_PARAGRAPH_TYPE_ORDER,
   MEDITATION_PARAGRAPH_TYPE_TO_SECTION_TYPE
 } from './meditation-track-template.js'
@@ -16,11 +17,11 @@ import {
 export const MEDITATION_RECLASSIFY_MISSING_PARAGRAPH_MESSAGE = '缺少段落 ID，无法修改分类。'
 
 export const buildMeditationReclassifyInvalidTypeMessage = (paragraphType = '', allowedCount = 0) => (
-  `段落类型不合法，仅允许权威 ${allowedCount} 类：${String(paragraphType ?? '').trim() || '（空）'}`
+  `段落类型不合法，仅允许权威 ${allowedCount} 类：${getMeditationParagraphTypeDisplayLabel(paragraphType)}`
 )
 
 export const buildMeditationReclassifyNoSectionTypeMessage = (paragraphType = '') => (
-  `段落类型「${String(paragraphType ?? '').trim() || '（空）'}」没有对应的推荐段代号，无法同步音频分类，已拒绝保存。`
+  `段落类型「${getMeditationParagraphTypeDisplayLabel(paragraphType)}」没有对应的推荐段代号，无法同步音频分类，已拒绝保存。`
 )
 
 const normalizeId = (value) => String(value ?? '').trim()
