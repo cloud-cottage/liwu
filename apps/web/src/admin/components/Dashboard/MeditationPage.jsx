@@ -45,9 +45,13 @@ import {
 } from '@liwu/shared-utils/meditation-section-audio.js';
 import { createDefaultMeditationTrack } from '@liwu/shared-utils/meditation-track-normalizers.js';
 import {
+  buildMeditationParagraphAudioPayload,
   getMeditationRecordingExtension,
   isMeditationRecordingSupported,
+  isMeditationSectionAudioTranscodePending,
+  isMeditationSectionAudioTranscodeRetryable,
   measureMeditationAudioDurationSeconds,
+  MEDITATION_PARAGRAPH_SECTION_TYPE_MISSING_MESSAGE,
   MEDITATION_RECORDING_UNSUPPORTED_MESSAGE,
   resolveMeditationAudioTargetFormat,
   resolveMeditationRecordingMimeType,
@@ -60,7 +64,9 @@ import {
   isMeditationTrackMixJobPending,
   MEDITATION_TRACK_MIX_JOB_STATUS,
   MEDITATION_TRACK_MIX_POLL_INTERVAL_MS,
-  resolveMeditationTrackMixTrackVersion
+  MEDITATION_TRACK_MIX_WARNING_HEADLINE,
+  resolveMeditationTrackMixTrackVersion,
+  resolveMeditationTrackMixWarningLines
 } from '../../utils/meditationTrackMixJob.js';
 import MeditationTrackPreview from './MeditationTrackPreview.jsx';
 
@@ -2842,6 +2848,14 @@ const DEFAULT_NEW_SECTION_TYPE = MEDITATION_SECTION_TYPE_GROUPS
   .flatMap((group) => group.section_types)
   .find((meta) => meta.text_required)?.section_type || '';
 
+// 段落类型默认值＝权威 10 类顺序首项（弃用旧默认 'verse'，也弃用旧 3 类分类口径）。
+const DEFAULT_MEDITATION_PARAGRAPH_TYPE = MEDITATION_PARAGRAPH_TYPE_ORDER[0];
+
+// 段落类型写侧白名单：只有权威 10 类内的代号允许落库，其余一律拒绝（不吞、不猜、不自拟）。
+const isMeditationParagraphTypeAllowed = (paragraphType) => (
+  MEDITATION_PARAGRAPH_TYPE_ORDER.includes(String(paragraphType ?? '').trim())
+);
+
 const formatAudioDuration = (seconds) => (
   Number(seconds) > 0 ? formatSeconds(Math.round(Number(seconds))) : '时长未知'
 );
@@ -2856,7 +2870,7 @@ const getSourceKindLabel = (sourceKind = '') => SOURCE_KIND_LABELS[sourceKind] |
 
 // ─── 录音 / 上传控件（MediaRecorder；不支持时给出明确提示，不做调试开关掩盖） ──
 
-const MeditationRecordingControl = ({ disabled, busy, onCaptured }) => {
+const MeditationRecordingControl = ({ disabled, busy, onCaptured, recordLabel = '● 网页录音', uploadLabel = '上传音频文件' }) => {
   const [recording, setRecording] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [preparing, setPreparing] = useState(false);
@@ -2958,7 +2972,7 @@ const MeditationRecordingControl = ({ disabled, busy, onCaptured }) => {
         onClick={handleStartRecording}
         disabled={disabled || busy || preparing || !recordingSupported}
       >
-        {preparing ? '准备中…' : '● 网页录音'}
+        {preparing ? '准备中…' : recordLabel}
       </button>
     );
   };
@@ -2969,7 +2983,7 @@ const MeditationRecordingControl = ({ disabled, busy, onCaptured }) => {
       {recording && <span style={{ color: '#dc2626', fontSize: '11px' }}>录音中 {formatSeconds(elapsedSeconds)}</span>}
       {busy && <span style={{ color: '#64748b', fontSize: '11px' }}>处理中…</span>}
       <label style={{ ...ghostBtnStyle, padding: '3px 10px', display: 'inline-block', opacity: disabled || busy ? 0.6 : 1 }}>
-        上传音频文件
+        {uploadLabel}
         <input
           type="file"
           accept="audio/*"
@@ -3023,6 +3037,9 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
   const [mixQueueing, setMixQueueing] = useState(false);
   const [mixNotice, setMixNotice] = useState('');
   const [mixError, setMixError] = useState('');
+  // 混音**成功**时 job 文档带回的可见警告（超软基准 / 时长不变量失配）：**不阻断、不改终态**，
+  // 只把文案上屏（空数组＝无警告、不显示）。job 失败仍走 mixError 分支。
+  const [mixWarnings, setMixWarnings] = useState([]);
   const mixJobId = mixJob?._id || '';
   const mixPending = isMeditationTrackMixJobPending(mixJob || {});
 
@@ -3050,6 +3067,8 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
 
           if (job.status === MEDITATION_TRACK_MIX_JOB_STATUS.succeeded) {
             setMixJob(null);
+            // 产物**已成功产出**（终态不变）；job 文档若带可见警告（超软基准 900s / 时长不变量失配）⇒ 一并上屏。
+            setMixWarnings(resolveMeditationTrackMixWarningLines(job));
             setMixNotice('混合音频已生成');
             await refreshTrackRef.current?.();
             return;
@@ -3073,6 +3092,7 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
     setMixQueueing(true);
     setMixNotice('');
     setMixError('');
+    setMixWarnings([]);
     try {
       const job = await DatabaseService.createMeditationTrackMixTranscodeJob({ track });
       setMixJob(job);
@@ -3262,6 +3282,26 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
         )}
         {mixNotice && <div style={{ color: '#16a34a', marginTop: '4px' }}>✅ {mixNotice}</div>}
         {mixError && <div role="alert" style={{ color: '#ef4444', marginTop: '4px' }}>❌ {mixError}</div>}
+        {/* 混音**成功**但 job 报告可见警告（超出 15:00 软基准 / 时长不变量失配）：**已照常产出、
+            不阻断、不改终态**，只提示人工留意（文案零规范编号）。 */}
+        {mixWarnings.length > 0 && (
+          <div
+            role="status"
+            style={{
+              marginTop: '6px',
+              padding: '8px 10px',
+              backgroundColor: '#fffbeb',
+              border: '1px solid #fde68a',
+              borderRadius: '6px',
+              color: '#b45309'
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>⚠️ {MEDITATION_TRACK_MIX_WARNING_HEADLINE}</div>
+            {mixWarnings.map((warningLine, index) => (
+              <div key={`${index}-${warningLine}`} style={{ marginTop: '2px' }}>· {warningLine}</div>
+            ))}
+          </div>
+        )}
       </div>
 
       {draft.chapters.map((chapter, index) => renderChapterRow(chapter, index))}
@@ -3314,7 +3354,7 @@ const MeditationPage = ({
   // Minimal create form state (P0)
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newText, setNewText] = useState('');
-  const [newType, setNewType] = useState('verse');
+  const [newType, setNewType] = useState(DEFAULT_MEDITATION_PARAGRAPH_TYPE);
   const [newTags, setNewTags] = useState('');
 
   // Section-Raw 编排与音频状态（唯一音频口径：med_section_audios）
@@ -3340,6 +3380,11 @@ const MeditationPage = ({
 
   // minimal create handler (P0 tiny follow-up)
   const handleCreateParagraph = async () => {
+    // 写侧白名单：超出权威 10 类的值一律拒绝，不落库。
+    if (!isMeditationParagraphTypeAllowed(newType)) {
+      alert(`段落类型不合法，仅允许权威 10 类：${String(newType ?? '') || '（空）'}`);
+      return;
+    }
     try {
       const tags = newTags.split(',').map((t) => t.trim()).filter(Boolean);
       await DatabaseService.createMedParagraph({
@@ -3414,7 +3459,7 @@ const MeditationPage = ({
       }
       const newParagraph = {
         text: rewrittenText,
-        paragraph_type: originalParagraph.paragraph_type || 'verse',
+        paragraph_type: originalParagraph.paragraph_type || DEFAULT_MEDITATION_PARAGRAPH_TYPE,
         tags: Array.isArray(originalParagraph.tags) ? [...originalParagraph.tags, 'ai-rewrite'] : ['ai-rewrite'],
         usage_count: 0,
         source: 'ai',
@@ -3440,9 +3485,10 @@ const MeditationPage = ({
   };
 
   // tiny dev seed helper for paragraph tab (hardcoded from test cases doc "0. Data Setup Notes")
+  // 类型取值域＝权威 10 类（MEDITATION_PARAGRAPH_TYPE_ORDER），不再只用旧 intro / breath / verse 三类。
   const handleSeedParagraphs = async () => {
     const samples = [
-      // 1. intro, usage=0 (0 stars)
+      // 1. intro 开场, usage=0 (0 stars)
       {
         text: "欢迎来到理悟冥想空间。",
         paragraph_type: "intro",
@@ -3451,16 +3497,16 @@ const MeditationPage = ({
         source: "manual",
         created_by: "test-admin-001",
       },
-      // 2. intro, usage=2
+      // 2. posture 正身调姿, usage=2
       {
         text: "请保持舒适的姿势，闭上双眼。",
-        paragraph_type: "intro",
+        paragraph_type: "posture",
         tags: ["posture"],
         usage_count: 2,
         source: "manual",
         created_by: "test-admin-001",
       },
-      // 3. breath, usage=5 (mid stars)
+      // 3. breath 三阶净息, usage=5 (mid stars)
       {
         text: "慢慢吸气... 感受腹部鼓起... 缓缓呼出... 释放所有压力。",
         paragraph_type: "breath",
@@ -3469,16 +3515,16 @@ const MeditationPage = ({
         source: "manual",
         created_by: "test-admin-001",
       },
-      // 4. breath, usage=0
+      // 4. prelude 调息锚定, usage=0
       {
         text: "吸气四秒，屏息四秒，呼气六秒。",
-        paragraph_type: "breath",
+        paragraph_type: "prelude",
         tags: [],
         usage_count: 0,
         source: "ai",
         created_by: "test-admin-001",
       },
-      // 5. verse, usage=12 (high stars)
+      // 5. verse 理悟立论, usage=12 (high stars)
       {
         text: "心如止水，念随息去。每一呼吸引导你回归当下。",
         paragraph_type: "verse",
@@ -3487,10 +3533,10 @@ const MeditationPage = ({
         source: "manual",
         created_by: "test-admin-001",
       },
-      // 6. verse, usage=25 (higher)
+      // 6. outro 圆满回向, usage=25 (higher)
       {
         text: "在宁静中觉察，在觉察中成长。愿你与这份平静同在。",
-        paragraph_type: "verse",
+        paragraph_type: "outro",
         tags: ["wisdom"],
         usage_count: 25,
         source: "ai",
@@ -3549,9 +3595,34 @@ const MeditationPage = ({
     setSectionAudios(Array.isArray(data) ? data : []);
   }, []);
 
-  const getSectionRawAudios = useCallback((sectionRawId = '') => (
-    sectionAudios.filter((audio) => (audio.section_raw_id || '') === sectionRawId)
+  // 段落音频（一段一录）：凭 paragraph_ids_snapshot 找到该段落自己的 take。
+  const getParagraphAudios = useCallback((paragraphId = '') => (
+    sectionAudios.filter((audio) => (
+      Array.isArray(audio.paragraph_ids_snapshot) && audio.paragraph_ids_snapshot.includes(paragraphId)
+    ))
   ), [sectionAudios]);
+
+  // Section-Raw 候选池＝它名下各段落的 take 汇总：既收直接挂本 raw 的音频（历史），
+  // 也收凭 paragraph_ids_snapshot 归属于本 raw 段落的段落录音（一段一录不挂 section_raw_id）。
+  const getSectionRawAudios = useCallback((sectionRawId = '', paragraphIds = []) => (
+    sectionAudios.filter((audio) => {
+      if ((audio.section_raw_id || '') === sectionRawId) {
+        return true;
+      }
+      if (!sectionRawId || paragraphIds.length === 0) {
+        return false;
+      }
+      const snapshot = Array.isArray(audio.paragraph_ids_snapshot) ? audio.paragraph_ids_snapshot : [];
+      return snapshot.some((paragraphId) => paragraphIds.includes(paragraphId));
+    })
+  ), [sectionAudios]);
+
+  // 状态回显容器：优先 Section-Raw，其次该音频唯一挂载的段落，最后纯音频段容器。
+  const getAudioStatusContainerId = (audio = {}) => (
+    audio.section_raw_id
+    || (Array.isArray(audio.paragraph_ids_snapshot) ? audio.paragraph_ids_snapshot[0] : '')
+    || 'audio-only'
+  );
 
   const setAudioStatus = (containerId, patch) => {
     setSectionAudioStatus((previous) => ({
@@ -3752,8 +3823,101 @@ const MeditationPage = ({
     }
   };
 
+  // 段落文本库：一段一录入口。一次录制 / 上传生成的 med_section_audios 只挂一个段落，
+  // section_type 取该段落类型的推荐段代号（无推荐映射 ⇒ 拒绝并提示，不静默写空）。
+  const handleParagraphAudioCaptured = async (paragraph, capture) => {
+    const paragraphId = paragraph?._id || paragraph?.id || '';
+
+    if (!paragraphId) {
+      return;
+    }
+
+    const recommendedSectionType = getMeditationRecommendedSectionType(paragraph?.paragraph_type);
+
+    if (!recommendedSectionType) {
+      setAudioStatus(paragraphId, {
+        busy: false,
+        notice: '',
+        error: `${MEDITATION_PARAGRAPH_SECTION_TYPE_MISSING_MESSAGE}（当前段落类型：${String(paragraph?.paragraph_type || '（空）')}）`
+      });
+      return;
+    }
+
+    setAudioStatus(paragraphId, { busy: true, error: '', notice: '' });
+
+    try {
+      const capturedMimeType = capture.mimeType || capture.file.type || '';
+      const durationSeconds = await measureMeditationAudioDurationSeconds(capture.file);
+      const takeIndex = getParagraphAudios(paragraphId).length + 1;
+      const extension = getMeditationRecordingExtension(capturedMimeType);
+      const cloudPath = `meditation-audio-raw/${recommendedSectionType}/paragraph-${paragraphId}/take-${takeIndex}.${extension}`;
+      const { fileId, audioUrl } = await uploadAudioFile({ file: capture.file, cloudPath });
+      const created = await DatabaseService.createMedSectionAudio(buildMeditationParagraphAudioPayload({
+        paragraphId,
+        sectionType: recommendedSectionType,
+        paragraphText: paragraph?.text || '',
+        capturedMimeType,
+        durationSeconds,
+        fileId,
+        audioUrl,
+        sourceKind: capture.sourceKind
+      }));
+
+      const transcodeQueue = await queueSectionAudioTranscode({
+        sectionAudio: created,
+        sectionType: recommendedSectionType,
+        cloudPath,
+        fileId,
+        fileName: capture.file.name,
+        targetFormat: created.target_format
+      });
+
+      await loadSectionAudios();
+      setAudioStatus(paragraphId, transcodeQueue.queued
+        ? { busy: false, notice: '已保存该段落音频，转码任务已排队', error: '' }
+        : { busy: false, notice: '已保存该段落音频（转码任务未排队）', error: `转码任务排队失败：${transcodeQueue.error}` });
+    } catch (err) {
+      setAudioStatus(paragraphId, { busy: false, error: `段落音频保存失败：${err.message || '未知错误'}` });
+    }
+  };
+
+  // 重试转码：仅当该条音频有原始文件且状态为 failed / idle 时提供；复用既有入队方法与状态回写。
+  // 幂等：进行中（queued / processing）不重复入队。
+  const handleRetrySectionAudioTranscode = async (audio) => {
+    if (!audio?._id || isMeditationSectionAudioTranscodePending(audio)) {
+      return;
+    }
+
+    const containerId = getAudioStatusContainerId(audio);
+
+    if (!isMeditationSectionAudioTranscodeRetryable(audio)) {
+      setAudioStatus(containerId, { busy: false, notice: '', error: '该条音频没有原始文件，无法重试转码' });
+      return;
+    }
+
+    setAudioStatus(containerId, { busy: true, error: '', notice: '' });
+
+    try {
+      const result = await queueSectionAudioTranscode({
+        sectionAudio: audio,
+        sectionType: audio.section_type,
+        cloudPath: '',
+        fileId: audio.original_file_id,
+        fileName: '',
+        targetFormat: audio.target_format
+      });
+
+      await loadSectionAudios();
+      setAudioStatus(containerId, result.queued
+        ? { busy: false, notice: '已重新入队，等待云侧转码器处理', error: '' }
+        : { busy: false, notice: '', error: `重试转码入队失败：${result.error}` });
+    } catch (err) {
+      setAudioStatus(containerId, { busy: false, error: `重试转码失败：${err.message || '未知错误'}` });
+    }
+  };
+
   const handlePlaySectionAudio = (audio) => {
-    const containerId = audio.section_raw_id || 'audio-only';
+    const containerId = getAudioStatusContainerId(audio);
     const resolved = resolveMeditationSectionAudioPlayback(audio);
 
     if (resolved.error) {
@@ -3780,7 +3944,7 @@ const MeditationPage = ({
       return;
     }
 
-    const containerId = audio.section_raw_id || 'audio-only';
+    const containerId = getAudioStatusContainerId(audio);
     setAudioStatus(containerId, { busy: true, error: '', notice: '' });
     try {
       playingAudioRef.current?.pause?.();
@@ -3888,6 +4052,10 @@ const MeditationPage = ({
               setLocalAudioLibrary(data);
             }
             break;
+          case 'paragraph':
+            // 段落文本库按段落显示各自的音频（一段一录）⇒ 进 tab 即加载 med_section_audios。
+            await loadSectionAudios();
+            break;
           case 'section-raw':
             await loadSectionRaws();
             await loadSectionAudios();
@@ -3932,7 +4100,7 @@ const MeditationPage = ({
   const handleOpenEdit = (p) => {
     setEditParagraph(p);
     setEditText(p?.text || '');
-    setEditType(p?.paragraph_type || 'verse');
+    setEditType(p?.paragraph_type || DEFAULT_MEDITATION_PARAGRAPH_TYPE);
     setEditTags(Array.isArray(p?.tags) ? p.tags.join(', ') : '');
     setEditSaveError('');
   };
@@ -3973,6 +4141,11 @@ const MeditationPage = ({
 
   const handleSaveEdit = async () => {
     if (!editParagraph?._id) return;
+    // 写侧白名单：超出权威 10 类的值一律拒绝，不落库（弹窗保持打开并给出可见原因）。
+    if (!isMeditationParagraphTypeAllowed(editType)) {
+      setEditSaveError(`段落类型不合法，仅允许权威 10 类：${String(editType ?? '') || '（空）'}`);
+      return;
+    }
     setSavingEdit(true);
     setEditSaveError('');
     try {
@@ -4126,11 +4299,15 @@ const MeditationPage = ({
     );
   };
 
-  const renderSectionAudioList = (containerId, audios, { showStatus = true, showSectionType = false } = {}) => {
+  const renderSectionAudioList = (containerId, audios, {
+    showStatus = true,
+    showSectionType = false,
+    emptyHint = '候选池为空（同 section_type 允许 1..N 条候选，运行时抽一条）'
+  } = {}) => {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {audios.length === 0 && (
-          <span style={{ fontSize: '11px', color: '#94a3b8' }}>候选池为空（同 section_type 允许 1..N 条候选，运行时抽一条）</span>
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>{emptyHint}</span>
         )}
         {audios.map((audio) => (
           <div key={audio._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: '#475569' }}>
@@ -4140,11 +4317,15 @@ const MeditationPage = ({
             <span>{formatAudioDuration(audio.duration)}</span>
             <span>{getSourceKindLabel(audio.source_kind)}</span>
             <span>{MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS[audio.transcode_status] || audio.transcode_status}</span>
+            {audio.transcode_error && <span style={{ color: '#ef4444' }}>失败原因：{audio.transcode_error}</span>}
             <span style={{ color: audio.audio_url ? '#16a34a' : '#94a3b8' }}>Opus {audio.audio_url ? '✓' : '待转码'}</span>
             <span style={{ color: audio.fallback_audio_url ? '#16a34a' : '#94a3b8' }}>mp3 {audio.fallback_audio_url ? '✓' : '—'}</span>
             {!isMeditationSectionAudioDeliveryComplete(audio) && <span style={medBadgeStyle('warning')}>未完成交付</span>}
             {audio.stale && <span style={medBadgeStyle('warning')}>stale</span>}
             <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handlePlaySectionAudio(audio)}>试听</button>
+            {isMeditationSectionAudioTranscodeRetryable(audio) && (
+              <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handleRetrySectionAudioTranscode(audio)}>重试转码</button>
+            )}
             <button style={{ ...dangerBtnStyle, padding: '2px 8px' }} onClick={() => handleDeleteSectionAudio(audio)}>删除</button>
           </div>
         ))}
@@ -4153,9 +4334,40 @@ const MeditationPage = ({
     );
   };
 
+  // 段落文本库：每段显示自己的音频（状态词 + 失败原因 + 试听 / 重录 / 删除），并提供录制/上传入口。
+  const renderParagraphAudioBlock = (paragraph) => {
+    const paragraphId = paragraph?._id || paragraph?.id || '';
+
+    if (!paragraphId) {
+      return null;
+    }
+
+    const audios = getParagraphAudios(paragraphId);
+    const recommendedSectionType = getMeditationRecommendedSectionType(paragraph?.paragraph_type);
+    const hasAudio = audios.length > 0;
+
+    return (
+      <div style={{ margin: '4px 0 0 8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div style={{ fontSize: '11px', color: '#64748b' }}>
+          音频：{recommendedSectionType
+            ? `段代号 ${getMeditationSectionDisplayLabelWithCode(recommendedSectionType)}`
+            : '该段落类型无推荐段代号，不能录制或上传'}
+        </div>
+        {renderSectionAudioList(paragraphId, audios, { emptyHint: '该段落暂无音频' })}
+        {recommendedSectionType && (
+          <MeditationRecordingControl
+            busy={Boolean(sectionAudioStatus[paragraphId]?.busy)}
+            recordLabel={hasAudio ? '● 重录' : '● 网页录音'}
+            uploadLabel={hasAudio ? '重录（上传音频文件）' : '上传音频文件'}
+            onCaptured={(capture) => handleParagraphAudioCaptured(paragraph, capture)}
+          />
+        )}
+      </div>
+    );
+  };
+
   const renderSectionRawItem = (raw, index) => {
-    const audios = getSectionRawAudios(raw.id);
-    const status = sectionAudioStatus[raw.id] || {};
+    const audios = getSectionRawAudios(raw.id, raw.paragraph_ids);
     // 无候选音频（= 没有录音）时不显示「需重录 / 文本与录制快照不一致」：无录音可重录。
     // DB 侧 stale 语义不变，仅提示口径按有无录音收敛。
     const stale = audios.length > 0 && isSectionRawStale(raw);
@@ -4192,13 +4404,7 @@ const MeditationPage = ({
         <div style={{ marginTop: '4px' }}>{renderSectionAudioList(raw.id, audios)}</div>
         <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => setAppendToSr(raw._id)}>📎 追加段落</button>
-          <MeditationRecordingControl
-            busy={Boolean(status.busy)}
-            onCaptured={(capture) => handleSectionAudioCaptured(
-              { sectionRawId: raw.id, sectionType: raw.section_type },
-              capture
-            )}
-          />
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>文本类段的录音 / 上传入口已移至「段落文本库」，按单段录制</span>
         </div>
       </div>
     );
@@ -4251,7 +4457,7 @@ const MeditationPage = ({
     const filteredParagraphs = (Array.isArray(meditationParagraphs) ? meditationParagraphs : [])
       .filter((paragraph) => (
         sectionParagraphTypeFilter === 'all'
-        || (paragraph?.paragraph_type || 'verse') === sectionParagraphTypeFilter
+        || (paragraph?.paragraph_type || DEFAULT_MEDITATION_PARAGRAPH_TYPE) === sectionParagraphTypeFilter
       ));
 
     return (
@@ -4419,8 +4625,10 @@ const MeditationPage = ({
           <div>
             <div style={sectionTitleStyle}>段落文本库</div>
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              {['all', 'intro', 'breath', 'verse'].map((pt) => (
-                <button key={pt} style={pillBtnStyle(activeFilter === pt)} onClick={() => setActiveFilter(pt)}>{pt}</button>
+              {['all', ...MEDITATION_PARAGRAPH_TYPE_ORDER].map((pt) => (
+                <button key={pt} style={pillBtnStyle(activeFilter === pt)} onClick={() => setActiveFilter(pt)}>
+                  {pt === 'all' ? '全部' : getMeditationParagraphTypeDisplayLabel(pt)}
+                </button>
               ))}
             </div>
             {(() => {
@@ -4479,7 +4687,7 @@ const MeditationPage = ({
                       <option value="score">按星级排序</option>
                       <option value="text">按文本排序</option>
                     </select>
-                    <span style={{ fontSize: '12px', color: '#64748b' }}>{filtered.length} 条 {activeFilter !== 'all' ? `(${activeFilter})` : ''}</span>
+                    <span style={{ fontSize: '12px', color: '#64748b' }}>{filtered.length} 条 {activeFilter !== 'all' ? `(${getMeditationParagraphTypeDisplayLabel(activeFilter)})` : ''}</span>
                   </div>
                   {filtered.length === 0 ? (
                     <div style={{ padding: '6px 8px', color: '#94a3b8', fontSize: '13px' }}>med_paragraphs data will appear here (seed via CloudBase)</div>
@@ -4489,7 +4697,8 @@ const MeditationPage = ({
                       const stars = getStars(p.score);
                       const isLocked = lockedParagraphIds.has(p._id);
                       return (
-                        <div key={p?._id || index} style={{ display: 'flex', gap: '12px', padding: '6px 8px', borderTop: index > 0 ? '1px solid #f8fafc' : 'none', fontSize: '13px', alignItems: 'center' }}>
+                        <div key={p?._id || index} style={{ padding: '6px 8px', borderTop: index > 0 ? '1px solid #f8fafc' : 'none' }}>
+                          <div style={{ display: 'flex', gap: '12px', fontSize: '13px', alignItems: 'center' }}>
                           <div style={{ flex: 1, cursor: isLocked ? 'default' : 'pointer', wordBreak: 'break-word' }} title={isLocked ? '已加入音频库，不可编辑' : '点击编辑'} onClick={() => !isLocked && handleOpenEdit(p)}>
                             {p?.source === 'ai' && <span style={{ marginRight: '4px', fontSize: '11px', verticalAlign: 'middle' }}><img src="/icons/partner/ai.svg" style={{ width: '14px', height: '14px', verticalAlign: 'middle' }} alt="AI" /></span>}
                             {isLocked && <span style={{ marginRight: '4px', fontSize: '12px', verticalAlign: 'middle' }} title="已加入音频库">🔒</span>}
@@ -4522,6 +4731,8 @@ const MeditationPage = ({
                           >
                             🗑️
                           </button>
+                          </div>
+                          {renderParagraphAudioBlock(p)}
                         </div>
                       );
                     })}
@@ -4576,9 +4787,9 @@ const MeditationPage = ({
                      onChange={(e) => setNewType(e.target.value)}
                      style={{ ...inputStyle, fontSize: '12px' }}
                    >
-                     <option value="intro">intro</option>
-                     <option value="breath">breath</option>
-                     <option value="verse">verse</option>
+                     {MEDITATION_PARAGRAPH_TYPE_ORDER.map((paragraphType) => (
+                       <option key={paragraphType} value={paragraphType}>{getMeditationParagraphTypeDisplayLabel(paragraphType)}</option>
+                     ))}
                    </select>
                    <input
                      value={newTags}
@@ -4763,9 +4974,9 @@ const MeditationPage = ({
                 onChange={(e) => setEditType(e.target.value)}
                 style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #e2e8f0', borderRadius: '8px', outline: 'none', boxSizing: 'border-box' }}
               >
-                <option value="intro">intro</option>
-                <option value="breath">breath</option>
-                <option value="verse">verse</option>
+                {MEDITATION_PARAGRAPH_TYPE_ORDER.map((paragraphType) => (
+                  <option key={paragraphType} value={paragraphType}>{getMeditationParagraphTypeDisplayLabel(paragraphType)}</option>
+                ))}
               </select>
             </div>
 

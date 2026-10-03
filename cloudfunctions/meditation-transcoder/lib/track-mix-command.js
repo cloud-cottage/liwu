@@ -1,11 +1,17 @@
 // ─── Track 级混音 ffmpeg 命令构造（纯函数，无 IO） ─────────────────────────────
 //
-// 【本单（Track 级混音，profile = 'track_mix'）】一次 ffmpeg 调用完成四件事：
-//   ① 人声 **N 段按 job 给定顺序拼接**（concat，顺序＝voice_section_audio_ids 的数组序）；
-//   ② 背景 **单段 `-stream_loop -1`** 无限循环，靠 `amix=duration=first` 自然裁到人声全长
-//      ⇒ 背景「铺满至人声全长」，音频总长 ＝ 人声拼接总长（不由背景长度决定）；
-//   ③ **amix 混音**：voice = 1.0 / background = 0.33（配比权威源见 lib/meditation-track-mix.js）；
-//   ④ **同一 filtergraph 分两路输出**（asplit）：`.ogg`（Opus 主体）＋ `.mp3`（兜底）。
+// 【本单（Track 级混音，profile = 'track_mix'）】一次 ffmpeg 调用完成六件事：
+//   ① 人声 **N 段按 job 给定顺序拼接**（concat，顺序＝voice_section_audio_ids 的数组序；
+//      同一人声段的多次 take 也按 job 数组序**全部**参与拼接，执行器不重排、不去重）；
+//   ② **前导静音**：`leading_silence_seconds > 0` ⇒ 在**第一个（人声）段之前**插入对应秒数静音
+//      （＝端侧「背景章 gap 把人声轨整体后移」的复现；静音由滤镜源 `anullsrc` 生成）；
+//   ③ **章间留白静音**：`voice_section_gap_after_seconds[i] > 0` ⇒ 在第 i 段人声之后插入
+//      对应秒数的静音（静音由滤镜源 `anullsrc` 生成，不落临时文件、不新增 `-i` 输入）；
+//   ④ 背景 **单段 `-stream_loop -1`** 无限循环，靠 `amix=duration=first` 裁到「前导静音 ＋ 人声 ＋ 留白」全长
+//      ⇒ 背景「铺满整条（含前导静音与留白期）」，音频总长 ＝ 前导静音 ＋ Σ人声 ＋ Σ留白
+//      （不由背景长度决定）；
+//   ⑤ **amix 混音**：voice = 1.0 / background = 0.33（配比权威源见 lib/meditation-track-mix.js）；
+//   ⑥ **同一 filtergraph 分两路输出**（asplit）：`.ogg`（Opus 主体）＋ `.mp3`（兜底）。
 //
 // 【编码参数与 R34 **逐字一致**】（与 lib/transcode-command.js#buildDualOutputArgs 同口径）：
 //   .ogg : `-c:a libopus   -b:a 48k -vbr off -ac 2 -ar 48000`（硬 CBR）
@@ -13,7 +19,7 @@
 //   ⚠ 本文件参数**不得自行调整**；改参数一律走规范修订，并**同步** lib/transcode-command.js。
 //   ⚠ 不做任何声道下混（`-ac 2` 是定稿口径，不得出现单声道假设）。
 //
-// 【前置归一（aformat）】每一路输入（人声各路 + 背景）先进
+// 【前置归一（aformat）】每一路输入（人声各路 + 背景 + **静音支路**）先进
 //   `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo`：
 //   concat 要求各路采样率/声道布局一致，而各段音频的历史文档可能缺声道信息或为旧单声道
 //   ⇒ 在滤镜入口统一到 48k 立体声，避免「某一段是单声道就整条 job 失败」。
@@ -33,6 +39,16 @@ const getString = (value) => (value == null ? '' : String(value))
 
 // 输入归一：所有参与混音的输入统一样本格式/采样率/声道布局（concat 与 amix 都要求一致）。
 const TRACK_MIX_INPUT_NORMALIZE_FILTER = 'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo'
+
+// 留白秒数的字面量格式化：141 → "141"、3.5 → "3.5"（避免 3.5000000000000004 这类浮点噪声进命令行）。
+const formatTrackMixSeconds = (value) => String(Math.round(Number(value) * 1000) / 1000)
+
+// 章间留白静音的**滤镜源**：与上面同一套采样率/声道布局，末尾再接同一个 aformat 归一，
+// 保证与各路输入在 concat 里逐项一致（否则 concat 直接失败）。
+// duration 是 anullsrc 自带选项（无需 atrim）；静音没有时间戳偏移，天然从 PTS 0 起。
+const TRACK_MIX_SILENCE_SOURCE_FILTER = (durationSeconds) => (
+  `anullsrc=channel_layout=stereo:sample_rate=48000:duration=${formatTrackMixSeconds(durationSeconds)}`
+)
 
 // asplit 后的两个标签：同一个混音结果供两路编码器各取一次（`-map` 各一次）。
 const TRACK_MIX_OUTPUT_LABELS = Object.freeze({
@@ -129,19 +145,76 @@ const buildTrackMixInputArgs = ({ voiceInputPaths = [], backgroundInputPath = ''
   ]
 }
 
+// 留白计划读取与校验（**单一收口点**，与 volumes 同风格）：
+//   · 缺省（undefined / null）⇒ 视为「各段之后都不插留白」（历史直调方兼容，全 0）；
+//   · 给了就必须是**与人声段数等长**的数值数组，且每项为 >= 0 的有限数（负数 / NaN / 长度不符 ⇒ 永久错误）。
+const resolveTrackMixGapSecondsList = ({ gapAfterInputSeconds, voiceInputCount }) => {
+  const voiceCount = Math.floor(Number(voiceInputCount) || 0)
+
+  if (gapAfterInputSeconds === undefined || gapAfterInputSeconds === null) {
+    return new Array(voiceCount).fill(0)
+  }
+
+  const values = Array.isArray(gapAfterInputSeconds) ? gapAfterInputSeconds : null
+  if (!values || values.length !== voiceCount) {
+    throw buildTrackMixCommandError(
+      'INVALID_TRACK_MIX_GAP_PLAN',
+      `章间留白数组必须与人声段数一致（人声 ${voiceCount} 段，收到 ${values ? values.length : getString(gapAfterInputSeconds)}）`
+    )
+  }
+
+  return values.map((value, index) => {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw buildTrackMixCommandError(
+        'INVALID_TRACK_MIX_GAP_PLAN',
+        `第 ${index + 1} 段人声之后的留白非法（${getString(value)}）：必须为 >= 0 的有限数值`
+      )
+    }
+
+    return Math.round(parsed * 1000) / 1000
+  })
+}
+
+// 前导静音读取与校验（与留白计划同风格，同一收口点）：
+//   · 缺省（undefined / null / 空串）⇒ 0（无前导静音，历史直调方兼容）；
+//   · 给了就必须是 >= 0 的有限数（负数 / NaN / Infinity ⇒ 永久错误）。
+// 语义：**第一个（人声）段之前**的静音秒数（端侧 `MeditationPlayerScreen.jsx:287` 对含背景段在内的
+// 所有段累加 `gap_after_seconds` ⇒ 背景章 gap 把人声轨整体后移；混音据此复现同一时间轴）。
+const resolveTrackMixLeadingSilenceSeconds = ({ leadingSilenceSeconds } = {}) => {
+  if (leadingSilenceSeconds === undefined || leadingSilenceSeconds === null || leadingSilenceSeconds === '') {
+    return 0
+  }
+
+  const parsed = Number(leadingSilenceSeconds)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw buildTrackMixCommandError(
+      'INVALID_TRACK_MIX_LEADING_SILENCE',
+      `前导静音非法（${getString(leadingSilenceSeconds)}）：必须为 >= 0 的有限数值`
+    )
+  }
+
+  return Math.round(parsed * 1000) / 1000
+}
+
 // filtergraph 构造（导出以便自测逐字断言）：
 //   [0:a]aformat=…[voice0]; … [N:a]aformat=…[bg0];
-//   人声 count>1：[voice0]…[voiceN]concat=n=<count>:v=0:a=1[voiceCat]    （count==1：直接用 [voice0]）
+//   （前导静音 > 0 时）anullsrc=…,aformat=…[silK];
+//   （留白 > 0 时）anullsrc=…,aformat=…[silK];
+//   段序列 ＝ [silLead?], voice0, [sil?], voice1, [sil?], …（前导静音在最前；留白紧跟**它后面那一段**人声）；
+//   count>1：[silLead?][voice0][sil0][voice1]…concat=n=<总段数>:v=0:a=1[voiceCat]    （单段且全无静音：[voice0]）
 //   [voiceCat]volume=<voice>[voiceMix];
 //   [bg0]volume=<background>[bgMix];
 //   [voiceMix][bgMix]amix=inputs=2:duration=first:normalize=0,asplit=2[labels…]
-const buildTrackMixFilterGraph = ({ voiceInputCount, voiceVolume, backgroundVolume }) => {
+const buildTrackMixFilterGraph = ({ voiceInputCount, voiceVolume, backgroundVolume, gapAfterInputSeconds, leadingSilenceSeconds }) => {
   const voiceCount = Math.floor(Number(voiceInputCount) || 0)
   if (voiceCount < 1) {
     throw buildTrackMixCommandError('INVALID_TRACK_MIX_VOICE_COUNT', `人声段数非法（${getString(voiceInputCount)}）`)
   }
 
   const volumes = resolveTrackMixVolumes({ voiceVolume, backgroundVolume })
+  const gapSecondsList = resolveTrackMixGapSecondsList({ gapAfterInputSeconds, voiceInputCount: voiceCount })
+  const leadingSilence = resolveTrackMixLeadingSilenceSeconds({ leadingSilenceSeconds })
   const backgroundInputIndex = voiceCount
   const chains = []
 
@@ -150,12 +223,33 @@ const buildTrackMixFilterGraph = ({ voiceInputCount, voiceVolume, backgroundVolu
   }
   chains.push(`[${backgroundInputIndex}:a]${TRACK_MIX_INPUT_NORMALIZE_FILTER}[bg0]`)
 
-  // concat 至少需要 2 路输入；只有 1 段人声时该段直接进合轨音量节点（不得写 concat=n=1）。
-  if (voiceCount > 1) {
-    const voiceLabels = Array.from({ length: voiceCount }, (unused, index) => `[voice${index}]`).join('')
-    chains.push(`${voiceLabels}concat=n=${voiceCount}:v=0:a=1[voiceCat]`)
+  // 段序列：前导静音（**第一个（人声）段之前**，仅 > 0 时生成支路）＋ 人声逐段 ＋ 紧跟其后的留白静音。
+  const segmentLabels = []
+  let silenceIndex = 0
+
+  if (leadingSilence > 0) {
+    const silenceLabel = `sil${silenceIndex}`
+    chains.push(`${TRACK_MIX_SILENCE_SOURCE_FILTER(leadingSilence)},${TRACK_MIX_INPUT_NORMALIZE_FILTER}[${silenceLabel}]`)
+    segmentLabels.push(`[${silenceLabel}]`)
+    silenceIndex += 1
   }
-  const voiceCatLabel = voiceCount > 1 ? '[voiceCat]' : '[voice0]'
+
+  for (let index = 0; index < voiceCount; index += 1) {
+    segmentLabels.push(`[voice${index}]`)
+
+    if (gapSecondsList[index] > 0) {
+      const silenceLabel = `sil${silenceIndex}`
+      chains.push(`${TRACK_MIX_SILENCE_SOURCE_FILTER(gapSecondsList[index])},${TRACK_MIX_INPUT_NORMALIZE_FILTER}[${silenceLabel}]`)
+      segmentLabels.push(`[${silenceLabel}]`)
+      silenceIndex += 1
+    }
+  }
+
+  // concat 至少需要 2 路输入；只有 1 段人声且无留白时该段直接进合轨音量节点（不得写 concat=n=1）。
+  if (segmentLabels.length > 1) {
+    chains.push(`${segmentLabels.join('')}concat=n=${segmentLabels.length}:v=0:a=1[voiceCat]`)
+  }
+  const voiceCatLabel = segmentLabels.length > 1 ? '[voiceCat]' : '[voice0]'
 
   chains.push(`${voiceCatLabel}volume=${formatTrackMixVolume(volumes.voice)}[voiceMix]`)
   chains.push(`[bg0]volume=${formatTrackMixVolume(volumes.background)}[bgMix]`)
@@ -174,6 +268,8 @@ const buildTrackMixArgs = ({
   backgroundInputPath = '',
   voiceVolume,
   backgroundVolume,
+  gapAfterInputSeconds,
+  leadingSilenceSeconds,
   opusOutputPath = '',
   mp3OutputPath = ''
 }) => {
@@ -194,7 +290,9 @@ const buildTrackMixArgs = ({
     '-filter_complex', buildTrackMixFilterGraph({
       voiceInputCount: voicePaths.length,
       voiceVolume,
-      backgroundVolume
+      backgroundVolume,
+      gapAfterInputSeconds,
+      leadingSilenceSeconds
     }),
     '-map', `[${TRACK_MIX_OUTPUT_LABELS.opus}]`,
     ...TRACK_MIX_OPUS_ENCODER_ARGS,
@@ -207,13 +305,17 @@ const buildTrackMixArgs = ({
 
 module.exports = {
   TRACK_MIX_INPUT_NORMALIZE_FILTER,
+  TRACK_MIX_SILENCE_SOURCE_FILTER,
   TRACK_MIX_OUTPUT_LABELS,
   TRACK_MIX_OPUS_ENCODER_ARGS,
   TRACK_MIX_MP3_ENCODER_ARGS,
   TRACK_MIX_AMIX_INPUTS,
   buildTrackMixCommandError,
   formatTrackMixVolume,
+  formatTrackMixSeconds,
   resolveTrackMixVolumes,
+  resolveTrackMixGapSecondsList,
+  resolveTrackMixLeadingSilenceSeconds,
   buildTrackMixInputArgs,
   buildTrackMixFilterGraph,
   buildTrackMixArgs

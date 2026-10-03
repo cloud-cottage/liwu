@@ -85,6 +85,7 @@ import {
 import {
   buildMeditationSectionRawTextSnapshot,
   countMeditationSectionChars,
+  MEDITATION_PARAGRAPH_TYPE_ORDER,
   resolveMeditationWordCountStatus
 } from '@liwu/shared-utils/meditation-track-template.js';
 import {
@@ -5579,7 +5580,9 @@ class DatabaseService {
         text: data?.text || '',
         tags: Array.isArray(data?.tags) ? data.tags : [],
         category: data?.category || '',
-        paragraph_type: data?.paragraph_type || 'verse',
+        // 段落类型兜底＝权威 10 类顺序首项（与前端 DEFAULT_MEDITATION_PARAGRAPH_TYPE 同口径，
+        // 直接引用权威常量，不另写字面量）。
+        paragraph_type: data?.paragraph_type || MEDITATION_PARAGRAPH_TYPE_ORDER[0],
         usage_count: typeof data?.usage_count === 'number' ? data.usage_count : 0,
         source: data?.source || 'manual',
         ai_rewritten_from: data?.ai_rewritten_from || null,
@@ -6208,10 +6211,14 @@ class DatabaseService {
     try {
       await ensureAnonymousLogin();
       // 人声段与背景段的候选池：音频唯一口径＝med_section_audios（整表读，后台已限 2000 条）。
+      // Section-Raw 一并以只读方式带上：人声段内 take 序＝**段落序**（取该 take 覆盖段落在其 raw 的
+      // paragraph_ids 里的起始下标），这是 shared plan 侧「章节顺序只读」在混音入队侧的落点。
       const sectionAudios = await this.getMedSectionAudios();
+      const sectionRaws = await this.getMedSectionRaws();
       const payload = buildMeditationTrackMixJobPayload({
         track,
         sectionAudios,
+        sectionRaws,
         now: new Date().toISOString()
       });
 

@@ -26,9 +26,17 @@
 //   · 领取：同样**过滤进查询**（fetchQueuedTrackMixJobs 的 where 带 `transcode_profile: 'track_mix'`），
 //     乐观锁条件亦带该 profile；非本分区 job 只跳过、**不写任何字段**。
 //   · 永久错误：缺 `track_key` / `track_version`（非正整数）/ `voice_section_audio_ids`（空数组）/
-//     三种背景来源全缺 / `background_section_type` 不在背景白名单 ⇒ **立即终结、不入重试**。
-//   · 处理：**一次 ffmpeg 调用**——人声 N 段按 job 给定顺序 concat → 背景 `-stream_loop -1` 铺满至人声全长
-//     → `amix` 混音（voice 1.0 / background 0.33）→ 双路输出（`.ogg` Opus 48k CBR ＋ `.mp3` 48k）。
+//     `voice_section_gap_after_seconds`（缺失或与人声数组不等长）/ `voice_leading_silence_seconds`
+//     （缺失或非法；＝第一个（人声）段之前的前导静音＝其前所有**「有可用音频」章**的 gap 之和，
+//     无可用音频的章其 gap 不计入）/ 三种背景来源全缺 /
+//     `background_section_type` 不在背景白名单 ⇒ **立即终结、不入重试**。
+//   · 处理：**一次 ffmpeg 调用**——人声按 job 数组序 concat（同段多次 take 全取）→ 按 job 的
+//     `voice_leading_silence_seconds` 在**第一个（人声）段之前**插入前导静音、按 job 的
+//     `voice_section_gap_after_seconds` 在相应人声之后插入章间留白静音（均 `anullsrc` 滤镜源生成，
+//     不落临时文件）→ 背景 `-stream_loop -1` 铺满整条（含前导静音与留白期）→ `amix` 混音（voice 1.0 /
+//     background 0.33）→ 双路输出（`.ogg` Opus 48k CBR ＋ `.mp3` 48k）。
+//   · 产物时长（可测不变量）＝ 前导静音 ＋ Σ人声输入实测 ＋ Σ章间留白；**超出软基准 900s 照常产出**，
+//     只在 job 文档 `warnings` / 执行结果 / 日志里落**可见警告**（**禁止静默截断**）。
 //   · 交付：`meditation-audio-mix/{track_key}/v{track_version}.ogg|.mp3`；回写 job 状态 ＋
 //     `med_tracks.mix_audio { version, duration, ogg_file_id, mp3_file_id }`。
 //   · 参数与命令构造见 `lib/track-mix-command.js`；配比/段白名单的精简副本见 `lib/meditation-track-mix.js`。
@@ -68,6 +76,7 @@ const { buildTrackMixArgs } = require('./lib/track-mix-command.js')
 // Track 双轨口径的精简副本（本执行器只取「集合名 + 背景段白名单」两项，其余口径由状态模块吃）。
 const {
   MEDITATION_TRACK_COLLECTION,
+  MEDITATION_SESSION_SOFT_BASELINE_SECONDS,
   isMeditationBackgroundSectionType
 } = require('./lib/meditation-track-mix.js')
 
@@ -98,6 +107,8 @@ const {
   resolveTrackMixTrackVersion,
   resolveTrackMixTrackDocumentId,
   resolveTrackMixVoiceSectionAudioIds,
+  resolveTrackMixVoiceSectionGapAfterSeconds,
+  resolveTrackMixVoiceLeadingSilenceSeconds,
   resolveTrackMixBackgroundFileId,
   resolveTrackMixBackgroundSectionAudioId,
   resolveTrackMixBackgroundSectionType,
@@ -106,6 +117,8 @@ const {
   resolveTrackMixJobPreconditionError,
   buildTrackMixDeliveryCloudBasePaths,
   buildMedTrackMixAudioPatch,
+  TRACK_MIX_WARNING_CODES,
+  TRACK_MIX_DURATION_TOLERANCE_SECONDS,
   getDocumentId
 } = require('./lib/transcode-state.js')
 
@@ -619,6 +632,71 @@ const resolveTrackMixBackgroundInput = async ({ db, job }) => {
 // 临时输入文件扩展名：从 file_id 取（cloud:// 路径末段），取不到时用 .bin（ffmpeg 按内容探测格式）。
 const resolveTrackMixInputExtension = (fileId) => path.extname(String(fileId).split('?')[0]) || '.bin'
 
+// 秒数展示格式化（只在日志 / 警告文案里用）。
+const formatTrackMixDuration = (value) => String(Math.round((Number(value) || 0) * 100) / 100)
+
+// 可测不变量（本单口径）：**产物时长 ＝ 前导静音 ＋ Σ人声输入实测时长 ＋ Σ章间留白**
+// （背景 `-stream_loop -1` 不计入）。右侧用与产物同一套实测手段（ffprobe 每个已下载的人声输入）
+// 算出，供左侧产物实测值比对。前导静音＝其前所有**「有可用音频」章**的 gap 之和（job 的
+// voice_leading_silence_seconds；某章无可用音频 ⇒ 不计其 gap）。
+// 逐项取不到时长（历史件无头等）⇒ 返回 null ＝本次跳过该断言（**只记录、不阻断产出**）。
+const resolveTrackMixExpectedDurationSeconds = async ({
+  ffprobePath,
+  voiceInputPaths,
+  gapAfterInputSeconds,
+  leadingSilenceSeconds = 0
+}) => {
+  try {
+    const voiceSeconds = []
+    for (const voicePath of voiceInputPaths) {
+      const probe = parseProbeJson((await execFileAsync(ffprobePath, buildProbeArgs(voicePath), {
+        maxBuffer: MAX_BUFFER_BYTES
+      })).stdout)
+      if (!(probe.duration_seconds > 0)) {
+        return null
+      }
+      voiceSeconds.push(probe.duration_seconds)
+    }
+
+    const gapSeconds = (Array.isArray(gapAfterInputSeconds) ? gapAfterInputSeconds : [])
+      .reduce((sum, value) => sum + (Number(value) || 0), 0)
+    const leadingSeconds = Number(leadingSilenceSeconds) > 0 ? Number(leadingSilenceSeconds) : 0
+
+    return voiceSeconds.reduce((sum, seconds) => sum + seconds, 0) + gapSeconds + leadingSeconds
+  } catch {
+    // 探针失败（缺头 / 二进制不可用等）⇒ 本次不做该断言：不阻断产出，由调用方记录一条跳过日志。
+    return null
+  }
+}
+
+// 产物**可见警告**（只在 job 文档与执行结果里标记；**不改终态**——照常产出、不截断）：
+//   ① 超出软基准（900s / 15:00）⇒ 记码照常产出；
+//   ② 实测时长与「前导静音 ＋ Σ人声 ＋ Σ留白」超出容差 ⇒ 记码（不变量失配，供人工核查）。
+//      `expectedSeconds` 为 null（探针跳过）⇒ **不做该断言**（不得把 null 当 0 误报失配）。
+const buildTrackMixWarnings = ({ durationSeconds, expectedSeconds }) => {
+  const warnings = []
+  const productSeconds = Number(durationSeconds) || 0
+  const hasExpected = expectedSeconds !== null && expectedSeconds !== undefined
+  const plannedSeconds = hasExpected ? Number(expectedSeconds) : Number.NaN
+
+  if (productSeconds > MEDITATION_SESSION_SOFT_BASELINE_SECONDS) {
+    warnings.push({
+      code: TRACK_MIX_WARNING_CODES.durationOverSoftBaseline,
+      message: `混音产物时长 ${formatTrackMixDuration(productSeconds)}s 超出软基准 ${MEDITATION_SESSION_SOFT_BASELINE_SECONDS}s：已照常产出、未做任何截断，请核对章节时长与章间留白配置`
+    })
+  }
+
+  if (Number.isFinite(plannedSeconds)
+    && Math.abs(productSeconds - plannedSeconds) > TRACK_MIX_DURATION_TOLERANCE_SECONDS) {
+    warnings.push({
+      code: TRACK_MIX_WARNING_CODES.durationMismatch,
+      message: `混音产物时长 ${formatTrackMixDuration(productSeconds)}s 与「前导静音 ＋ 人声之和 ＋ 章间留白」${formatTrackMixDuration(plannedSeconds)}s 不一致（容差 ${TRACK_MIX_DURATION_TOLERANCE_SECONDS}s）`
+    })
+  }
+
+  return warnings
+}
+
 const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
   const jobId = readJobIdentifier(job)
   const trackKey = resolveTrackMixTrackKey(job)
@@ -674,6 +752,11 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     const voiceInputs = await resolveTrackMixVoiceInputs({ db, job })
     const backgroundInput = await resolveTrackMixBackgroundInput({ db, job })
     const volumes = resolveTrackMixVolumes(job)
+    // 章间留白计划（job 契约要求必给，precondition 已校验存在且与人声数组等长）。
+    const gapAfterInputSeconds = resolveTrackMixVoiceSectionGapAfterSeconds(job) || []
+    // 前导静音（本单口径）：第一个（人声）段之前、其前所有**「有可用音频」章**的 gap 之和
+    // （某章无可用音频 ⇒ 不计其 gap；precondition 已校验合法）。
+    const leadingSilenceSeconds = resolveTrackMixVoiceLeadingSilenceSeconds(job) || 0
 
     const voiceInputPaths = []
     for (const [index, voiceInput] of voiceInputs.entries()) {
@@ -685,13 +768,16 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     const backgroundInputPath = path.join(tmpRoot, `background${resolveTrackMixInputExtension(backgroundInput.file_id)}`)
     await app.downloadFile({ fileID: backgroundInput.file_id, tempFilePath: backgroundInputPath })
 
-    // 单次调用：人声按序拼接 + 背景循环铺满 + amix 混音 + 双路输出。参数在 lib/track-mix-command.js，禁止在此改写。
+    // 单次调用：人声按序拼接（含同段多次 take）＋ 前导静音 ＋ 章间留白静音 ＋ 背景循环铺满 ＋ amix 混音 ＋ 双路输出。
+    // 参数在 lib/track-mix-command.js，禁止在此改写。
     const mixStartedAt = Date.now()
     await execFileAsync(ffmpegPath, buildTrackMixArgs({
       voiceInputPaths,
       backgroundInputPath,
       voiceVolume: volumes.voice,
       backgroundVolume: volumes.background,
+      gapAfterInputSeconds,
+      leadingSilenceSeconds,
       opusOutputPath,
       mp3OutputPath
     }), { maxBuffer: MAX_BUFFER_BYTES })
@@ -700,7 +786,8 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     const opusOutputSize = assertOutputFile(opusOutputPath, 'opus(.ogg)')
     const mp3OutputSize = assertOutputFile(mp3OutputPath, 'mp3')
 
-    // 时长只取**产物**实测值（D-B2-4 口径）；总长应等于人声拼接总长（背景循环铺满后自然收尾）。
+    // 时长只取**产物**实测值（D-B2-4 口径）。本单口径：总长 ＝ Σ人声（含各段全部 take）＋ Σ章间留白，
+    // 背景 `-stream_loop -1` 铺满整条（含留白期）但**不计入**总长；超出软基准也**照常产出、不截断**。
     const opusProbe = parseProbeJson((await execFileAsync(ffprobePath, buildProbeArgs(opusOutputPath), {
       maxBuffer: MAX_BUFFER_BYTES
     })).stdout)
@@ -708,6 +795,24 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
       maxBuffer: MAX_BUFFER_BYTES
     })).stdout)
     const durationSeconds = opusProbe.duration_seconds > 0 ? opusProbe.duration_seconds : mp3Probe.duration_seconds
+
+    // 可测不变量（产物时长 ＝ 前导静音 ＋ Σ人声 ＋ Σ留白）＋ 软基准超限：都只落**可见警告**，不改 job 终态。
+    const expectedDurationSeconds = await resolveTrackMixExpectedDurationSeconds({
+      ffprobePath,
+      voiceInputPaths,
+      gapAfterInputSeconds,
+      leadingSilenceSeconds
+    })
+    if (expectedDurationSeconds === null) {
+      logEvent(requestId, 'track_mix_duration_invariant_skipped', {
+        jobId,
+        voice_section_count: voiceInputs.length
+      })
+    }
+    const warnings = buildTrackMixWarnings({ durationSeconds, expectedSeconds: expectedDurationSeconds })
+    if (warnings.length > 0) {
+      logEvent(requestId, 'track_mix_product_warnings', { jobId, warnings })
+    }
 
     // 两份产物都传成功后才回写（不留「半个成功」）。
     const [opusFileContent, mp3FileContent] = await Promise.all([
@@ -759,6 +864,8 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
         mp3Url,
         durationSeconds,
         probe: opusProbe,
+        warnings,
+        warningMessage: warnings.map((warning) => `${warning.code}：${warning.message}`).join('；'),
         nowIso: new Date().toISOString()
       })
     })
@@ -773,6 +880,11 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
       status: JOB_STATUS.succeeded,
       attempts: attemptCount,
       voice_section_count: voiceInputs.length,
+      gap_after_input_seconds: gapAfterInputSeconds,
+      leading_silence_seconds: leadingSilenceSeconds,
+      expected_duration_seconds: expectedDurationSeconds,
+      soft_baseline_seconds: MEDITATION_SESSION_SOFT_BASELINE_SECONDS,
+      warnings,
       background_source: backgroundInput.source,
       volumes,
       duration_seconds: durationSeconds,
@@ -947,5 +1059,7 @@ exports.__test__ = {
   readMedTrackDocument,
   resolveTrackMixVoiceInputs,
   resolveTrackMixBackgroundInput,
+  resolveTrackMixExpectedDurationSeconds,
+  buildTrackMixWarnings,
   failTrackMixJob
 }

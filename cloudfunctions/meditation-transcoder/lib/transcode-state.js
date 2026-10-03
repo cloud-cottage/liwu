@@ -31,6 +31,7 @@ const {
   MEDITATION_TRACK_COLLECTION,
   MEDITATION_TRACK_VOLUMES,
   MEDITATION_TRACK_BACKGROUND_SECTION_TYPES,
+  MEDITATION_SESSION_SOFT_BASELINE_SECONDS,
   isMeditationBackgroundSectionType
 } = require('./meditation-track-mix.js')
 
@@ -291,7 +292,21 @@ const buildMedSectionAudioFailurePatch = ({ failure }) => ({
 // job 成功回写：沿用 worker 的 output_* 字段名，双路产物各记一份（_mp3 后缀），
 // 并把产物 ffprobe 结果替换 worker 的 pass1_metrics_json（本链路无 loudnorm 遍，见 README「响度归一」）。
 // D-B2-10：错误字段两键同写（`transcode_error` 权威 / `error_message` 镜像）。
-const buildJobSuccessPatch = ({ deliveryPaths, opusFileId, opusUrl, mp3FileId, mp3Url, durationSeconds, probe, nowIso }) => ({
+// 【本单新增（可选）】`warnings` / `warning_message`：**只在调用方真的传了非空 warnings 时写入**
+//   （section_audio 分区不传 ⇒ 键完全不存在，老分区文档形状与判据不受影响）。
+//   用途：混音产物「超出软基准 900s」这类**照常产出但必须可见**的警告（禁止静默截断）。
+const buildJobSuccessPatch = ({
+  deliveryPaths,
+  opusFileId,
+  opusUrl,
+  mp3FileId,
+  mp3Url,
+  durationSeconds,
+  probe,
+  warnings = [],
+  warningMessage = '',
+  nowIso
+}) => ({
   status: JOB_STATUS.succeeded,
   output_file_id: opusFileId,
   output_audio_url: opusUrl,
@@ -301,6 +316,9 @@ const buildJobSuccessPatch = ({ deliveryPaths, opusFileId, opusUrl, mp3FileId, m
   output_audio_url_mp3: mp3Url,
   output_cloud_path_mp3: deliveryPaths?.mp3 || '',
   output_probe_json: JSON.stringify(probe || {}),
+  ...(Array.isArray(warnings) && warnings.length > 0
+    ? { warnings, warning_message: getString(warningMessage) }
+    : {}),
   // 待老 worker 退役后收敛为单一口径（只留 transcode_error）
   error_message: '',
   transcode_error: '',
@@ -345,9 +363,31 @@ const buildPermanentError = (message) => {
 //     track_document_id           直接给 med_tracks 文档 id（缺省按 track_key 查询）
 //     target_cloud_path           已落在 meditation-audio-mix/ 下时沿用其基准名换扩展名
 //
+//   〜〜 本单新增（章间留白与前导静音、可见警告）〜〜
+//     voice_section_gap_after_seconds  **与人声数组等长**的数值数组：逐位给出「该 take 之后要插入的
+//                                      章间留白秒数」（0 ＝ 不插；末位恒 0 —— 末章不留尾部静默）
+//     voice_leading_silence_seconds    **第一个（人声）段之前**的前导静音秒数＝其前所有
+//                                      **「有可用音频」章**的 gap 之和（本模板下两背景章均有
+//                                      音频时＝其 gap 之和，默认 282s；某背景章无可用音频 ⇒
+//                                      不计其 gap；>= 0 的有限数）
+//
 // 【永久错误判定（resolveTrackMixJobPreconditionError）】下列任一命中即**立即终结**
 //   （status='failed'、不退回 queued、不空耗 3 轮重试）：track_key 缺失 / track_version 缺失或非正整数 /
-//   voice_section_audio_ids 缺失或空数组 / 三种背景来源全缺 / background_section_type 不在背景白名单。
+//   voice_section_audio_ids 缺失或空数组 / voice_section_gap_after_seconds 缺失或与人声数组不等长 /
+//   voice_leading_silence_seconds 缺失或非法 /
+//   三种背景来源全缺 / background_section_type 不在背景白名单。
+
+// 混音产物的**可见警告**码（落在 job 文档 `warnings` 上；不改变 job 终态——照常产出、不截断）。
+const TRACK_MIX_WARNING_CODES = Object.freeze({
+  // 产物时长超出「一次冥想的软基准」（900s / 15:00）：**照常产出**，只标记（禁止静默截断）。
+  durationOverSoftBaseline: 'MIX_DURATION_OVER_SOFT_BASELINE',
+  // 产物实测时长与「Σ人声输入实测 ＋ Σ章间留白」超出容差：可测不变量失配（只是标记，不改判失败）。
+  durationMismatch: 'MIX_DURATION_MISMATCH'
+})
+
+// 「产物时长 ＝ Σ人声 ＋ Σ留白」这条不变量在实测侧的容差（秒）：编码器 priming / 容器取整带来的
+// 毫秒级偏差不算失配（Opus 预跳样本实测 ≈6.5ms，取 0.5s 留足余量，避免噪声式误报）。
+const TRACK_MIX_DURATION_TOLERANCE_SECONDS = 0.5
 
 // D-B2-9 同型分区谓词：是否为「Track 级混音」job（snake_case 字面值，camelCase 仅兜底读）。
 const isTrackMixJob = (job = {}) => (
@@ -391,6 +431,33 @@ const resolveTrackMixTrackDocumentId = (job = {}) => readJobString(job, 'track_d
 const resolveTrackMixVoiceSectionAudioIds = (job = {}) => (
   readJobStringArray(job, 'voice_section_audio_ids', 'voiceSectionAudioIds')
 )
+
+// 章间留白计划（本单新增；**与人声数组等长**、逐位对应「该 take 之后要插入的静音秒数」）。
+// 读取只做「取原值」（snake_case 规范键优先、camelCase 兜底），合法性校验统一在
+// resolveTrackMixJobPreconditionError（缺 / 非数组 / 长度不符 ⇒ 永久错误）与命令构造器
+// （数值非法 ⇒ 永久错误）两处收口，避免三处分叉。
+const resolveTrackMixVoiceSectionGapAfterSeconds = (job = {}) => {
+  const value = job?.voice_section_gap_after_seconds ?? job?.voiceSectionGapAfterSeconds
+  return Array.isArray(value) ? value : null
+}
+
+// 前导静音（本单新增；**第一个（人声）段之前**的静音秒数＝其前所有**「有可用音频」章**的 gap
+// 之和——某章无可用音频 ⇒ 不计其 gap；本模板下两背景章均有音频时＝其 gap 之和，默认 282s）。
+// 端侧播放器对**进光标的段**（含背景段）累加 gap ⇒ 背景章留白会把人声轨整体后移；
+// 缺该字段＝旧「无前导静音」口径载荷 ⇒ 与计划层 `totals` 不符（且是静默的），
+// 故按永久性结构错误在 precondition 一次终结。
+// 读取只做「取原值 + 形状归一」：缺省 / 非数值 / 负数 / NaN ⇒ 返回 null（由 precondition 判永久错误）。
+const resolveTrackMixVoiceLeadingSilenceSeconds = (job = {}) => {
+  const raw = job?.voice_leading_silence_seconds ?? job?.voiceLeadingSilenceSeconds
+
+  if (raw === undefined || raw === null || raw === '') {
+    return null
+  }
+
+  const parsed = Number(raw)
+
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 1000) / 1000 : null
+}
 
 const resolveTrackMixBackgroundFileId = (job = {}) => readJobString(job, 'background_file_id', 'backgroundFileId')
 
@@ -453,6 +520,26 @@ const resolveTrackMixJobPreconditionError = (job = {}) => {
 
   if (resolveTrackMixVoiceSectionAudioIds(job).length === 0) {
     return 'MISSING_VOICE_SECTION_AUDIO_IDS：track_mix job 未登记 voice_section_audio_ids（按章序的有序数组，长度 >= 1）'
+  }
+
+  // 章间留白计划：必须显式给出且与人声数组**逐位等长**——缺该字段的载荷是「人声紧挨着拼」的旧口径，
+  // 直接产出会与端侧共享计划层的 totals 口径不符（且是静默的），故按永久性结构错误一次终结。
+  const voiceSectionAudioIds = resolveTrackMixVoiceSectionAudioIds(job)
+  const gapAfterInputSeconds = resolveTrackMixVoiceSectionGapAfterSeconds(job)
+
+  if (!gapAfterInputSeconds) {
+    return 'MISSING_VOICE_SECTION_GAP_PLAN：track_mix job 未登记 voice_section_gap_after_seconds（与人声数组等长的留白秒数数组；缺该字段＝旧「无留白」口径载荷）'
+  }
+
+  if (gapAfterInputSeconds.length !== voiceSectionAudioIds.length) {
+    return `INVALID_VOICE_SECTION_GAP_PLAN：voice_section_gap_after_seconds 长度（${gapAfterInputSeconds.length}）必须与 voice_section_audio_ids 长度（${voiceSectionAudioIds.length}）一致`
+  }
+
+  // 前导静音计划：必须显式给出且为 >= 0 的有限数——缺该字段的载荷是「人声从 0 起」的旧口径，
+  // 会漏掉其前**「有可用音频」章**的 gap（默认两背景章均有音频时各 141、合计 282s），
+  // 产物时间轴与端侧双轨播放器整体错位（静默），故按永久性结构错误一次终结。
+  if (resolveTrackMixVoiceLeadingSilenceSeconds(job) === null) {
+    return 'MISSING_VOICE_LEADING_SILENCE：track_mix job 未登记合法的 voice_leading_silence_seconds（第一个（人声）段之前的前导静音秒数＝其前所有「有可用音频」章 gap 之和，无可用音频的章不计其 gap，须为 >= 0 的有限数；缺该字段＝旧「无前导静音」口径载荷）'
   }
 
   const backgroundSectionType = resolveTrackMixBackgroundSectionType(job)
@@ -535,6 +622,8 @@ module.exports = {
   resolveTrackMixTrackVersion,
   resolveTrackMixTrackDocumentId,
   resolveTrackMixVoiceSectionAudioIds,
+  resolveTrackMixVoiceSectionGapAfterSeconds,
+  resolveTrackMixVoiceLeadingSilenceSeconds,
   resolveTrackMixBackgroundFileId,
   resolveTrackMixBackgroundSectionAudioId,
   resolveTrackMixBackgroundSectionType,
@@ -542,5 +631,7 @@ module.exports = {
   resolveTrackMixJobSkipReason,
   resolveTrackMixJobPreconditionError,
   buildTrackMixDeliveryCloudBasePaths,
-  buildMedTrackMixAudioPatch
+  buildMedTrackMixAudioPatch,
+  TRACK_MIX_WARNING_CODES,
+  TRACK_MIX_DURATION_TOLERANCE_SECONDS
 }

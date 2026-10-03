@@ -38,6 +38,13 @@ const getString = (value) => (value == null ? '' : String(value))
 
 const MEDITATION_TRACK_COLLECTION = 'med_tracks'
 
+// 一次冥想的**软基准**秒数（15:00）。权威源：packages/shared-utils/meditation-session-plan.js
+//   export const DEFAULT_MEDITATION_SESSION_SECONDS = 15 * 60;
+// ⚠ 软基准**不是截断点**：混音产物超出它时**照常产出**，只落一条可见警告（见 transcode-state.js 的
+//   TRACK_MIX_WARNING_CODES.durationOverSoftBaseline 与 index.js 的 processTrackMixJob）；
+//   **禁止在实现里静默截断尾部**。权威源改值时必须同步本文件。
+const MEDITATION_SESSION_SOFT_BASELINE_SECONDS = 900
+
 // 逐字对齐权威源（packages/shared-utils/meditation-session-plan.js）：
 //   export const MEDITATION_TRACK_VOLUMES = Object.freeze({ background: 0.33, voice: 1 });
 // ⚠ 混音时人声恒为 1.0（不衰减），背景恒为 0.33；两者都由 amix 的**显式 volume 滤镜**给定，
@@ -76,5 +83,6 @@ module.exports = {
   MEDITATION_TRACK_VOLUMES,
   MEDITATION_TRACK_BACKGROUND_SECTION_TYPES,
   MEDITATION_TRACK_VOICE_SECTION_TYPES,
+  MEDITATION_SESSION_SOFT_BASELINE_SECONDS,
   isMeditationBackgroundSectionType
 }

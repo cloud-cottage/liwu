@@ -1,6 +1,8 @@
 import {
   getMeditationSectionAudioFormatCandidates,
-  MEDITATION_SECTION_AUDIO_FORMATS
+  MEDITATION_SECTION_AUDIO_FORMATS,
+  MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE,
+  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS
 } from '@liwu/shared-utils/meditation-section-audio.js'
 
 // ─── 网页录音（MediaRecorder） ────────────────────────────────────────────────
@@ -229,3 +231,67 @@ export const resolveMeditationSectionAudioPlayback = (audio = {}) => {
     is_fallback: true
   }
 }
+
+// ─── 一段一录：单段落落库载荷（段落文本库的录制 / 上传入口） ──────────────────
+// 权威判据：paragraph_ids_snapshot 只含该段落 id（长度恒为 1 ⇒ 一段一录）；
+// section_type 必须取自该段落类型的推荐段代号（无推荐映射 ⇒ 抛错拒绝，不静默写空）。
+// section_raw_id 允许为空（段落录音不依赖已有 Section-Raw）。
+export const MEDITATION_PARAGRAPH_SECTION_TYPE_MISSING_MESSAGE = '该段落类型没有对应的推荐段代号，无法录制或上传，请先确认段落类型';
+
+export const buildMeditationParagraphAudioPayload = ({
+  paragraphId = '',
+  sectionType = '',
+  paragraphText = '',
+  capturedMimeType = '',
+  durationSeconds = 0,
+  fileId = '',
+  audioUrl = '',
+  sourceKind = ''
+} = {}) => {
+  const normalizedParagraphId = String(paragraphId ?? '').trim();
+  const normalizedSectionType = String(sectionType ?? '').trim();
+
+  if (!normalizedParagraphId) {
+    throw new Error('缺少段落 ID，无法保存该段落的音频');
+  }
+
+  if (!normalizedSectionType) {
+    throw new Error(MEDITATION_PARAGRAPH_SECTION_TYPE_MISSING_MESSAGE);
+  }
+
+  const normalizedText = String(paragraphText || '');
+
+  return {
+    section_raw_id: '',
+    section_type: normalizedSectionType,
+    file_id: '',
+    audio_url: '',
+    duration: Math.round(Number(durationSeconds || 0) * 100) / 100,
+    mime_type: MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE.opus,
+    original_file_id: fileId,
+    original_url: audioUrl,
+    original_mime_type: capturedMimeType,
+    target_format: resolveMeditationAudioTargetFormat(capturedMimeType),
+    source_kind: sourceKind,
+    label: '',
+    paragraph_ids_snapshot: [normalizedParagraphId],
+    text_snapshot: normalizedText,
+    char_count: normalizedText.length,
+    stale: false
+  };
+};
+
+// 重试转码资格：该条音频有原始文件（原始 file id 或原始 url）且当前状态为 failed / idle。
+export const isMeditationSectionAudioTranscodeRetryable = (audio = {}) => (
+  Boolean(audio.original_file_id || audio.original_url)
+  && (
+    audio.transcode_status === MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.failed
+    || audio.transcode_status === MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.idle
+  )
+);
+
+// 幂等判据：该条音频已有进行中的转码任务（queued / processing）时不得重复入队。
+export const isMeditationSectionAudioTranscodePending = (audio = {}) => (
+  audio.transcode_status === MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.queued
+  || audio.transcode_status === MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.processing
+);
