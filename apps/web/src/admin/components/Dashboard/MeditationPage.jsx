@@ -35,6 +35,12 @@ import {
   resolveMeditationWordCountStatus
 } from '@liwu/shared-utils/meditation-track-template.js';
 import {
+  buildMeditationParagraphReclassificationPlan,
+  buildMeditationReclassificationFailureMessage,
+  buildMeditationReclassificationNotice,
+  compareMeditationReclassificationReadBack
+} from '@liwu/shared-utils/meditation-paragraph-reclassify.js';
+import {
   buildMeditationSectionDurationMap,
   isMeditationSectionAudioDeliveryComplete,
   MEDITATION_SECTION_AUDIO_FORMATS,
@@ -3975,6 +3981,7 @@ const MeditationPage = ({
   const [editTags, setEditTags] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [editSaveError, setEditSaveError] = useState('');
+  const [editSaveNotice, setEditSaveNotice] = useState('');
   const [polishing, setPolishing] = useState(false);
   const [editTagInput, setEditTagInput] = useState('');
   const [addingToSectionRaw, setAddingToSectionRaw] = useState(null);
@@ -4053,8 +4060,10 @@ const MeditationPage = ({
             }
             break;
           case 'paragraph':
-            // 段落文本库按段落显示各自的音频（一段一录）⇒ 进 tab 即加载 med_section_audios。
+            // 段落文本库按段落显示各自的音频（一段一录）⇒ 进 tab 即加载 med_section_audios；
+            // 同时加载 Section-Raw：锁定段落判定（🔒 / 文本只读）与改分类时的容器同步都依赖它。
             await loadSectionAudios();
+            await loadSectionRaws();
             break;
           case 'section-raw':
             await loadSectionRaws();
@@ -4103,6 +4112,7 @@ const MeditationPage = ({
     setEditType(p?.paragraph_type || DEFAULT_MEDITATION_PARAGRAPH_TYPE);
     setEditTags(Array.isArray(p?.tags) ? p.tags.join(', ') : '');
     setEditSaveError('');
+    setEditSaveNotice('');
   };
 
   const handleAiPolish = async () => {
@@ -4139,6 +4149,58 @@ const MeditationPage = ({
     }
   };
 
+  // 归类同步执行器：段落分类改动后 ② 同步该段名下音频 section_type、③ 同步「只含该段」的容器
+  // Section-Raw；⑤ 逐条读回比对（重新查库，不以 updated>=1 或写入返回值为成功判据）。
+  const applyMeditationReclassification = async (plan) => {
+    const writeErrors = [];
+
+    for (const update of plan.audioUpdates) {
+      try {
+        await DatabaseService.updateMedSectionAudio(update.id, { section_type: update.to });
+      } catch (err) {
+        writeErrors.push({
+          kind: 'audio', id: update.id, label: '候选音频', field: 'section_type',
+          expected: update.to, previous: update.from, actual: `写入失败：${err?.message || '未知错误'}`
+        });
+      }
+    }
+
+    for (const update of plan.containerUpdates) {
+      try {
+        await DatabaseService.updateMedSectionRaw(update.id, { section_type: update.to });
+      } catch (err) {
+        writeErrors.push({
+          kind: 'sectionRaw', id: update.id, label: 'Section-Raw', field: 'section_type',
+          expected: update.to, previous: update.from, actual: `写入失败：${err?.message || '未知错误'}`
+        });
+      }
+    }
+
+    const [paragraphs, audios, raws] = await Promise.all([
+      DatabaseService.getMedParagraphsByIds([plan.paragraphId]),
+      DatabaseService.getMedSectionAudios(),
+      DatabaseService.getMedSectionRaws()
+    ]);
+
+    const readBack = {
+      paragraph: Object.fromEntries((paragraphs || []).map((doc) => [doc._id || doc.id, doc])),
+      audio: Object.fromEntries((audios || []).map((doc) => [doc._id || doc.id, doc])),
+      sectionRaw: Object.fromEntries((raws || []).map((doc) => [doc._id || doc.id, doc]))
+    };
+
+    const compared = compareMeditationReclassificationReadBack({ writes: plan.writes, readBack });
+    const seen = new Set();
+    const mismatches = [];
+    for (const item of [...writeErrors, ...compared.mismatches]) {
+      const key = `${item.kind}:${item.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      mismatches.push(item);
+    }
+
+    return { ok: mismatches.length === 0, mismatches };
+  };
+
   const handleSaveEdit = async () => {
     if (!editParagraph?._id) return;
     // 写侧白名单：超出权威 10 类的值一律拒绝，不落库（弹窗保持打开并给出可见原因）。
@@ -4146,26 +4208,52 @@ const MeditationPage = ({
       setEditSaveError(`段落类型不合法，仅允许权威 10 类：${String(editType ?? '') || '（空）'}`);
       return;
     }
+
+    const isLockedParagraph = lockedParagraphIds.has(editParagraph._id);
+    const paragraphTypeChanged = String(editType ?? '').trim() !== String(editParagraph.paragraph_type ?? '').trim();
+
+    // 分类改动 ⇒ 先算归类同步计划；无推荐映射则拒绝保存（绝不写空）。
+    let reclassifyPlan = null;
+    if (paragraphTypeChanged) {
+      reclassifyPlan = buildMeditationParagraphReclassificationPlan({
+        paragraphId: editParagraph._id,
+        currentParagraphType: editParagraph.paragraph_type,
+        nextParagraphType: editType,
+        paragraphAudios: sectionAudios,
+        owningSectionRaws: sectionRawItems
+      });
+      if (!reclassifyPlan.ok) {
+        setEditSaveError(reclassifyPlan.error);
+        return;
+      }
+    }
+
     setSavingEdit(true);
     setEditSaveError('');
     try {
       const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean);
-      const updateData = {
-        text: editText,
-        paragraph_type: editType,
-        tags,
-        // manual edit clears AI status
-        source: 'manual',
-        ai_rewritten_from: null,
-        // revision 每次编辑 +1，供 Section-Raw 的 stale 比对
-        revision: Number(editParagraph.revision ?? 1) + 1,
-      };
+      // 锁定段落：只允许改写 paragraph_type（文本内容与其它字段一律不动，绝不写 text）；
+      // 非锁定段落维持既有口径（text + tags + 打断 AI 溯源 + revision 递增）。
+      const updateData = isLockedParagraph
+        ? { paragraph_type: editType }
+        : {
+          text: editText,
+          paragraph_type: editType,
+          tags,
+          // manual edit clears AI status
+          source: 'manual',
+          ai_rewritten_from: null,
+          // revision 每次编辑 +1，供 Section-Raw 的 stale 比对
+          revision: Number(editParagraph.revision ?? 1) + 1,
+        };
       const savedParagraph = await DatabaseService.updateMedParagraph(editParagraph._id, updateData);
-      // revision 回写内存编辑对象：级联失败时弹窗刻意保持打开，同一弹窗会话内再次保存必须基于新 revision，
-      // 否则会把同一版本号重复写回（失败分支保持打开的行为不变）。
-      setEditParagraph((previous) => (
-        previous ? { ...previous, revision: Number(savedParagraph?.revision ?? updateData.revision) } : previous
-      ));
+      if (!isLockedParagraph) {
+        // revision 回写内存编辑对象：级联失败时弹窗刻意保持打开，同一弹窗会话内再次保存必须基于新 revision，
+        // 否则会把同一版本号重复写回（失败分支保持打开的行为不变）。
+        setEditParagraph((previous) => (
+          previous ? { ...previous, revision: Number(savedParagraph?.revision ?? updateData.revision) } : previous
+        ));
+      }
       // 文本变更判据（K9）：trim 归一后按字符串比较，undefined/null 一律归一为空串；
       // 仅 tags/paragraph_type 改动而文本未变时不得触发 stale 级联，否则管理员会被要求重录实际无需重录的音频。
       const normalizeParagraphText = (value) => (typeof value === 'string' ? value.trim() : '');
@@ -4193,6 +4281,26 @@ const MeditationPage = ({
           await loadSectionAudios();
         }
       }
+
+      // 归类跟着走（不标 stale）：同步音频与容器，并逐条读回比对；任一条未生效即点名，不静默。
+      if (reclassifyPlan) {
+        const reclassified = await applyMeditationReclassification(reclassifyPlan);
+        if (!reclassified.ok) {
+          await loadSectionAudios();
+          await loadSectionRaws();
+          if (typeof refreshMeditationSection === 'function') {
+            await refreshMeditationSection();
+          }
+          setEditSaveError(buildMeditationReclassificationFailureMessage(reclassified.mismatches));
+          return;
+        }
+        await loadSectionAudios();
+        if (reclassifyPlan.containerUpdates.length > 0) {
+          await loadSectionRaws();
+        }
+        setEditSaveNotice(buildMeditationReclassificationNotice(reclassifyPlan));
+      }
+
       setEditParagraph(null);
       if (typeof refreshMeditationSection === 'function') {
         await refreshMeditationSection();
@@ -4631,6 +4739,11 @@ const MeditationPage = ({
                 </button>
               ))}
             </div>
+            {editSaveNotice && (
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #86efac', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#166534', marginBottom: '12px', lineHeight: '1.6' }}>
+                ✅ {editSaveNotice}
+              </div>
+            )}
             {(() => {
               const data = Array.isArray(meditationParagraphs) ? meditationParagraphs : [];
               // Build score map: each paragraph gets a score based on usage_count + ai rewrite count
@@ -4699,7 +4812,7 @@ const MeditationPage = ({
                       return (
                         <div key={p?._id || index} style={{ padding: '6px 8px', borderTop: index > 0 ? '1px solid #f8fafc' : 'none' }}>
                           <div style={{ display: 'flex', gap: '12px', fontSize: '13px', alignItems: 'center' }}>
-                          <div style={{ flex: 1, cursor: isLocked ? 'default' : 'pointer', wordBreak: 'break-word' }} title={isLocked ? '已加入音频库，不可编辑' : '点击编辑'} onClick={() => !isLocked && handleOpenEdit(p)}>
+                          <div style={{ flex: 1, cursor: 'pointer', wordBreak: 'break-word' }} title={isLocked ? '已加入音频库，点此查看或修改分类' : '点击编辑'} onClick={() => handleOpenEdit(p)}>
                             {p?.source === 'ai' && <span style={{ marginRight: '4px', fontSize: '11px', verticalAlign: 'middle' }}><img src="/icons/partner/ai.svg" style={{ width: '14px', height: '14px', verticalAlign: 'middle' }} alt="AI" /></span>}
                             {isLocked && <span style={{ marginRight: '4px', fontSize: '12px', verticalAlign: 'middle' }} title="已加入音频库">🔒</span>}
                             {text.length > 120 ? text.slice(0, 120) + '...' : text}
@@ -4928,6 +5041,15 @@ const MeditationPage = ({
           (Array.isArray(meditationParagraphs) ? meditationParagraphs : [])
             .flatMap((p) => Array.isArray(p.tags) ? p.tags : [])
         )].sort();
+        const isParagraphLocked = lockedParagraphIds.has(editParagraph._id);
+        const isOwnedByMultiParagraphRaw = (Array.isArray(sectionRawItems) ? sectionRawItems : []).some((sr) => (
+          Array.isArray(sr.paragraph_ids)
+          && sr.paragraph_ids.includes(editParagraph._id)
+          && sr.paragraph_ids.length > 1
+        ));
+        const addToLibraryLabel = isParagraphLocked
+          ? '🔒 已在音频库'
+          : (addingToSectionRaw === 'new' ? '新建中...' : addingToSectionRaw ? '追加中...' : '📢 加入音频库 ▾');
         return (
         <div style={{
           position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
@@ -4944,7 +5066,7 @@ const MeditationPage = ({
 
             <div style={{ marginBottom: '14px' }}>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#64748b', marginBottom: '4px' }}>文本内容</label>
-              {lockedParagraphIds.has(editParagraph._id) ? (
+              {isParagraphLocked ? (
                 <div style={{ padding: '10px 12px', backgroundColor: '#fef9c3', borderRadius: '8px', fontSize: '13px', color: '#713f12', lineHeight: '1.6' }}>
                   🔒 此段落已加入音频库，不可编辑。如要修改请先从音频库中移除。
                 </div>
@@ -4980,6 +5102,20 @@ const MeditationPage = ({
               </select>
             </div>
 
+            {isOwnedByMultiParagraphRaw && (
+              <div style={{ padding: '8px 12px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', fontSize: '12px', color: '#1e40af', marginBottom: '14px', lineHeight: '1.6' }}>
+                该段落所属 Section-Raw 含多个段落，改分类不会同步容器的段分类，仅同步该段落名下的音频。
+              </div>
+            )}
+
+            {isParagraphLocked ? (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#64748b', marginBottom: '4px' }}>标签</label>
+                <div style={{ fontSize: '12px', color: '#64748b' }}>
+                  {(editTags ? editTags.split(',').map((t) => t.trim()).filter(Boolean) : []).join('、') || '（无）'}
+                </div>
+              </div>
+            ) : (
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#64748b', marginBottom: '4px' }}>标签</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', padding: '6px 8px', border: '1px solid #e2e8f0', borderRadius: '8px', minHeight: '32px', alignItems: 'center', marginBottom: '6px' }}>
@@ -5041,8 +5177,9 @@ const MeditationPage = ({
                 })}
               </div>
             </div>
+            )}
 
-            {editParagraph.source === 'ai' && (
+            {editParagraph.source === 'ai' && !isParagraphLocked && (
               <div style={{ padding: '8px 12px', backgroundColor: '#fef9c3', borderRadius: '8px', fontSize: '12px', color: '#713f12', marginBottom: '16px' }}>
                 ⚠️ 编辑后将清除 AI 标记，AI 图标将消失。
               </div>
@@ -5055,11 +5192,11 @@ const MeditationPage = ({
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between' }}>
               <div style={{ position: 'relative' }}>
                 <button
-                  style={{ padding: '7px 16px', border: '1px solid #818cf8', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', backgroundColor: '#eef2ff', color: '#4338ca', whiteSpace: 'nowrap' }}
+                  style={{ padding: '7px 16px', border: '1px solid #818cf8', borderRadius: '8px', fontSize: '13px', cursor: isParagraphLocked ? 'not-allowed' : 'pointer', backgroundColor: '#eef2ff', color: '#4338ca', whiteSpace: 'nowrap', opacity: isParagraphLocked ? 0.6 : 1 }}
                   onClick={() => setSectionRawDropdownOpen(!sectionRawDropdownOpen)}
-                  disabled={addingToSectionRaw !== null}
+                  disabled={addingToSectionRaw !== null || isParagraphLocked}
                 >
-                  {addingToSectionRaw === 'new' ? '新建中...' : addingToSectionRaw ? '追加中...' : '📢 加入音频库 ▾'}
+                  {addToLibraryLabel}
                 </button>
                 {sectionRawDropdownOpen && (
                   <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: '4px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', border: '1px solid #e2e8f0', minWidth: '240px', zIndex: 10, maxHeight: '300px', overflowY: 'auto' }}>
