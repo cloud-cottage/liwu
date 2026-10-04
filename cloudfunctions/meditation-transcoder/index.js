@@ -102,6 +102,9 @@ const {
   buildJobSuccessPatch,
   buildJobFailurePatch,
   buildPermanentError,
+  buildTransientError,
+  isJobDeferred,
+  buildInputMediaInvalidError,
   isTrackMixJob,
   resolveTrackMixTrackKey,
   resolveTrackMixTrackVersion,
@@ -281,13 +284,177 @@ const assertOutputFile = (filePath, formatLabel) => {
   return sizeBytes
 }
 
+// 【② 输入完整性防护（本单新增）】转码前对**下载后的输入件**做一次 ffprobe 探测
+// （复用既有 buildProbeArgs；不新增/不改编码命令）。探测失败（截断 m4a 的
+// `moov atom not found` / `Invalid data found when processing input` 等）⇒ 输入容器无法解析
+// ＝存储侧对象不完整，重试不会变好 ⇒ 抛**永久错误**（classifyFailure 立即终结，不空耗 3 轮）；
+// 文案人话 + 可定位（含 ffprobe 首行原因），并走既有失败回写链路。无头 webm（duration=N/A）
+// 探测成功 ⇒ 放行（不得把「无时长头」误判为不完整）。
+const assertInputProbeable = async ({ ffprobePath, inputPath, jobId, inputSizeBytes, requestId }) => {
+  try {
+    const probeOutput = (await execFileAsync(ffprobePath, buildProbeArgs(inputPath), {
+      maxBuffer: MAX_BUFFER_BYTES
+    })).stdout
+    parseProbeJson(probeOutput)
+  } catch (error) {
+    const reason = String(error?.stderr || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || ''
+
+    logEvent(requestId, 'input_media_unreadable', {
+      jobId,
+      input_bytes: inputSizeBytes,
+      reason,
+      message: error?.message || ''
+    })
+
+    throw buildInputMediaInvalidError(error)
+  }
+}
+
+// ─── ① 下载后完整性校验（本单新增）────────────────────────────────────────────
+// 症状（实测）：批量上传后偶发 ffmpeg 报 `moov atom not found` / `Invalid data found when
+//   processing input`（输入容器不完整）；但同一对象重新排队 1 次即成功 ⇒ 瞬时时段内
+//   下载 / 环境异常取到了不完整输入。对象本身是好的，必须用防御纵深吸收、不得靠猜。
+// 对策：`app.downloadFile` 之后**验证本地文件与对象一致**：
+//   · 体积判据：优先 getTempFileURL 元数据（size）→ 否则对临时 URL 发 HEAD 取 content-length；
+//   · 可解析判据：两者均不可得时，退回 ffprobe 能否解析（assertInputProbeable）；
+//   不一致 / 不可解析 ⇒ **重下（上限 2 次、短退避）**；仍不行则按类别抛错
+//   （对象被截断 ＝ 永久「输入完整性」类，1 次即终态；下载本身失败 ＝ 「瞬时」类）。
+const DOWNLOAD_MAX_REDOWNLOADS = 2
+const DOWNLOAD_RETRY_BACKOFF_MS = 250
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
+
+const readLocalFileSizeBytes = (filePath) => {
+  try {
+    return fs.statSync(filePath).size
+  } catch {
+    return 0
+  }
+}
+
+// HEAD 取 content-length（Node 18 全局 fetch；不可用 / 非 http(s) / 失败 ⇒ null，绝不抛给调用方）。
+const fetchContentLengthBytes = async (url) => {
+  if (!url || typeof globalThis.fetch !== 'function' || !/^https?:/i.test(url)) {
+    return null
+  }
+
+  try {
+    const response = await globalThis.fetch(url, { method: 'HEAD' })
+    const raw = response?.headers?.get ? response.headers.get('content-length') : ''
+    const parsed = Number(raw)
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+// 取对象体积：① getTempFileURL 元数据（size）→ ② HEAD content-length → ③ null（退化用 ffprobe 判据）。
+const resolveRemoteObjectSizeBytes = async ({ app, fileId }) => {
+  const result = await app.getTempFileURL({
+    fileList: [{ fileID: fileId, maxAge: TEMP_URL_MAX_AGE_SECONDS }]
+  })
+  const entry = (result?.fileList || result?.data?.fileList || [])[0] || null
+  const metadataSize = Number(entry?.size)
+
+  if (Number.isFinite(metadataSize) && metadataSize > 0) {
+    return metadataSize
+  }
+
+  const tempUrl = entry?.tempFileURL || entry?.download_url || entry?.downloadUrl || ''
+
+  return fetchContentLengthBytes(tempUrl)
+}
+
+const downloadFileWithIntegrity = async ({ app, fileId, targetPath, ffprobePath, jobId, requestId, label = 'input' }) => {
+  let remoteSizeBytes = null
+
+  try {
+    remoteSizeBytes = await resolveRemoteObjectSizeBytes({ app, fileId })
+  } catch (error) {
+    logEvent(requestId, 'input_remote_size_unavailable', { jobId, label, message: error?.message || '' })
+    remoteSizeBytes = null
+  }
+
+  let lastProbeError = null
+  let lastSizeMismatch = null
+  let lastLocalSizeBytes = 0
+
+  for (let round = 0; round <= DOWNLOAD_MAX_REDOWNLOADS; round += 1) {
+    try {
+      await app.downloadFile({ fileID: fileId, tempFilePath: targetPath })
+    } catch (error) {
+      // 下载 / 网络类（瞬时）：交给上层按瞬时预算重试（上限 6 次、指数退避）。
+      throw buildTransientError(`INPUT_DOWNLOAD_FAILED：下载输入对象失败（${label}）：${error?.message || ''}`)
+    }
+
+    const localSizeBytes = readLocalFileSizeBytes(targetPath)
+    lastLocalSizeBytes = localSizeBytes
+
+    if (remoteSizeBytes !== null && localSizeBytes !== remoteSizeBytes) {
+      lastSizeMismatch = { localSizeBytes, remoteSizeBytes }
+      lastProbeError = null
+      logEvent(requestId, 'input_size_mismatch', { jobId, label, round, localSizeBytes, remoteSizeBytes })
+    } else {
+      try {
+        await assertInputProbeable({
+          ffprobePath,
+          inputPath: targetPath,
+          jobId,
+          inputSizeBytes: localSizeBytes,
+          requestId
+        })
+        return { sizeBytes: localSizeBytes, remoteSizeBytes, redownloads: round }
+      } catch (probeError) {
+        lastProbeError = probeError
+        lastSizeMismatch = null
+        logEvent(requestId, 'input_probe_retry', { jobId, label, round, localSizeBytes })
+      }
+    }
+
+    if (round < DOWNLOAD_MAX_REDOWNLOADS) {
+      await sleep(DOWNLOAD_RETRY_BACKOFF_MS * (round + 1))
+    }
+  }
+
+  if (lastProbeError) {
+    // 已是永久「输入完整性」类错误（INPUT_MEDIA_INVALID）——对象本身被截断，重下也无解。
+    // 把最后一次下载到的字节数挂到错误上，供失败回写登记 job.input_bytes（③）。
+    if (lastLocalSizeBytes > 0) {
+      lastProbeError.input_bytes = lastLocalSizeBytes
+    }
+    throw lastProbeError
+  }
+
+  const sizeMismatchError = buildPermanentError(
+    `INPUT_SIZE_MISMATCH：重下 ${DOWNLOAD_MAX_REDOWNLOADS} 次后本地体积仍与对象不一致（${label}：本地 ${lastSizeMismatch?.localSizeBytes ?? 0} / 对象 ${lastSizeMismatch?.remoteSizeBytes ?? 0} 字节）`
+  )
+  if (lastLocalSizeBytes > 0) {
+    sizeMismatchError.input_bytes = lastLocalSizeBytes
+  }
+  throw sizeMismatchError
+}
+
+// ③ 失败收口时取输入字节数：优先调用方已登记的；否则取错误上挂载的「最后一次下载到的字节数」。
+const resolveFailureInputBytes = (currentInputBytes, error) => {
+  if (currentInputBytes !== null && currentInputBytes !== undefined) {
+    return currentInputBytes
+  }
+
+  const fromError = Number(error?.input_bytes)
+  return Number.isFinite(fromError) && fromError > 0 ? fromError : currentInputBytes
+}
+
 // 失败收口：写 job（重试或终结）+ 尽最大努力写 med_section_audios 状态（写失败不得吞掉主错误）。
-const failJob = async ({ db, jobId, sectionAudioId, failure, nowIso, requestId }) => {
+const failJob = async ({ db, jobId, sectionAudioId, failure, nowIso, requestId, inputSizeBytes = null }) => {
   await updateDocument({
     db,
     collectionName: AUDIO_TRANSCODE_JOBS_COLLECTION,
     documentId: jobId,
-    patch: buildJobFailurePatch({ failure, nowIso })
+    patch: buildJobFailurePatch({ failure, nowIso, inputSizeBytes })
   }).catch((error) => {
     logEvent(requestId, 'job_failure_patch_failed', { jobId, message: error?.message || '' })
   })
@@ -359,6 +526,10 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
   const opusOutputPath = path.join(tmpRoot, 'output.ogg')
   const mp3OutputPath = path.join(tmpRoot, 'output.mp3')
 
+  // 【③ 输入体积登记（本单新增）】下载后的输入字节数：成功/失败回写与日志都带上（新键
+  // `input_bytes`），使「输入对象是否被截断」一眼可判。下载前即失败时为 null ⇒ 回写不带该键。
+  let inputSizeBytes = null
+
   try {
     // D-B2-5：二进制缺失报明确错误（永久失败，不空耗重试轮次），不得静默。
     const ffmpegPath = assertToolAvailable(resolveFfmpegPath(), 'ffmpeg')
@@ -376,7 +547,20 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
     }
 
     const sourceFileId = resolveJobSourceFileId({ job, envId })
-    await app.downloadFile({ fileID: sourceFileId, tempFilePath: inputPath })
+    // ① 下载 + 完整性校验（体积比对 ＋ ffprobe 可解析）：不一致 / 不可解析自动重下（上限 2 次、短退避），
+    //    仍不行按类别抛错（对象被截断＝永久「输入完整性」类 / 下载失败＝「瞬时」类）。
+    const downloaded = await downloadFileWithIntegrity({
+      app,
+      fileId: sourceFileId,
+      targetPath: inputPath,
+      ffprobePath,
+      jobId,
+      requestId,
+      label: 'source'
+    })
+    // ③ 输入体积登记（下载后的输入字节数）：与客户端来源字节数（med_section_audios.source_size）配对，
+    //    使「对象/下载链路」还是「源文件本身」一眼可判。
+    inputSizeBytes = downloaded.sizeBytes
 
     // R33-③：单次调用双路输出。参数在 lib/transcode-command.js，禁止在此处改写。
     const transcodeStartedAt = Date.now()
@@ -449,6 +633,7 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
         mp3Url,
         durationSeconds,
         probe: opusProbe,
+        inputSizeBytes,
         nowIso: new Date().toISOString()
       })
     })
@@ -461,6 +646,7 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
       section_audio_id: sectionAudioId,
       status: JOB_STATUS.succeeded,
       attempts: attemptCount,
+      input_bytes: inputSizeBytes,
       duration_seconds: durationSeconds,
       transcode_ms: transcodeMs,
       opus: { cloud_path: deliveryPaths.opus, size_bytes: opusOutputSize, probe: opusProbe },
@@ -468,10 +654,13 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
     }
   } catch (error) {
     // D-B2-3：单条失败只收口本条 job（attempt_count+1；>=3 置 failed），不影响整批其它 job。
+    // ③ 失败也要登记输入字节数：下载已发生时由下载层挂在错误上（对象被截断的场景必须能一眼可判）。
+    inputSizeBytes = resolveFailureInputBytes(inputSizeBytes, error)
     logEvent(requestId, 'job_failed', {
       jobId,
       sectionAudioId,
       attempts: attemptCount,
+      input_bytes: inputSizeBytes,
       message: error?.message || 'TRANSCODE_FAILED'
     })
 
@@ -481,7 +670,8 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
       sectionAudioId,
       failure: classifyFailure({ attempts: attemptCount, error }),
       nowIso: new Date().toISOString(),
-      requestId
+      requestId,
+      inputSizeBytes
     })
   } finally {
     await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
@@ -500,12 +690,12 @@ const TRACK_MIX_BACKGROUND_CANDIDATE_LIMIT = 5
 
 // 失败收口：**只**写 job（track_mix 不写 med_section_audios：一条 job 对应整条 Track，
 // 不是某一段音频；结构性问题也不该把 Track 文档标脏）。
-const failTrackMixJob = async ({ db, jobId, failure, nowIso, requestId }) => {
+const failTrackMixJob = async ({ db, jobId, failure, nowIso, requestId, inputSizeBytes = null }) => {
   await updateDocument({
     db,
     collectionName: AUDIO_TRANSCODE_JOBS_COLLECTION,
     documentId: jobId,
-    patch: buildJobFailurePatch({ failure, nowIso })
+    patch: buildJobFailurePatch({ failure, nowIso, inputSizeBytes })
   }).catch((error) => {
     logEvent(requestId, 'track_mix_job_failure_patch_failed', { jobId, message: error?.message || '' })
   })
@@ -738,6 +928,9 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
   const opusOutputPath = path.join(tmpRoot, 'output.ogg')
   const mp3OutputPath = path.join(tmpRoot, 'output.mp3')
 
+  // ③ 输入体积登记（下载输入字节数累计；人声各段 ＋ 背景）：失败时若尚未下载任何输入则为 null ⇒ 不回写该键。
+  let inputSizeBytes = null
+
   try {
     // D-B2-5：二进制缺失报明确错误（永久失败，不空耗重试轮次），不得静默。
     const ffmpegPath = assertToolAvailable(resolveFfmpegPath(), 'ffmpeg')
@@ -758,15 +951,35 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     // （某章无可用音频 ⇒ 不计其 gap；precondition 已校验合法）。
     const leadingSilenceSeconds = resolveTrackMixVoiceLeadingSilenceSeconds(job) || 0
 
+    // ① 每个输入（人声各段 ＋ 背景）下载后同样做完整性校验：体积比对 ＋ ffprobe 可解析，
+    //    不一致 / 不可解析自动重下（上限 2 次、短退避），仍不行按类别抛错。
     const voiceInputPaths = []
     for (const [index, voiceInput] of voiceInputs.entries()) {
       const voicePath = path.join(tmpRoot, `voice-${index}${resolveTrackMixInputExtension(voiceInput.file_id)}`)
-      await app.downloadFile({ fileID: voiceInput.file_id, tempFilePath: voicePath })
+      const downloadedVoice = await downloadFileWithIntegrity({
+        app,
+        fileId: voiceInput.file_id,
+        targetPath: voicePath,
+        ffprobePath,
+        jobId,
+        requestId,
+        label: `voice-${index}`
+      })
+      inputSizeBytes = (inputSizeBytes || 0) + downloadedVoice.sizeBytes
       voiceInputPaths.push(voicePath)
     }
 
     const backgroundInputPath = path.join(tmpRoot, `background${resolveTrackMixInputExtension(backgroundInput.file_id)}`)
-    await app.downloadFile({ fileID: backgroundInput.file_id, tempFilePath: backgroundInputPath })
+    const downloadedBackground = await downloadFileWithIntegrity({
+      app,
+      fileId: backgroundInput.file_id,
+      targetPath: backgroundInputPath,
+      ffprobePath,
+      jobId,
+      requestId,
+      label: 'background'
+    })
+    inputSizeBytes = (inputSizeBytes || 0) + downloadedBackground.sizeBytes
 
     // 单次调用：人声按序拼接（含同段多次 take）＋ 前导静音 ＋ 章间留白静音 ＋ 背景循环铺满 ＋ amix 混音 ＋ 双路输出。
     // 参数在 lib/track-mix-command.js，禁止在此改写。
@@ -866,6 +1079,7 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
         probe: opusProbe,
         warnings,
         warningMessage: warnings.map((warning) => `${warning.code}：${warning.message}`).join('；'),
+        inputSizeBytes,
         nowIso: new Date().toISOString()
       })
     })
@@ -884,6 +1098,7 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
       leading_silence_seconds: leadingSilenceSeconds,
       expected_duration_seconds: expectedDurationSeconds,
       soft_baseline_seconds: MEDITATION_SESSION_SOFT_BASELINE_SECONDS,
+      input_bytes: inputSizeBytes,
       warnings,
       background_source: backgroundInput.source,
       volumes,
@@ -894,10 +1109,13 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     }
   } catch (error) {
     // 单条失败只收口本条 job（attempt_count+1；>=3 置 failed），不影响整批其它 job（D-B2-3）。
+    // ③ 失败也要登记输入字节数（已下载部分之和 / 下载层挂在错误上的最后一次字节数）。
+    inputSizeBytes = resolveFailureInputBytes(inputSizeBytes, error)
     logEvent(requestId, 'track_mix_job_failed', {
       jobId,
       trackKey,
       attempts: attemptCount,
+      input_bytes: inputSizeBytes,
       message: error?.message || 'TRACK_MIX_FAILED'
     })
 
@@ -906,7 +1124,8 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
       jobId,
       failure: classifyFailure({ attempts: attemptCount, error }),
       nowIso: new Date().toISOString(),
-      requestId
+      requestId,
+      inputSizeBytes
     })
   } finally {
     await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
@@ -950,6 +1169,13 @@ const runBatch = async ({ app, db, envId, limit, requestId }) => {
 
   for (const job of jobs) {
     const jobId = readJobIdentifier(job)
+
+    // ② 瞬时类退避：未到 `next_attempt_at` 的 job 本轮只读跳过（不领取、不写任何字段）。
+    if (isJobDeferred(job, Date.now())) {
+      results.push({ jobId, status: 'skipped', skip_reason: 'deferred_backoff' })
+      continue
+    }
+
     const skipReason = resolveJobSkipReason(job)
 
     if (skipReason) {
@@ -973,6 +1199,13 @@ const runBatch = async ({ app, db, envId, limit, requestId }) => {
 
   for (const job of trackMixJobs) {
     const jobId = readJobIdentifier(job)
+
+    // ② 瞬时类退避：未到 `next_attempt_at` 的 job 本轮只读跳过（不领取、不写任何字段）。
+    if (isJobDeferred(job, Date.now())) {
+      results.push({ jobId, status: 'skipped', skip_reason: 'deferred_backoff' })
+      continue
+    }
+
     const skipReason = resolveTrackMixJobSkipReason(job)
 
     if (skipReason) {
@@ -1052,6 +1285,10 @@ exports.__test__ = {
   fetchQueuedJobs,
   readDocument,
   updateDocument,
+  // 【本单新增】输入完整性防护：ffprobe 探测 ＋ 下载后完整性校验（供样本自测直接驱动真实分支）
+  assertInputProbeable,
+  downloadFileWithIntegrity,
+  resolveRemoteObjectSizeBytes,
   // Track 级混音分区（本单新增）——与上面 section_audio 的导出并列，互不调用
   processTrackMixJob,
   fetchQueuedTrackMixJobs,

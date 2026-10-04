@@ -151,7 +151,7 @@ assert_cfg meditation-read timeout 30
 assert_cfg meditation-read memorySize 128
 assert_cfg meditation-transcoder installDependency true
 assert_cfg meditation-transcoder timeout 300
-assert_cfg meditation-transcoder memorySize 256
+assert_cfg meditation-transcoder memorySize 512
 say "· cloudbaserc.json[meditation-transcoder].layers 条目数 = $(cfg_field meditation-transcoder layers)（0 ⇒ 层未回填，见下）"
 
 # ---- transcoder 专属前置：ffmpeg 层 + 二进制能力 ----

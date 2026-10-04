@@ -49,6 +49,23 @@ const JOB_STATUS = Object.freeze({
 })
 
 const MAX_JOB_ATTEMPTS = 3
+// 【② 失败分层与重试预算（本单新增）】不改「达到上限 ⇒ 终态 failed」的总语义，只改预算与分类：
+//   · permanent（输入完整性 / 结构性）：1 次即终态（对象已被截断，重下 / 重试都不会变好）；
+//   · transient（下载 / 网络）：6 次，重试间隔指数递增（见 computeRetryBackoffSeconds / next_attempt_at）；
+//   · encoding（转码 / 编码，默认类）：沿用现状 3 次（MAX_JOB_ATTEMPTS）。
+const FAILURE_CLASS = Object.freeze({
+  permanent: 'permanent',
+  transient: 'transient',
+  encoding: 'encoding'
+})
+const MAX_ATTEMPTS_BY_FAILURE_CLASS = Object.freeze({
+  permanent: 1,
+  transient: 6,
+  encoding: MAX_JOB_ATTEMPTS
+})
+// 瞬时类重试退避：基数 60s × 2^(n-1)，封顶 900s（n ＝ 本轮 attempts）。
+const RETRY_BACKOFF_BASE_SECONDS = 60
+const RETRY_BACKOFF_MAX_SECONDS = 900
 const MAX_JOBS_PER_RUN = 3
 const MEDITATION_AUDIO_FINAL_PREFIX = 'meditation-audio-final'
 
@@ -103,6 +120,20 @@ const readJobAttemptCount = (job = {}) => {
   const parsed = Number(rawAttempts)
 
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
+}
+
+// ② 瞬时类退避：读取 job 的 `next_attempt_at`（ISO）。未到点 ⇒ 本轮只读跳过（不写任何字段）。
+const readJobNextAttemptAt = (job = {}) => readJobString(job, 'next_attempt_at', 'nextAttemptAt')
+
+const isJobDeferred = (job = {}, nowMs = Date.now()) => {
+  const raw = readJobNextAttemptAt(job)
+
+  if (!raw) {
+    return false
+  }
+
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) && parsed > Number(nowMs)
 }
 
 // D-B2-9：是否为「新链路（section_audio）」job。profile 为 snake_case 字面值，camelCase 仅兜底读。
@@ -189,6 +220,8 @@ const buildClaimPatch = ({ attemptCount, nowIso }) => ({
   // 领取时两键一起清空（只清镜像会让权威字段留着上一轮的旧错误）。
   transcode_error: '',
   error_message: '',
+  // ② 领取即清除上一轮的瞬时退避标记（本轮成败会重新写 / 不再写该键）。
+  next_attempt_at: '',
   updated_at: nowIso
 })
 
@@ -333,16 +366,51 @@ const normalizeErrorMessage = (error) => {
     .slice(0, ERROR_MESSAGE_MAX_LENGTH)
 }
 
-// D-B2-3：attempts>=3 → failed（终结）；否则退回 queued 等下个 tick 重试。
-// error.permanent === true 的结构性/环境性错误（如 FFMPEG_NOT_FOUND）不重试，直接终结。
-const classifyFailure = ({ attempts, error }) => {
+// ② 失败分层：错误对象可显式带 `failure_class`；否则 `permanent === true` ⇒ permanent，
+//   其余（ffmpeg 命令失败 / 产物缺失 / 回写失败等）一律 encoding（默认类）。
+const resolveFailureClass = (error) => {
+  const explicit = getString(error?.failure_class).trim()
+  if (explicit === FAILURE_CLASS.permanent
+    || explicit === FAILURE_CLASS.transient
+    || explicit === FAILURE_CLASS.encoding) {
+    return explicit
+  }
+
+  return error?.permanent ? FAILURE_CLASS.permanent : FAILURE_CLASS.encoding
+}
+
+const resolveFailureMaxAttempts = (failureClass) => (
+  MAX_ATTEMPTS_BY_FAILURE_CLASS[failureClass] || MAX_JOB_ATTEMPTS
+)
+
+// 瞬时类重试退避（秒）：60 × 2^(n-1)，封顶 900s。
+const computeRetryBackoffSeconds = (attempts) => {
   const normalizedAttempts = Math.max(1, Math.floor(Number(attempts) || 1))
-  const isTerminal = Boolean(error?.permanent) || normalizedAttempts >= MAX_JOB_ATTEMPTS
+
+  return Math.min(RETRY_BACKOFF_MAX_SECONDS, RETRY_BACKOFF_BASE_SECONDS * (2 ** (normalizedAttempts - 1)))
+}
+
+// D-B2-3：达到「本类别」的重试预算上限 → failed（终结）；否则退回 queued 等下个 tick 重试。
+// 预算按类别取（permanent 1 / transient 6 / encoding 3）——总语义仍是「达到上限即终态」。
+// 瞬时类**非终态**时给出下一次可领取时间 `next_attempt_at`（指数退避，由 runBatch 跳过未到点的 job）；
+// 终态 / 其它类不写该键（沿用「下一 tick 即重试」）。
+const classifyFailure = ({ attempts, error, nowMs }) => {
+  const normalizedAttempts = Math.max(1, Math.floor(Number(attempts) || 1))
+  const failureClass = resolveFailureClass(error)
+  const maxAttempts = resolveFailureMaxAttempts(failureClass)
+  const isTerminal = normalizedAttempts >= maxAttempts
   const message = normalizeErrorMessage(error)
+  const baseNowMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now()
+  const nextAttemptAt = (!isTerminal && failureClass === FAILURE_CLASS.transient)
+    ? new Date(baseNowMs + computeRetryBackoffSeconds(normalizedAttempts) * 1000).toISOString()
+    : ''
 
   return {
     attempts: normalizedAttempts,
     is_terminal: isTerminal,
+    failure_class: failureClass,
+    max_attempts: maxAttempts,
+    next_attempt_at: nextAttemptAt,
     message,
     job_status: isTerminal ? JOB_STATUS.failed : JOB_STATUS.queued,
     section_audio_status: isTerminal
@@ -446,6 +514,7 @@ const buildJobSuccessPatch = ({
   probe,
   warnings = [],
   warningMessage = '',
+  inputSizeBytes = null,
   nowIso
 }) => ({
   status: JOB_STATUS.succeeded,
@@ -460,6 +529,7 @@ const buildJobSuccessPatch = ({
   ...(Array.isArray(warnings) && warnings.length > 0
     ? { warnings, warning_message: getString(warningMessage) }
     : {}),
+  ...buildInputSizePatch(inputSizeBytes),
   // 待老 worker 退役后收敛为单一口径（只留 transcode_error）
   error_message: '',
   transcode_error: '',
@@ -468,10 +538,13 @@ const buildJobSuccessPatch = ({
 
 // D-B2-10 字段权威口径（job 文档）：**`transcode_error` 权威**、`error_message` 为过渡期镜像
 // （老 worker 仍在读 error_message）——**待老 worker 退役后收敛为单一口径（只留 transcode_error）**。
-const buildJobFailurePatch = ({ failure, nowIso }) => ({
+const buildJobFailurePatch = ({ failure, nowIso, inputSizeBytes = null }) => ({
   status: failure?.job_status || JOB_STATUS.failed,
   error_message: getString(failure?.message).slice(0, ERROR_MESSAGE_MAX_LENGTH),
   transcode_error: getString(failure?.message).slice(0, ERROR_MESSAGE_MAX_LENGTH),
+  // ② 瞬时类非终态失败：落下一次可领取时间（指数退避）；终态 / 其它类不写该键。
+  ...(failure?.next_attempt_at ? { next_attempt_at: failure.next_attempt_at } : {}),
+  ...buildInputSizePatch(inputSizeBytes),
   updated_at: nowIso
 })
 
@@ -480,6 +553,51 @@ const buildPermanentError = (message) => {
   error.permanent = true
 
   return error
+}
+
+// ② 瞬时类错误（下载 / 网络）：允许更多次重试（上限 6 次、间隔指数递增）。
+const buildTransientError = (message) => {
+  const error = new Error(getString(message) || 'TRANSIENT_TRANSCODE_ERROR')
+  error.failure_class = FAILURE_CLASS.transient
+
+  return error
+}
+
+// ─── 【本单新增】输入完整性防护 + 输入体积登记（section_audio 链路）─────────────
+
+// ③ 输入体积登记：把「下载后的输入字节数」记入 job 文档的新键 `input_bytes`
+//   （与既有 job 字段不冲突）。只在调用方确实拿到字节数时写入；
+//   未下载成功（如提前失败）不传 ⇒ 键完全不存在，既有文档形状与判据不受影响。
+//   与客户端 `med_section_audios.source_size`（本地 File 字节数）配对，使「对象/下载链路」
+//   还是「源文件本身」一眼可判。
+const buildInputSizePatch = (inputSizeBytes) => {
+  if (inputSizeBytes === null || inputSizeBytes === undefined || inputSizeBytes === '') {
+    return {}
+  }
+
+  const parsed = Number(inputSizeBytes)
+  return Number.isFinite(parsed) && parsed >= 0 ? { input_bytes: Math.round(parsed) } : {}
+}
+
+// ② 输入完整性防护：ffprobe 探测输入失败 ⇒ 输入容器无法解析（对象被截断），重试不会变好
+//   ⇒ 包成**永久错误**（classifyFailure 立即终结，不空耗 3 轮）。文案人话 + 可定位：
+//   原因取样自 ffprobe 输出的**首个非空原因行**（如 `[mov,mp4,m4a,...] moov atom not found`、
+//   `<file>: Invalid data found when processing input`）。
+const takeFirstReasonLine = (text) => {
+  for (const rawLine of getString(text).split(/\r?\n/)) {
+    const trimmed = rawLine.trim()
+    if (trimmed) {
+      return trimmed
+    }
+  }
+
+  return ''
+}
+
+const buildInputMediaInvalidError = (error) => {
+  const reason = takeFirstReasonLine(error?.stderr) || '无法解析音频容器'
+  const message = `INPUT_MEDIA_INVALID：输入音频不完整（无法解析容器），请重传；ffprobe 原因：${reason}`
+  return buildPermanentError(message)
 }
 
 // ─── Track 级混音分区（profile = 'track_mix'，本单新增） ───────────────────────
@@ -731,6 +849,11 @@ module.exports = {
   JOB_STATUS,
   MAX_JOB_ATTEMPTS,
   MAX_JOBS_PER_RUN,
+  // 【本单新增】② 失败分层与重试预算
+  FAILURE_CLASS,
+  MAX_ATTEMPTS_BY_FAILURE_CLASS,
+  RETRY_BACKOFF_BASE_SECONDS,
+  RETRY_BACKOFF_MAX_SECONDS,
   MEDITATION_AUDIO_FINAL_PREFIX,
   // D-3 失败文案上限（供自测/规范核对；已在 README 登记）
   ERROR_MESSAGE_MAX_LENGTH,
@@ -753,6 +876,13 @@ module.exports = {
   buildClaimPatch,
   normalizeErrorMessage,
   classifyFailure,
+  // 【本单新增】② 失败分层：类别解析 / 预算 / 退避 / 瞬时错误构造 / 退避跳过判定
+  resolveFailureClass,
+  resolveFailureMaxAttempts,
+  computeRetryBackoffSeconds,
+  readJobNextAttemptAt,
+  isJobDeferred,
+  buildTransientError,
   buildDeliveryCloudBasePaths,
   resolveDurationPatch,
   buildMedSectionAudioSuccessPatch,
@@ -760,6 +890,9 @@ module.exports = {
   buildJobSuccessPatch,
   buildJobFailurePatch,
   buildPermanentError,
+  // 【本单新增】输入完整性防护 + 输入体积登记（section_audio 链路）
+  buildInputSizePatch,
+  buildInputMediaInvalidError,
   // Track 级混音分区（profile = 'track_mix'）——与上面 section_audio 的导出一一对应、互不调用
   isTrackMixJob,
   resolveTrackMixTrackKey,

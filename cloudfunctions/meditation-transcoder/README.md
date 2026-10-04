@@ -25,8 +25,10 @@
     不退回 `queued`、不空耗 3 轮重试），处理方式同 `MISSING_SOURCE_FILE`。
 - **乐观锁**：`where({ _id, status: 'queued', transcode_profile: 'section_audio' }).update({ status: 'processing' })`，
   返回 `updated === 0` 即被别的实例/上一轮领走 ⇒ 跳过，不重做。
-- 建议函数配置：**内存 256MB / 超时 60s**（R33-⑥：双路 3.29–3.5 ms/音频秒，单条 5min ≈ 1.07s，
-  建议每轮 3 条约 3–4s，瓶颈是 COS 上下行与冷启动）。
+- 函数配置：**内存 512MB / 超时 300s**（本单把内存由 256MB 提到 **512MB** —— 音视频解码 +
+  混音 / 双路输出时 ffmpeg 驻留内存更高；R33-⑥ 的 CPU 估算 3.29–3.5 ms/音频秒、每轮 3 条约 3–4s 不变）。
+  同值登记在仓库根 `cloudbaserc.json`，并由 `scripts/deploy-meditation-functions.sh` 的
+  `assert_cfg meditation-transcoder memorySize 512` 拦住配置漂移（**不得绕过**）。
 
 ### 1.1 上线纪律（**强制**，停老 worker 再上新执行器）
 
@@ -89,6 +91,44 @@
 - **上限**：`ERROR_MESSAGE_MAX_LENGTH`＝**1200**（本单由 500 提高，故在此登记）；`ERROR_STDERR_TAIL_MAX_LENGTH`＝800。
   两个常量与实现同在 `lib/transcode-state.js`，供自测/规范核对。
 - 非命令类失败（永久性结构错误 / 下载 / 回写失败）其 `message` 本就是一句可定位的原因，原样保留。
+
+### 2.3 输入完整性防护（下载后校验 ＋ 重下）＋ 失败分层重试预算 ＋ 输入体积登记（本单新增）
+
+背景（实测）：批量上传后偶发 ffmpeg 报 `moov atom not found` / `Invalid data found when processing
+input`（输入容器不完整）；但**同一对象重新排队 1 次即成功**，且客户端上传链路已实证逐字节完整、
+云侧处理是串行的 ⇒ 结论：对象本身是好的，**瞬时时段内下载 / 环境异常取到了不完整输入**。用防御纵深吸收，
+不靠猜：
+
+**① 下载后完整性校验（`index.js#downloadFileWithIntegrity`）**：`app.downloadFile` 之后**验证本地文件与对象一致**：
+- 体积判据：优先 `getTempFileURL` 元数据（`size`）→ 否则对临时 URL 发 `HEAD` 取 `content-length`；
+- 可解析判据：两者均不可得时，退回 ffprobe 能否解析（`assertInputProbeable`，复用既有 `buildProbeArgs`，
+  **编码参数一字未动**）；
+- 不一致 / 不可解析 ⇒ **重下（上限 `DOWNLOAD_MAX_REDOWNLOADS`＝2 次、短退避 250ms×n）**；仍不行按类别抛错：
+  对象被截断 ⇒ 永久「输入完整性」类（`INPUT_MEDIA_INVALID` / `INPUT_SIZE_MISMATCH`，1 次即终态）；
+  下载本身失败 ⇒ 「瞬时」类（`INPUT_DOWNLOAD_FAILED`）。
+- 无头 webm（MediaRecorder 原件 `duration=N/A`）探测**成功** ⇒ 照常放行（不得把「无时长头」误判为不完整）。
+- `section_audio` 与 `track_mix` 两个分区的**每个输入**（人声各段 ＋ 背景）都走此校验。
+
+**② 失败分层与重试预算（`lib/transcode-state.js`）**：不改「达到上限 ⇒ 终态 `failed`」的总语义，只改预算与分类。
+`resolveFailureClass` 分三类（错误对象可显式带 `failure_class`；`permanent===true` ⇒ permanent；其余＝ encoding 默认类）：
+
+| 类别 | 触发 | 重试预算 | 退避 |
+|---|---|---|---|
+| `permanent`（输入完整性 / 结构性） | 对象被截断、缺必需字段、二进制缺失 | **1**（立即终态） | — |
+| `transient`（下载 / 网络） | `INPUT_DOWNLOAD_FAILED` 等 | **6** | 指数（60s×2^(n-1)，封顶 900s） |
+| `encoding`（转码 / 编码，默认） | ffmpeg 命令失败、产物缺失、回写失败 | **3**（维持现状） | — |
+
+- 瞬时类**非终态**时写入 `next_attempt_at`（ISO）；`runBatch` 对未到点的 job **只读跳过**
+  （`skip_reason=deferred_backoff`），不领取、不写字段；领取时 `buildClaimPatch` 把该键清空。
+
+**③ 输入体积登记**：job 文档**新键 `input_bytes`**（`lib/transcode-state.js#buildInputSizePatch`），
+值为**下载后的输入字节数**（`track_mix` 为各输入之和）；成功与失败回写、`job_failed` /
+`input_media_unreadable` 日志与执行结果都带上。未下载成功（如提前失败）⇒ **键完全不写入**，
+既有文档形状与判据不受影响。**客户端配对**：`med_section_audios` 侧写入**新键 `source_size`**
+（本地 File 字节数；见后台 `database.js#createMedSectionAudio` 与 `MeditationPage.jsx`）——
+两者配对，使「对象 / 下载链路」还是「源文件本身」一眼可判。`source_size` **不进 D6 读契约**。
+
+- 边界：**不改** R34 编码参数 / ffmpeg 命令、队列分区、终态判定总语义、D6 读契约。
 
 ## 3. 回写字段（D-B2-6，与 `packages/shared-utils/meditation-section-audio.js` normalizer 逐字对齐）
 

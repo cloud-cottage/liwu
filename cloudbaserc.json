@@ -38,7 +38,7 @@
     {
       "name": "meditation-transcoder",
       "timeout": 300,
-      "memorySize": 256,
+      "memorySize": 512,
       "runtime": "Nodejs18.15",
       "installDependency": true,
       "envVariables": {
