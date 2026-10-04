@@ -1029,10 +1029,13 @@ const addToSystemFortunePool = async (delta = 0) => {
     return nextBalance;
   }
 
-  const createResult = await db.collection(collections.appSettings).add({
-    ...payload,
-    created_at: new Date()
-  });
+  const createResult = assertCloudBaseCreateResult(
+    await db.collection(collections.appSettings).add({
+      ...payload,
+      created_at: new Date()
+    }),
+    collections.appSettings
+  );
 
   return createResult.id ? nextBalance : nextBalance;
 };
@@ -2088,15 +2091,21 @@ class DatabaseService {
         updated_at: new Date()
       };
 
-      const orderResult = await db.collection(collections.partnerOrders).add(partnerOrderPayload);
+      const orderResult = assertCloudBaseCreateResult(
+        await db.collection(collections.partnerOrders).add(partnerOrderPayload),
+        collections.partnerOrders
+      );
       const partnerOrderId = orderResult.id || orderResult._id;
 
       for (const subOrder of (orderData.subOrders || [])) {
-        await db.collection(collections.partnerSubOrders).add({
-          ...toPartnerSubOrderPayload(subOrder, partnerOrderId),
-          created_at: new Date(),
-          updated_at: new Date()
-        });
+        assertCloudBaseCreateResult(
+          await db.collection(collections.partnerSubOrders).add({
+            ...toPartnerSubOrderPayload(subOrder, partnerOrderId),
+            created_at: new Date(),
+            updated_at: new Date()
+          }),
+          collections.partnerSubOrders
+        );
       }
 
       return {
@@ -2177,16 +2186,19 @@ class DatabaseService {
                 relatedUserId: userId
               });
 
-              await db.collection(collections.pointLedger).add({
-                user_id: userId,
-                delta: rewardAmount,
-                balance_after: nextBalance,
-                biz_type: 'partner_order_retail_reward',
-                biz_id: partnerOrderId,
-                description: `代理商对账完成奖励：${partnerOrderDocument.order_no || partnerOrderDocument.orderNo || partnerOrderId}`,
-                operator_id: 'admin',
-                created_at: nowIso
-              });
+              assertCloudBaseCreateResult(
+                await db.collection(collections.pointLedger).add({
+                  user_id: userId,
+                  delta: rewardAmount,
+                  balance_after: nextBalance,
+                  biz_type: 'partner_order_retail_reward',
+                  biz_id: partnerOrderId,
+                  description: `代理商对账完成奖励：${partnerOrderDocument.order_no || partnerOrderDocument.orderNo || partnerOrderId}`,
+                  operator_id: 'admin',
+                  created_at: nowIso
+                }),
+                collections.pointLedger
+              );
 
               await db.collection(collections.users).doc(userId).update({
                 balance: nextBalance,
@@ -2295,10 +2307,13 @@ class DatabaseService {
         return normalizePartnerBrand({ ...existingBrand, ...payload, _id: existingBrandId });
       }
 
-      const result = await db.collection(collections.partnerBrands).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const result = assertCloudBaseCreateResult(
+        await db.collection(collections.partnerBrands).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.partnerBrands
+      );
       return normalizePartnerBrand({ ...brandData, ...payload, _id: result.id });
     } catch (error) {
       console.error('Error saving partner brand:', error);
@@ -2347,6 +2362,7 @@ class DatabaseService {
 
       if (burnAmount > 0) {
         await addToSystemFortunePool(burnAmount).catch(() => null);
+        // best-effort 审计流水：失败不阻断主流程，故保留 .catch；断言仍走（失败不再静默）
         await db.collection(collections.pointLedger).add({
           user_id: '',
           delta: -burnAmount,
@@ -2356,7 +2372,7 @@ class DatabaseService {
           description: `品牌方每日燃烧扣减 ${daysToSettle} 天`,
           operator_id: 'system',
           created_at: nowIso
-        }).catch(() => {});
+        }).then((addResult) => assertCloudBaseCreateResult(addResult, collections.pointLedger)).catch(() => {});
       }
 
       return normalizePartnerBrand({
@@ -2414,6 +2430,7 @@ class DatabaseService {
 
       if (burnAmount > 0) {
         await addToSystemFortunePool(burnAmount).catch(() => null);
+        // best-effort 审计流水：失败不阻断主流程，故保留 .catch；断言仍走（失败不再静默）
         await db.collection(collections.pointLedger).add({
           user_id: userId,
           delta: -burnAmount,
@@ -2423,7 +2440,7 @@ class DatabaseService {
           description: `代理商每日燃烧扣减 ${daysToSettle} 天`,
           operator_id: 'system',
           created_at: nowIso
-        }).catch(() => {});
+        }).then((addResult) => assertCloudBaseCreateResult(addResult, collections.pointLedger)).catch(() => {});
       }
 
       return normalizeUser({
@@ -2453,10 +2470,13 @@ class DatabaseService {
         accepted_at: new Date().toISOString(),
         updated_at: new Date()
       };
-      const createdInvite = await db.collection(collections.partnerBrandInvites).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createdInvite = assertCloudBaseCreateResult(
+        await db.collection(collections.partnerBrandInvites).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.partnerBrandInvites
+      );
 
       const existingMemberResult = await db.collection(collections.partnerBrandMembers).where({
         brand_id: payload.brand_id,
@@ -2465,15 +2485,18 @@ class DatabaseService {
       const existingMember = getFirstDocument(existingMemberResult, collections.partnerBrandMembers);
 
       if (!existingMember) {
-        await db.collection(collections.partnerBrandMembers).add({
-          brand_id: payload.brand_id,
-          user_id: payload.invitee_user_id,
-          role: payload.role,
-          status: 'active',
-          invited_by_user_id: payload.invited_by_user_id,
-          joined_at: new Date().toISOString(),
-          created_at: new Date()
-        });
+        assertCloudBaseCreateResult(
+          await db.collection(collections.partnerBrandMembers).add({
+            brand_id: payload.brand_id,
+            user_id: payload.invitee_user_id,
+            role: payload.role,
+            status: 'active',
+            invited_by_user_id: payload.invited_by_user_id,
+            joined_at: new Date().toISOString(),
+            created_at: new Date()
+          }),
+          collections.partnerBrandMembers
+        );
       }
 
       return normalizePartnerBrandInvite({ ...payload, _id: createdInvite.id });
@@ -2532,19 +2555,25 @@ class DatabaseService {
           { entityLabel: '商品 SKU', allowZero: true }
         );
       } else {
-        const result = await db.collection(collections.shopProducts).add({
-          ...productPayload,
-          created_at: new Date()
-        });
+        const result = assertCloudBaseCreateResult(
+          await db.collection(collections.shopProducts).add({
+            ...productPayload,
+            created_at: new Date()
+          }),
+          collections.shopProducts
+        );
         productId = result.id || result._id;
       }
 
       for (const sku of skus) {
-        await db.collection(collections.shopProductSkus).add({
-          ...toShopSkuPayload(sku, productId),
-          created_at: new Date(),
-          updated_at: new Date()
-        });
+        assertCloudBaseCreateResult(
+          await db.collection(collections.shopProductSkus).add({
+            ...toShopSkuPayload(sku, productId),
+            created_at: new Date(),
+            updated_at: new Date()
+          }),
+          collections.shopProductSkus
+        );
       }
 
       return productId;
@@ -2622,16 +2651,19 @@ class DatabaseService {
               relatedUserId: order.userId
             });
 
-            await db.collection(collections.pointLedger).add({
-              user_id: order.userId,
-              delta: totalRewardPoints,
-              balance_after: nextBalance,
-              biz_type: 'shop_cash_reward',
-              biz_id: resolvedOrderId,
-              description: `工坊消费奖励：${order.orderNo}`,
-              operator_id: 'admin',
-              created_at: nowIso
-            });
+            assertCloudBaseCreateResult(
+              await db.collection(collections.pointLedger).add({
+                user_id: order.userId,
+                delta: totalRewardPoints,
+                balance_after: nextBalance,
+                biz_type: 'shop_cash_reward',
+                biz_id: resolvedOrderId,
+                description: `工坊消费奖励：${order.orderNo}`,
+                operator_id: 'admin',
+                created_at: nowIso
+              }),
+              collections.pointLedger
+            );
 
             await db.collection(collections.users).doc(order.userId).update({
               balance: nextBalance,
@@ -2691,16 +2723,19 @@ class DatabaseService {
             relatedUserId: order.userId
           });
 
-          await db.collection(collections.pointLedger).add({
-            user_id: order.userId,
-            delta: order.totalPoints,
-            balance_after: nextBalance,
-            biz_type: 'shop_refund',
-            biz_id: resolvedOrderId,
-            description: `工坊退款：${order.orderNo}`,
-            operator_id: 'admin',
-            created_at: nowIso
-          });
+          assertCloudBaseCreateResult(
+            await db.collection(collections.pointLedger).add({
+              user_id: order.userId,
+              delta: order.totalPoints,
+              balance_after: nextBalance,
+              biz_type: 'shop_refund',
+              biz_id: resolvedOrderId,
+              description: `工坊退款：${order.orderNo}`,
+              operator_id: 'admin',
+              created_at: nowIso
+            }),
+            collections.pointLedger
+          );
 
           await db.collection(collections.users).doc(order.userId).update({
             balance: nextBalance,
@@ -2723,16 +2758,19 @@ class DatabaseService {
             relatedUserId: order.userId
           });
 
-          await db.collection(collections.pointLedger).add({
-            user_id: order.userId,
-            delta: -totalRewardToRevoke,
-            balance_after: nextBalance,
-            biz_type: 'shop_reward_reversal',
-            biz_id: resolvedOrderId,
-            description: `工坊奖励撤回：${order.orderNo}`,
-            operator_id: 'admin',
-            created_at: nowIso
-          });
+          assertCloudBaseCreateResult(
+            await db.collection(collections.pointLedger).add({
+              user_id: order.userId,
+              delta: -totalRewardToRevoke,
+              balance_after: nextBalance,
+              biz_type: 'shop_reward_reversal',
+              biz_id: resolvedOrderId,
+              description: `工坊奖励撤回：${order.orderNo}`,
+              operator_id: 'admin',
+              created_at: nowIso
+            }),
+            collections.pointLedger
+          );
 
           await db.collection(collections.users).doc(order.userId).update({
             balance: nextBalance,
@@ -2861,10 +2899,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeAwarenessTagSettings({
         ...payload,
@@ -3014,10 +3055,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeAwarenessMockLibrarySettings({
         ...payload,
@@ -3097,7 +3141,7 @@ class DatabaseService {
 
       for (const chunk of chunkArray(records, 50)) {
         await Promise.all(
-          chunk.map((record) => db.collection(collections.awarenessRecords).add(record))
+          chunk.map(async (record) => assertCloudBaseCreateResult(await db.collection(collections.awarenessRecords).add(record), collections.awarenessRecords))
         );
       }
 
@@ -3183,10 +3227,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeMeditationSettings({
         ...payload,
@@ -3267,10 +3314,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeBadgeSettings({
         ...payload,
@@ -3571,10 +3621,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeStudentMembershipSettings({
         ...payload,
@@ -3616,10 +3669,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeShopPartnerPricingSettings({
         ...payload,
@@ -3661,10 +3717,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizePlatformServiceFeeSettings({
         ...payload,
@@ -3706,10 +3765,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeSystemFortuneSettings({
         ...payload,
@@ -3751,10 +3813,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeShopRewardSettings({
         ...payload,
@@ -3796,10 +3861,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeClientThemeSettings({
         ...payload,
@@ -3846,7 +3914,10 @@ class DatabaseService {
         await db.collection(collections.appSettings).doc(getDocumentId(existingDocument)).update(payload);
         return normalizeAiSettings({ ...existingDocument, ...payload });
       }
-      const createResult = await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({ ...payload, created_at: new Date() }),
+        collections.appSettings
+      );
       return normalizeAiSettings({ ...payload, _id: createResult.id });
     } catch (error) {
       console.error('Error saving AI settings:', error);
@@ -3884,10 +3955,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeAwarenessDisplaySettings({
         ...payload,
@@ -4019,10 +4093,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeBrandCarouselSettings({
         ...payload,
@@ -4063,10 +4140,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeUserAvatarOptionsSettings({
         ...payload,
@@ -4221,10 +4301,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeClientDistributionSettings({
         ...payload,
@@ -4265,10 +4348,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizeShopHomeLivingSettings({
         ...payload,
@@ -4309,10 +4395,13 @@ class DatabaseService {
         });
       }
 
-      const createResult = await db.collection(collections.appSettings).add({
-        ...payload,
-        created_at: new Date()
-      });
+      const createResult = assertCloudBaseCreateResult(
+        await db.collection(collections.appSettings).add({
+          ...payload,
+          created_at: new Date()
+        }),
+        collections.appSettings
+      );
 
       return normalizePageMastheadSettings({
         ...payload,
@@ -4338,11 +4427,14 @@ class DatabaseService {
   static async createUser(userData) {
     try {
       await ensureAnonymousLogin();
-      const result = await db.collection(collections.users).add({
-        ...toUserPayload(userData),
-        created_at: new Date(),
-        updated_at: new Date()
-      });
+      const result = assertCloudBaseCreateResult(
+        await db.collection(collections.users).add({
+          ...toUserPayload(userData),
+          created_at: new Date(),
+          updated_at: new Date()
+        }),
+        collections.users
+      );
       return result.id;
     } catch (error) {
       console.error('Error creating user:', error);
@@ -4408,12 +4500,15 @@ class DatabaseService {
           continue;
         }
 
-        const createResult = await db.collection(collections.tags).add({
-          name: roleName,
-          color: roleName === '超级管理员' ? '#c2410c' : roleName === '管理员' ? '#7c3aed' : roleName === '代理商' ? '#0f766e' : '#2563eb',
-          created_at: new Date(),
-          updated_at: new Date()
-        });
+        const createResult = assertCloudBaseCreateResult(
+          await db.collection(collections.tags).add({
+            name: roleName,
+            color: roleName === '超级管理员' ? '#c2410c' : roleName === '管理员' ? '#7c3aed' : roleName === '代理商' ? '#0f766e' : '#2563eb',
+            created_at: new Date(),
+            updated_at: new Date()
+          }),
+          collections.tags
+        );
         roleTagByName.set(roleName, {
           _id: createResult.id,
           name: roleName
@@ -4437,12 +4532,15 @@ class DatabaseService {
       }).limit(1).get();
 
       if (getDocuments(userTagLinksResult, collections.userTags).length === 0) {
-        await db.collection(collections.userTags).add({
-          user_id: getDocumentId(superAdminUser),
-          tag_id: getDocumentId(superAdminTag),
-          assigned_date: new Date().toISOString().split('T')[0],
-          created_at: new Date()
-        });
+        assertCloudBaseCreateResult(
+          await db.collection(collections.userTags).add({
+            user_id: getDocumentId(superAdminUser),
+            tag_id: getDocumentId(superAdminTag),
+            assigned_date: new Date().toISOString().split('T')[0],
+            created_at: new Date()
+          }),
+          collections.userTags
+        );
       }
     } catch (error) {
       console.error('Error ensuring system role tags:', error);
@@ -4469,12 +4567,15 @@ class DatabaseService {
 
       for (const [index, definition] of BRAND_SCOPE_DEFINITIONS.entries()) {
         if (!tagByName.has(definition.tagName)) {
-          const createTagResult = await db.collection(collections.tags).add({
-            name: definition.tagName,
-            color: definition.color,
-            created_at: new Date(),
-            updated_at: new Date()
-          });
+          const createTagResult = assertCloudBaseCreateResult(
+            await db.collection(collections.tags).add({
+              name: definition.tagName,
+              color: definition.color,
+              created_at: new Date(),
+              updated_at: new Date()
+            }),
+            collections.tags
+          );
 
           tagByName.set(definition.tagName, {
             _id: createTagResult.id,
@@ -4484,15 +4585,18 @@ class DatabaseService {
         }
 
         if (!categoryByName.has(definition.categoryName)) {
-          const createCategoryResult = await db.collection(collections.shopCategories).add({
-            name: definition.categoryName,
-            slug: definition.slug,
-            description: '',
-            status: 'active',
-            sort_order: index + 1,
-            created_at: new Date(),
-            updated_at: new Date()
-          });
+          const createCategoryResult = assertCloudBaseCreateResult(
+            await db.collection(collections.shopCategories).add({
+              name: definition.categoryName,
+              slug: definition.slug,
+              description: '',
+              status: 'active',
+              sort_order: index + 1,
+              created_at: new Date(),
+              updated_at: new Date()
+            }),
+            collections.shopCategories
+          );
 
           categoryByName.set(definition.categoryName, {
             _id: createCategoryResult.id,
@@ -4610,12 +4714,15 @@ class DatabaseService {
         const shouldBeLead = Number(user.uid || 0) === 102 || (hasLegacyBrandRole && hasBrandScope);
 
         if (shouldBeLead && !hasLeadRole) {
-          await db.collection(collections.userTags).add({
-            user_id: userId,
-            tag_id: getDocumentId(leadTag),
-            assigned_date: new Date().toISOString().split('T')[0],
-            created_at: new Date()
-          });
+          assertCloudBaseCreateResult(
+            await db.collection(collections.userTags).add({
+              user_id: userId,
+              tag_id: getDocumentId(leadTag),
+              assigned_date: new Date().toISOString().split('T')[0],
+              created_at: new Date()
+            }),
+            collections.userTags
+          );
         }
 
         if (shouldBeLead && hasLegacyBrandRole) {
@@ -4664,26 +4771,29 @@ class DatabaseService {
 
         let existingBrand = brands.find((brand) => String(brand.owner_user_id || brand.ownerUserId || '').trim() === ownerStoreUserId);
         if (!existingBrand) {
-          const createBrandResult = await db.collection(collections.partnerBrands).add({
-            name: ownerStoreName,
-            slug: ownerStoreId,
-            status: 'active',
-            owner_user_id: ownerStoreUserId,
-            description: defaultStoreOwner.store_description || defaultStoreOwner.storeDescription || '',
-            contact_name: defaultStoreOwner.name || '',
-            contact_phone: defaultStoreOwner.phone || '',
-            contact_wechat: '',
-            shipping_address: {},
-            return_address: {},
-            brand_scope_tags: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.tagName),
-            allowed_category_names: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.categoryName),
-            community_beans_balance: 0,
-            heart_lamp_status: 'active',
-            heart_lamp_last_extinguished_at: '',
-            heart_lamp_last_ignited_at: new Date().toISOString(),
-            created_at: new Date(),
-            updated_at: new Date()
-          });
+          const createBrandResult = assertCloudBaseCreateResult(
+            await db.collection(collections.partnerBrands).add({
+              name: ownerStoreName,
+              slug: ownerStoreId,
+              status: 'active',
+              owner_user_id: ownerStoreUserId,
+              description: defaultStoreOwner.store_description || defaultStoreOwner.storeDescription || '',
+              contact_name: defaultStoreOwner.name || '',
+              contact_phone: defaultStoreOwner.phone || '',
+              contact_wechat: '',
+              shipping_address: {},
+              return_address: {},
+              brand_scope_tags: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.tagName),
+              allowed_category_names: BRAND_SCOPE_DEFINITIONS.map((definition) => definition.categoryName),
+              community_beans_balance: 0,
+              heart_lamp_status: 'active',
+              heart_lamp_last_extinguished_at: '',
+              heart_lamp_last_ignited_at: new Date().toISOString(),
+              created_at: new Date(),
+              updated_at: new Date()
+            }),
+            collections.partnerBrands
+          );
           existingBrand = { _id: createBrandResult.id, owner_user_id: ownerStoreUserId };
         }
 
@@ -4692,6 +4802,7 @@ class DatabaseService {
           String(member.user_id || member.userId || '').trim() === ownerStoreUserId
         ));
         if (!existingOwnerMember) {
+          // best-effort 自动修复：失败不阻断主流程，故保留 .catch；断言仍走（失败不再静默）
           await db.collection(collections.partnerBrandMembers).add({
             brand_id: getDocumentId(existingBrand),
             user_id: ownerStoreUserId,
@@ -4700,7 +4811,7 @@ class DatabaseService {
             invited_by_user_id: ownerStoreUserId,
             joined_at: new Date().toISOString(),
             created_at: new Date()
-          }).catch(() => {});
+          }).then((addResult) => assertCloudBaseCreateResult(addResult, collections.partnerBrandMembers)).catch(() => {});
         }
 
         for (const product of products) {
@@ -4747,11 +4858,14 @@ class DatabaseService {
   static async createCategory(categoryData) {
     try {
       await ensureAnonymousLogin();
-      const result = await db.collection(collections.tagCategories).add({
-        ...toCategoryPayload(categoryData),
-        created_at: new Date(),
-        updated_at: new Date()
-      });
+      const result = assertCloudBaseCreateResult(
+        await db.collection(collections.tagCategories).add({
+          ...toCategoryPayload(categoryData),
+          created_at: new Date(),
+          updated_at: new Date()
+        }),
+        collections.tagCategories
+      );
       return result.id;
     } catch (error) {
       console.error('Error creating category:', error);
@@ -4812,11 +4926,14 @@ class DatabaseService {
   static async createTag(tagData) {
     try {
       await ensureAnonymousLogin();
-      const result = await db.collection(collections.tags).add({
-        ...toTagPayload(tagData),
-        created_at: new Date(),
-        updated_at: new Date()
-      });
+      const result = assertCloudBaseCreateResult(
+        await db.collection(collections.tags).add({
+          ...toTagPayload(tagData),
+          created_at: new Date(),
+          updated_at: new Date()
+        }),
+        collections.tags
+      );
       return result.id;
     } catch (error) {
       console.error('Error creating tag:', error);
@@ -4897,12 +5014,15 @@ class DatabaseService {
   static async assignTagToUser(userId, tagId) {
     try {
       await ensureAnonymousLogin();
-      await db.collection(collections.userTags).add({
-        user_id: userId,
-        tag_id: tagId,
-        assigned_date: new Date().toISOString().split('T')[0],
-        created_at: new Date()
-      });
+      assertCloudBaseCreateResult(
+        await db.collection(collections.userTags).add({
+          user_id: userId,
+          tag_id: tagId,
+          assigned_date: new Date().toISOString().split('T')[0],
+          created_at: new Date()
+        }),
+        collections.userTags
+      );
     } catch (error) {
       console.error('Error assigning tag to user:', error);
       throw error;
@@ -5148,17 +5268,20 @@ class DatabaseService {
         systemBeansBalance: nextSystemBalance
       });
 
-      await db.collection(collections.pointLedger).add({
-        user_id: userId,
-        delta: normalizedDelta,
-        balance_after: nextUserBalance,
-        biz_type: normalizedDelta > 0 ? 'admin_grant' : 'admin_reclaim',
-        biz_id: options.bizId || '',
-        description: options.description || (normalizedDelta > 0 ? '管理员发放福豆' : '管理员回收福豆'),
-        activity_date_key: new Date().toISOString().split('T')[0],
-        operator_id: String(options.operatorUserId || '').trim(),
-        created_at: new Date().toISOString()
-      });
+      assertCloudBaseCreateResult(
+        await db.collection(collections.pointLedger).add({
+          user_id: userId,
+          delta: normalizedDelta,
+          balance_after: nextUserBalance,
+          biz_type: normalizedDelta > 0 ? 'admin_grant' : 'admin_reclaim',
+          biz_id: options.bizId || '',
+          description: options.description || (normalizedDelta > 0 ? '管理员发放福豆' : '管理员回收福豆'),
+          activity_date_key: new Date().toISOString().split('T')[0],
+          operator_id: String(options.operatorUserId || '').trim(),
+          created_at: new Date().toISOString()
+        }),
+        collections.pointLedger
+      );
 
       return {
         userBalance: nextUserBalance,
@@ -5211,17 +5334,20 @@ class DatabaseService {
         systemBeansBalance: nextSystemBalance
       });
 
-      await db.collection(collections.pointLedger).add({
-        user_id: '',
-        delta: normalizedDelta,
-        balance_after: nextBrandBalance,
-        biz_type: normalizedDelta > 0 ? 'admin_grant' : 'admin_reclaim',
-        biz_id: options.bizId || brandId,
-        description: options.description || (normalizedDelta > 0 ? '管理员发放品牌方福豆' : '管理员回收品牌方福豆'),
-        activity_date_key: new Date().toISOString().split('T')[0],
-        operator_id: String(options.operatorUserId || '').trim(),
-        created_at: new Date().toISOString()
-      });
+      assertCloudBaseCreateResult(
+        await db.collection(collections.pointLedger).add({
+          user_id: '',
+          delta: normalizedDelta,
+          balance_after: nextBrandBalance,
+          biz_type: normalizedDelta > 0 ? 'admin_grant' : 'admin_reclaim',
+          biz_id: options.bizId || brandId,
+          description: options.description || (normalizedDelta > 0 ? '管理员发放品牌方福豆' : '管理员回收品牌方福豆'),
+          activity_date_key: new Date().toISOString().split('T')[0],
+          operator_id: String(options.operatorUserId || '').trim(),
+          created_at: new Date().toISOString()
+        }),
+        collections.pointLedger
+      );
 
       return {
         brandBalance: nextBrandBalance,
@@ -5255,17 +5381,20 @@ class DatabaseService {
         systemBeansBalance: nextSystemBalance
       });
 
-      await db.collection(collections.pointLedger).add({
-        user_id: '',
-        delta: normalizedDelta,
-        balance_after: nextSystemBalance,
-        biz_type: 'admin_system_adjust',
-        biz_id: options.bizId || '',
-        description: options.description || '管理员调整系统福豆池',
-        activity_date_key: new Date().toISOString().split('T')[0],
-        operator_id: String(options.operatorUserId || '').trim(),
-        created_at: new Date().toISOString()
-      });
+      assertCloudBaseCreateResult(
+        await db.collection(collections.pointLedger).add({
+          user_id: '',
+          delta: normalizedDelta,
+          balance_after: nextSystemBalance,
+          biz_type: 'admin_system_adjust',
+          biz_id: options.bizId || '',
+          description: options.description || '管理员调整系统福豆池',
+          activity_date_key: new Date().toISOString().split('T')[0],
+          operator_id: String(options.operatorUserId || '').trim(),
+          created_at: new Date().toISOString()
+        }),
+        collections.pointLedger
+      );
 
       return {
         systemBeansBalance: nextSystemBalance
@@ -6169,6 +6298,13 @@ class DatabaseService {
     }
   }
 
+  // ── 转码任务入队（profile = 'section_audio'）────────────────────────────────
+  // 精度口径（硬）：本方法写入的 `audio_transcode_jobs` 集合**必须允许客户端创建**——这是
+  // 环境/权限配置项，**不是代码缺陷**。若该集合未放行客户端创建，`add` 会走到「不抛异常、
+  // 也不返回 id」的静默失败形态；下面的 `assertCloudBaseCreateResult` 把这种「无错但缺 id」
+  // 转成显式抛错（真因见规范「环境与权限（实测结论）」）。抛出后由 `MeditationPage.jsx` 的
+  // `queueSectionAudioTranscode` catch 捕获：回写 `transcode_status=idle` ＋ `transcode_error`，
+  // 并上屏「转码任务排队失败：…」。
   static async createMeditationAudioTranscodeJob(jobData) {
     try {
       await ensureAnonymousLogin();
@@ -6187,7 +6323,10 @@ class DatabaseService {
         updated_at: now,
         ...(jobData || {})
       };
-      const result = await db.collection('audio_transcode_jobs').add(payload);
+      const result = assertCloudBaseCreateResult(
+        await db.collection('audio_transcode_jobs').add(payload),
+        'audio_transcode_jobs'
+      );
       return { ...payload, _id: result.id, id: result.id };
     } catch (error) {
       console.error('Error creating audio transcode job:', error);
