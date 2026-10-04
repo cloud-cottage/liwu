@@ -74,6 +74,22 @@
   本批保留镜像的唯一原因是老 worker `scripts/audio-transcode-worker.mjs` 仍在读
   `attempt_count` / `error_message`。
 
+### 2.2 失败文案口径（D-3，可诊断性）
+
+失败时写入 job 的 `transcode_error` / `error_message` **与** `med_section_audios.transcode_error`
+的是**同一段文案**（都由 `lib/transcode-state.js#normalizeErrorMessage` 产出）。口径：
+
+- **命令原文不进文案**：只保留「可执行文件 + 输入/输出文件名 + 关键编码参数」摘要，并附「完整命令见执行日志」
+  （`index.js` 在 `job_failed` 事件里 `logEvent` 了 `error.message` ＝ `Command failed: <完整命令>\n<stderr>`）。
+  旧实现在 `error.message` 上再拼 stderr，命令原文已占满预算 ⇒ **真正原因行被截掉**（本单修复的缺陷）。
+- **stderr 先剔 banner 再取尾部**：逐行剔除 `ffmpeg version …` / `built with …` / `configuration: …`
+  （含折行续行）与 `libav*` 组件版本行（这些对定位无用），再取**最后 `ERROR_STDERR_TAIL_MAX_LENGTH` 字**
+  （ffmpeg 的原因行在末尾）。
+- **结构**：`<一句原因摘要>` ＋ `\n--- stderr 尾部 ---\n<尾部文本>`；**尾部优先保留**，摘要按剩余预算截断。
+- **上限**：`ERROR_MESSAGE_MAX_LENGTH`＝**1200**（本单由 500 提高，故在此登记）；`ERROR_STDERR_TAIL_MAX_LENGTH`＝800。
+  两个常量与实现同在 `lib/transcode-state.js`，供自测/规范核对。
+- 非命令类失败（永久性结构错误 / 下载 / 回写失败）其 `message` 本就是一句可定位的原因，原样保留。
+
 ## 3. 回写字段（D-B2-6，与 `packages/shared-utils/meditation-section-audio.js` normalizer 逐字对齐）
 
 `med_section_audios`：`file_id` / `audio_url`（Opus 主体）、`fallback_file_id` /

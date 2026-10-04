@@ -17,6 +17,11 @@
 //                  老 worker 侧同样加守卫跳过 section_audio，详见 README「上线纪律」。
 //   D-B2-10 口径 : job 文档 **attempts / transcode_error 权威**，attempt_count / error_message 为
 //                  过渡期镜像（老 worker 仍读）——**待老 worker 退役后收敛为单一口径**。
+//   D-3 失败文案  : 命令原文不进文案（只留「可执行文件 + 输入/输出文件名 + 关键参数」摘要）；
+//                  stderr **先剔 banner 再取尾部**（原因行在末尾）；结构
+//                  `<一句原因摘要>\n--- stderr 尾部 ---\n<尾部文本>`；总长上限 ERROR_MESSAGE_MAX_LENGTH
+//                  （本单由 500 提高到 1200，已在 README「失败文案口径」登记）；同一文案同时写入
+//                  job 的 transcode_error / error_message 与 med_section_audios.transcode_error。
 
 const {
   MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS,
@@ -46,7 +51,15 @@ const JOB_STATUS = Object.freeze({
 const MAX_JOB_ATTEMPTS = 3
 const MAX_JOBS_PER_RUN = 3
 const MEDITATION_AUDIO_FINAL_PREFIX = 'meditation-audio-final'
-const ERROR_MESSAGE_MAX_LENGTH = 500
+
+// D-3 失败文案（可诊断性）常量（上限本单由 500 提高到 1200，已在 README「失败文案口径」登记）。
+// 旧缺陷：execFile 的 error.message ＝ `Command failed: <完整命令>\n<stderr 开头>`，
+//   命令原文已占满 500 字预算 ⇒ 追加在后的 stderr（含**真正的原因行**）被整体截掉；
+//   且 stderr 头部是 ffmpeg 版本 banner，与定位无关。
+// 新口径：命令原文不进文案（只留摘要）＋ 先剔 banner 再取 stderr **尾部** ＋ 结构可读。
+const ERROR_MESSAGE_MAX_LENGTH = 1200
+const ERROR_STDERR_TAIL_MAX_LENGTH = 800
+const ERROR_STDERR_SECTION_HEADER = '\n--- stderr 尾部 ---\n'
 
 // D-B2-9 队列分区（强制）：新链路（冥想段落音频）的 job 一律带此 profile。
 // 字面值由排队方写入（apps/web/src/admin/components/Dashboard/MeditationPage.jsx
@@ -179,17 +192,145 @@ const buildClaimPatch = ({ attemptCount, nowIso }) => ({
   updated_at: nowIso
 })
 
-const normalizeErrorMessage = (error) => {
-  const baseMessage = getString(error?.message || error).trim() || 'TRANSCODE_FAILED'
-  const stderrTail = getString(error?.stderr)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(-3)
-    .join(' | ')
-  const combined = stderrTail ? `${baseMessage}（ffmpeg stderr：${stderrTail}）` : baseMessage
+// ─── D-3：失败文案可诊断性（命令摘要 ＋ 剥 banner ＋ stderr 尾部）──────────────
+// 目标：job 文档 `transcode_error` 与 `med_section_audios.transcode_error` 都能看到**可定位的原因**。
+//   ① 命令原文**不进**文案：只出「可执行文件 + 输入/输出文件名 + 关键参数」摘要，并标注完整命令去向；
+//   ② stderr 先**剔除 banner**（版本 / built with / configuration 及其折行续行 / libav* 组件版本），
+//      再取**尾部**——ffmpeg 的原因行在末尾，头部永远无用；
+//   ③ 结构：`<一句原因摘要>` ＋ `\n--- stderr 尾部 ---\n<尾部文本>`；**尾部优先保留**，
+//      摘要按剩余预算截断，保证真正的原因行不被挤掉；
+//   ④ 总长受 ERROR_MESSAGE_MAX_LENGTH 约束（本单由 500 提高，已在 README 登记）。
 
-  return combined.slice(0, ERROR_MESSAGE_MAX_LENGTH)
+// ffmpeg banner 行（对定位无用，逐行剔除）。configuration 在静态构建里常折行，续行以 `--` 开头，一并剔除。
+const stripFfmpegBanner = (stderrText) => {
+  const kept = []
+  let inConfiguration = false
+
+  for (const rawLine of getString(stderrText).split(/\r?\n/)) {
+    const trimmed = getString(rawLine).trim()
+
+    if (inConfiguration) {
+      if (/^--/.test(trimmed)) {
+        continue
+      }
+      inConfiguration = false
+    }
+
+    if (/^ffmpeg version /i.test(trimmed)
+      || /^built with /i.test(trimmed)
+      || /^configuration:/i.test(trimmed)
+      || /^lib(avutil|avcodec|avformat|avfilter|avdevice|swscale|swresample|postproc)\b/i.test(trimmed)) {
+      inConfiguration = /^configuration:/i.test(trimmed)
+      continue
+    }
+
+    kept.push(rawLine)
+  }
+
+  return kept.join('\n').trim()
+}
+
+// 剔除 banner 后取 stderr **尾部**（原因行在末尾），保留字数受 ERROR_STDERR_TAIL_MAX_LENGTH 约束。
+const takeStderrTail = (stderrText) => {
+  const cleaned = stripFfmpegBanner(stderrText)
+
+  return cleaned.length > ERROR_STDERR_TAIL_MAX_LENGTH
+    ? cleaned.slice(-ERROR_STDERR_TAIL_MAX_LENGTH)
+    : cleaned
+}
+
+const baseNameOf = (value) => getString(value).split(/[\\/]/).pop()
+
+// 命令摘要（规则①）：只挑「可执行文件 + 输入/输出文件名 + 关键编码/封装参数」，不复制命令原文。
+const summarizeCommandLine = (commandLine) => {
+  const tokens = getString(commandLine).trim().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) {
+    return ''
+  }
+
+  const KEY_VALUE_FLAGS = new Set(['-c:a', '-b:a', '-ar', '-ac', '-vbr', '-f'])
+  const inputNames = []
+  const outputNames = []
+  const keyParams = []
+
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    const next = tokens[index + 1]
+
+    if (token === '-i' && next) {
+      inputNames.push(baseNameOf(next))
+      index += 1
+      continue
+    }
+
+    if (KEY_VALUE_FLAGS.has(token) && next) {
+      keyParams.push(`${token} ${next}`)
+      index += 1
+      continue
+    }
+
+    if (token === '-map') {
+      index += 1
+      continue
+    }
+
+    if (!token.startsWith('-') && /\.[A-Za-z0-9]{2,5}$/.test(token)) {
+      outputNames.push(baseNameOf(token))
+    }
+  }
+
+  const pieces = [baseNameOf(tokens[0])]
+  if (inputNames.length > 0) {
+    pieces.push(`-i ${inputNames.join('+')}`)
+  }
+  if (keyParams.length > 0) {
+    pieces.push(keyParams.join(' '))
+  }
+  if (outputNames.length > 0) {
+    pieces.push(`→ ${outputNames.join(' / ')}`)
+  }
+
+  return pieces.join(' ').trim()
+}
+
+const describeExitCode = (code) => (
+  (typeof code === 'number' || (typeof code === 'string' && code)) ? `退出码 ${code}` : '异常退出'
+)
+
+// 命令类失败的摘要行：可执行文件名 + 退出码 + 完整命令去向 + 命令摘要。
+// 「完整命令见执行日志」属实：失败时调用方在 `job_failed` / `track_mix_job_failed` 事件里
+// logEvent 了 `error.message`（＝ `Command failed: <完整命令>\n<stderr>`）。
+const buildCommandFailureSummary = (error, commandLine) => {
+  const exeLabel = baseNameOf(getString(commandLine).trim().split(/\s+/)[0] || '') || '子进程'
+  const commandSummary = summarizeCommandLine(commandLine)
+
+  return `${exeLabel} 失败（${describeExitCode(error?.code)}）；完整命令见执行日志；命令摘要：${commandSummary || '（命令已省略）'}`
+}
+
+const normalizeErrorMessage = (error) => {
+  const rawMessage = getString(error?.message || error).trim() || 'TRANSCODE_FAILED'
+  const stderrTail = takeStderrTail(error?.stderr)
+  // execFile/exec 失败：message 形如 `Command failed: <cmd>\n<stderr>`，或带 error.cmd；
+  // 其余（永久性错误 / 下载 / 回写等自造错误）其 message 本就是一句最简原因，原样用。
+  const isCommandFailure = /^Command failed:/.test(rawMessage) || typeof error?.cmd === 'string'
+  const commandLine = getString(error?.cmd).trim() || rawMessage.replace(/^Command failed:\s*/, '')
+
+  const baseSummary = isCommandFailure
+    ? buildCommandFailureSummary(error, commandLine)
+    : rawMessage
+
+  if (!stderrTail) {
+    return baseSummary.slice(0, ERROR_MESSAGE_MAX_LENGTH)
+  }
+
+  // 尾部优先：摘要按剩余预算截断，保证 stderr 尾部（真正的原因行）完整保留。
+  const summaryBudget = Math.max(
+    0,
+    ERROR_MESSAGE_MAX_LENGTH - ERROR_STDERR_SECTION_HEADER.length - stderrTail.length
+  )
+
+  return `${baseSummary.slice(0, summaryBudget)}${ERROR_STDERR_SECTION_HEADER}${stderrTail}`
+    .slice(0, ERROR_MESSAGE_MAX_LENGTH)
 }
 
 // D-B2-3：attempts>=3 → failed（终结）；否则退回 queued 等下个 tick 重试。
@@ -591,6 +732,9 @@ module.exports = {
   MAX_JOB_ATTEMPTS,
   MAX_JOBS_PER_RUN,
   MEDITATION_AUDIO_FINAL_PREFIX,
+  // D-3 失败文案上限（供自测/规范核对；已在 README 登记）
+  ERROR_MESSAGE_MAX_LENGTH,
+  ERROR_STDERR_TAIL_MAX_LENGTH,
   SECTION_AUDIO_TRANSCODE_PROFILE,
   TRACK_MIX_TRANSCODE_PROFILE,
   MEDITATION_AUDIO_MIX_PREFIX,
