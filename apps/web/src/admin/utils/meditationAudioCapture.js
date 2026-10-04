@@ -246,7 +246,8 @@ export const buildMeditationParagraphAudioPayload = ({
   durationSeconds = 0,
   fileId = '',
   audioUrl = '',
-  sourceKind = ''
+  sourceKind = '',
+  sourceSize = null
 } = {}) => {
   const normalizedParagraphId = String(paragraphId ?? '').trim();
   const normalizedSectionType = String(sectionType ?? '').trim();
@@ -260,6 +261,7 @@ export const buildMeditationParagraphAudioPayload = ({
   }
 
   const normalizedText = String(paragraphText || '');
+  const parsedSourceSize = Number(sourceSize);
 
   return {
     section_raw_id: '',
@@ -277,7 +279,12 @@ export const buildMeditationParagraphAudioPayload = ({
     paragraph_ids_snapshot: [normalizedParagraphId],
     text_snapshot: normalizedText,
     char_count: normalizedText.length,
-    stale: false
+    stale: false,
+    // 【本单新增】③ 输入体积登记（客户端侧）：本地 File 字节数，与云侧 job.input_bytes 配对。
+    // 只在确实给出合法非负字节数时写入；未提供 ⇒ 键完全不存在。
+    ...(Number.isFinite(parsedSourceSize) && parsedSourceSize >= 0
+      ? { source_size: Math.round(parsedSourceSize) }
+      : {})
   };
 };
 

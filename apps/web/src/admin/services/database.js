@@ -6160,9 +6160,14 @@ class DatabaseService {
     try {
       await ensureAnonymousLogin();
       const now = new Date().toISOString();
+      // 【本单新增】③ 输入体积登记（客户端侧）：本地 File 字节数（与云侧 job.input_bytes 配对）。
+      // 只在调用方确实给出合法非负字节数时写入；未提供 ⇒ 键完全不存在（不改既有文档形状）。
+      const sourceSize = Number(data?.source_size);
+      const hasSourceSize = Number.isFinite(sourceSize) && sourceSize >= 0;
       const payload = {
         ...toMedSectionAudioPayload(data),
         transcode_status: data?.transcode_status || MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS.idle,
+        ...(hasSourceSize ? { source_size: Math.round(sourceSize) } : {}),
         created_at: now,
         updated_at: now
       };

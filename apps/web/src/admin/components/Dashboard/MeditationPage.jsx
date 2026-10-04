@@ -3786,6 +3786,8 @@ const MeditationPage = ({
         paragraph_ids_snapshot: snapshot.paragraph_ids,
         text_snapshot: snapshot.text_snapshot,
         char_count: snapshot.char_count,
+        // 【本单新增】③ 输入体积登记（客户端侧）：本地 File 字节数（与云侧 job.input_bytes 配对）。
+        source_size: capture.file.size,
         stale: false
       });
 
@@ -3866,7 +3868,9 @@ const MeditationPage = ({
         durationSeconds,
         fileId,
         audioUrl,
-        sourceKind: capture.sourceKind
+        sourceKind: capture.sourceKind,
+        // 【本单新增】③ 输入体积登记（客户端侧）：本地 File 字节数（与云侧 job.input_bytes 配对）。
+        sourceSize: capture.file.size
       }));
 
       const transcodeQueue = await queueSectionAudioTranscode({
