@@ -188,3 +188,93 @@ export const runAudioUploadIntegrityGuard = async ({
 
   return { expected_bytes: expected, ...verdict }
 }
+
+// ─── 上传前可解析性校验（纯函数编排，零依赖、可桩测）───────────────────────────
+//
+// 背景：手机录音 `.m4a` 若**尾部索引（moov）缺失**（多为未导出完整 / 传输截断），云侧转码必然
+// 失败（`moov atom not found`），但客户端仍会照常上传、入队、等一轮永久失败——白费一次传输与
+// 一次排队，用户还看不懂原因。故在**上传前**用两种手段（HTMLMediaElement 元数据 / decodeAudioData）
+// 尝试测量时长，只要一种测出有效时长就放行，两种都测不出（且确已跑过、报出无效时长）才拒绝。
+//
+// 口径（与既有本地可读性预检同一纪律：**无法校验一律放行，只有已确证不可解析才拦截**）：
+//   · 任一手段测出**有限且 > 0** 的时长 ⇒ 放行；
+//   · 无有效时长，但**至少一种手段跑完并报出时长**（0 / NaN / Infinity）⇒ 判不可解析 ⇒ 抛可读错误；
+//   · 两种手段都**技术不可用**（实现缺失 / 抛异常 / 超时 / 环境不支持）⇒ 放行（不得因校验不了而阻断）。
+export const AUDIO_UPLOAD_UNPARSEABLE_CODE = 'AUDIO_UPLOAD_UNPARSEABLE'
+
+// 单次测量的上限等待（毫秒）：超时视为技术不可用（放行），不得让控件永久停在「处理中」。
+export const AUDIO_UPLOAD_PARSE_MEASURE_TIMEOUT_MS = 10000
+
+// decodeAudioData 的字节上限：超过则不整块解码（避免把几十 MB 音频读进内存），
+// 该手段直接视为技术不可用（放行），由另一种手段或云侧兜底。
+export const AUDIO_UPLOAD_DECODE_AUDIO_MAX_BYTES = 25 * 1024 * 1024
+
+export const buildAudioUnparseableMessage = () => '这个音频文件无法解析（可能未导出完整），请重新导出或重新录制后再上传'
+
+// 有限且 > 0 才算「有效时长」；0 / 负数 / NaN / Infinity 一律无效。
+export const isUsableAudioDuration = (value) => {
+  const parsed = Number(value)
+
+  return Number.isFinite(parsed) && parsed > 0
+}
+
+// 归一单次测量结果：
+//   { ok:false } ⇒ unavailable（技术不可用：抛异常 / 不支持 ⇒ 不参与拦截）
+//   { ok:true, duration } ⇒ usable（有效时长）/ invalid（跑完但无有效时长）
+export const classifyAudioMeasureOutcome = (outcome) => {
+  if (!outcome || outcome.ok !== true) {
+    return { status: 'unavailable' }
+  }
+
+  return isUsableAudioDuration(outcome.duration)
+    ? { status: 'usable', duration: Number(outcome.duration) }
+    : { status: 'invalid' }
+}
+
+// 判定（纯）：任一 usable ⇒ 放行；无 usable 但存在 invalid ⇒ 判不可解析；全 unavailable ⇒ 放行。
+export const decideAudioParseability = (outcomes = []) => {
+  const verdicts = outcomes.map(classifyAudioMeasureOutcome)
+  const usable = verdicts.find((verdict) => verdict.status === 'usable')
+
+  if (usable) {
+    return { allowed: true, reason: 'measured', duration_seconds: usable.duration }
+  }
+
+  if (verdicts.some((verdict) => verdict.status === 'invalid')) {
+    return { allowed: false, reason: 'unparseable' }
+  }
+
+  return { allowed: true, reason: 'unverifiable' }
+}
+
+// 编排（纯，注入两种测量实现，可桩测）：
+//   任一测量抛异常 / 实现缺失 ⇒ 记为技术不可用（放行）；判不可解析 ⇒ 抛可读错误（人话、无编号）。
+export const runAudioParseabilityGuard = async ({
+  measureByMediaElement,
+  measureByDecodeAudioData
+} = {}) => {
+  const runMeasure = async (measure) => {
+    if (typeof measure !== 'function') {
+      return { ok: false }
+    }
+
+    try {
+      return { ok: true, duration: await measure() }
+    } catch {
+      return { ok: false }
+    }
+  }
+
+  const outcomes = await Promise.all([
+    runMeasure(measureByMediaElement),
+    runMeasure(measureByDecodeAudioData)
+  ])
+
+  const decision = decideAudioParseability(outcomes)
+
+  if (!decision.allowed) {
+    throw buildCodedError(AUDIO_UPLOAD_UNPARSEABLE_CODE, buildAudioUnparseableMessage())
+  }
+
+  return decision
+}
