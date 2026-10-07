@@ -45,6 +45,13 @@
 // 【响度归一（loudnorm）**未**在本链路实现】——老 worker 的做法、以及沿用需要什么，见 README
 //   「响度归一（待 Zang 拍板）」一节；本条**不由实现者自裁**，故本链路严格照抄既定参数，不加任何 -af。
 //
+// 【输入容器指纹登记（本单新增）】输入探测失败（assertInputProbeable）时**只读输入文件前 32 字节**，
+//   判 `input_container`（mp4 / amr / silk / wav / mp3 / ogg / unknown）与前 32 字节 `input_head_hex`
+//   （**小写十六进制、无分隔符**），随失败回写进 job **新键**并打入日志（与既有 `input_bytes` 同批）；
+//   成功路径不写。用途：无需人工比对即可分辨「上传丢字节（指纹仍是 mp4）」与「文件本身非 MP4
+//   （amr / silk / …）」。判定与采样在 lib/input-container-fingerprint.js；回写键见
+//   lib/transcode-state.js#buildInputFingerprintPatch；口径与写法登记见 README §2.3。
+//
 // 【时长】D-B2-4：**不得对原始上传件取时长**（实测 duration=N/A），只取转码产物 ffprobe 值，
 //   且仅在 med_section_audios.duration 为空/0 时补写。
 //
@@ -72,6 +79,10 @@ const {
 
 // Track 级混音（profile = 'track_mix'）的命令构造（纯函数）：与上面的双路构造并列、互不调用。
 const { buildTrackMixArgs } = require('./lib/track-mix-command.js')
+
+// 【本单新增】输入容器指纹：只读输入文件前 32 字节，判 mp4/amr/silk/wav/mp3/ogg/unknown
+// （纯判定 + 只读采样，无副作用；编码参数 / ffmpeg 命令与此无关）。
+const { fingerprintInputFile } = require('./lib/input-container-fingerprint.js')
 
 // Track 双轨口径的精简副本（本执行器只取「集合名 + 背景段白名单」两项，其余口径由状态模块吃）。
 const {
@@ -302,14 +313,33 @@ const assertInputProbeable = async ({ ffprobePath, inputPath, jobId, inputSizeBy
       .map((line) => line.trim())
       .find(Boolean) || ''
 
+    // 【本单新增】容器指纹登记：只读输入文件前 32 字节，判容器并登记「前 32 字节十六进制」。
+    //   挂到 error 上供失败回写（job 新键 input_container / input_head_hex）与文案末尾的格式线索使用。
+    //   分不清「上传丢字节」（仍 mp4）与「文件本身非 MP4」（amr/silk/…）的痛点由此消除（无需人工比对）。
+    const fingerprint = fingerprintInputFile(inputPath)
+    if (fingerprint) {
+      error.input_container = fingerprint.input_container
+      error.input_head_hex = fingerprint.input_head_hex
+    }
+
     logEvent(requestId, 'input_media_unreadable', {
       jobId,
       input_bytes: inputSizeBytes,
+      input_container: fingerprint?.input_container || '',
+      input_head_hex: fingerprint?.input_head_hex || '',
       reason,
       message: error?.message || ''
     })
 
-    throw buildInputMediaInvalidError(error)
+    // 注意：buildInputMediaInvalidError 会**新造**一个永久错误（不是复用入参 error），
+    //   故指纹要挂到**新错误**上，失败回写（resolveFailureInputFingerprint）才取得到。
+    const mediaError = buildInputMediaInvalidError(error)
+    if (fingerprint) {
+      mediaError.input_container = fingerprint.input_container
+      mediaError.input_head_hex = fingerprint.input_head_hex
+    }
+
+    throw mediaError
   }
 }
 
@@ -448,13 +478,30 @@ const resolveFailureInputBytes = (currentInputBytes, error) => {
   return Number.isFinite(fromError) && fromError > 0 ? fromError : currentInputBytes
 }
 
+// 【本单新增】失败收口时取容器指纹：输入探测失败时由 assertInputProbeable 挂在错误上
+//   （input_container / input_head_hex）。取不到 ⇒ 两键为空 ⇒ 失败回写不写这两个键（文档形状不变）。
+const resolveFailureInputFingerprint = (error) => ({
+  inputContainer: typeof error?.input_container === 'string' ? error.input_container : '',
+  inputHeadHex: typeof error?.input_head_hex === 'string' ? error.input_head_hex : ''
+})
+
 // 失败收口：写 job（重试或终结）+ 尽最大努力写 med_section_audios 状态（写失败不得吞掉主错误）。
-const failJob = async ({ db, jobId, sectionAudioId, failure, nowIso, requestId, inputSizeBytes = null }) => {
+const failJob = async ({
+  db,
+  jobId,
+  sectionAudioId,
+  failure,
+  nowIso,
+  requestId,
+  inputSizeBytes = null,
+  inputContainer = '',
+  inputHeadHex = ''
+}) => {
   await updateDocument({
     db,
     collectionName: AUDIO_TRANSCODE_JOBS_COLLECTION,
     documentId: jobId,
-    patch: buildJobFailurePatch({ failure, nowIso, inputSizeBytes })
+    patch: buildJobFailurePatch({ failure, nowIso, inputSizeBytes, inputContainer, inputHeadHex })
   }).catch((error) => {
     logEvent(requestId, 'job_failure_patch_failed', { jobId, message: error?.message || '' })
   })
@@ -656,11 +703,16 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
     // D-B2-3：单条失败只收口本条 job（attempt_count+1；>=3 置 failed），不影响整批其它 job。
     // ③ 失败也要登记输入字节数：下载已发生时由下载层挂在错误上（对象被截断的场景必须能一眼可判）。
     inputSizeBytes = resolveFailureInputBytes(inputSizeBytes, error)
+    // 【本单新增】输入探测失败时一并登记容器指纹（input_container / input_head_hex）：
+    //   与 input_bytes 同批入 job 文档 + 日志，无需人工比对即可分辨「上传丢字节」与「文件本身非 MP4」。
+    const { inputContainer, inputHeadHex } = resolveFailureInputFingerprint(error)
     logEvent(requestId, 'job_failed', {
       jobId,
       sectionAudioId,
       attempts: attemptCount,
       input_bytes: inputSizeBytes,
+      input_container: inputContainer,
+      input_head_hex: inputHeadHex,
       message: error?.message || 'TRANSCODE_FAILED'
     })
 
@@ -671,7 +723,9 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
       failure: classifyFailure({ attempts: attemptCount, error }),
       nowIso: new Date().toISOString(),
       requestId,
-      inputSizeBytes
+      inputSizeBytes,
+      inputContainer,
+      inputHeadHex
     })
   } finally {
     await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
@@ -690,12 +744,21 @@ const TRACK_MIX_BACKGROUND_CANDIDATE_LIMIT = 5
 
 // 失败收口：**只**写 job（track_mix 不写 med_section_audios：一条 job 对应整条 Track，
 // 不是某一段音频；结构性问题也不该把 Track 文档标脏）。
-const failTrackMixJob = async ({ db, jobId, failure, nowIso, requestId, inputSizeBytes = null }) => {
+const failTrackMixJob = async ({
+  db,
+  jobId,
+  failure,
+  nowIso,
+  requestId,
+  inputSizeBytes = null,
+  inputContainer = '',
+  inputHeadHex = ''
+}) => {
   await updateDocument({
     db,
     collectionName: AUDIO_TRANSCODE_JOBS_COLLECTION,
     documentId: jobId,
-    patch: buildJobFailurePatch({ failure, nowIso, inputSizeBytes })
+    patch: buildJobFailurePatch({ failure, nowIso, inputSizeBytes, inputContainer, inputHeadHex })
   }).catch((error) => {
     logEvent(requestId, 'track_mix_job_failure_patch_failed', { jobId, message: error?.message || '' })
   })
@@ -1111,11 +1174,15 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     // 单条失败只收口本条 job（attempt_count+1；>=3 置 failed），不影响整批其它 job（D-B2-3）。
     // ③ 失败也要登记输入字节数（已下载部分之和 / 下载层挂在错误上的最后一次字节数）。
     inputSizeBytes = resolveFailureInputBytes(inputSizeBytes, error)
+    // 【本单新增】输入探测失败时一并登记容器指纹（与 section_audio 同一套逻辑；无指纹则不写该键）。
+    const { inputContainer, inputHeadHex } = resolveFailureInputFingerprint(error)
     logEvent(requestId, 'track_mix_job_failed', {
       jobId,
       trackKey,
       attempts: attemptCount,
       input_bytes: inputSizeBytes,
+      input_container: inputContainer,
+      input_head_hex: inputHeadHex,
       message: error?.message || 'TRACK_MIX_FAILED'
     })
 
@@ -1125,7 +1192,9 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
       failure: classifyFailure({ attempts: attemptCount, error }),
       nowIso: new Date().toISOString(),
       requestId,
-      inputSizeBytes
+      inputSizeBytes,
+      inputContainer,
+      inputHeadHex
     })
   } finally {
     await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
@@ -1289,6 +1358,8 @@ exports.__test__ = {
   assertInputProbeable,
   downloadFileWithIntegrity,
   resolveRemoteObjectSizeBytes,
+  // 【本单新增】输入容器指纹：失败收口时把错误上挂载的 input_container / input_head_hex 取出
+  resolveFailureInputFingerprint,
   // Track 级混音分区（本单新增）——与上面 section_audio 的导出并列，互不调用
   processTrackMixJob,
   fetchQueuedTrackMixJobs,

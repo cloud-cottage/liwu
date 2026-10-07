@@ -538,13 +538,23 @@ const buildJobSuccessPatch = ({
 
 // D-B2-10 字段权威口径（job 文档）：**`transcode_error` 权威**、`error_message` 为过渡期镜像
 // （老 worker 仍在读 error_message）——**待老 worker 退役后收敛为单一口径（只留 transcode_error）**。
-const buildJobFailurePatch = ({ failure, nowIso, inputSizeBytes = null }) => ({
+// 【本单新增（可选）】`input_container` / `input_head_hex`：**只在调用方真的传了容器指纹时写入**
+//   （输入探测失败路径带；成功路径 / 无指纹失败不传 ⇒ 键完全不存在，既有文档形状与判据不受影响）。
+//   与 `input_bytes` 同批落库（若已有 input_bytes 则一并带上）——见 buildInputFingerprintPatch。
+const buildJobFailurePatch = ({
+  failure,
+  nowIso,
+  inputSizeBytes = null,
+  inputContainer = '',
+  inputHeadHex = ''
+}) => ({
   status: failure?.job_status || JOB_STATUS.failed,
   error_message: getString(failure?.message).slice(0, ERROR_MESSAGE_MAX_LENGTH),
   transcode_error: getString(failure?.message).slice(0, ERROR_MESSAGE_MAX_LENGTH),
   // ② 瞬时类非终态失败：落下一次可领取时间（指数退避）；终态 / 其它类不写该键。
   ...(failure?.next_attempt_at ? { next_attempt_at: failure.next_attempt_at } : {}),
   ...buildInputSizePatch(inputSizeBytes),
+  ...buildInputFingerprintPatch({ inputContainer, inputHeadHex }),
   updated_at: nowIso
 })
 
@@ -579,6 +589,24 @@ const buildInputSizePatch = (inputSizeBytes) => {
   return Number.isFinite(parsed) && parsed >= 0 ? { input_bytes: Math.round(parsed) } : {}
 }
 
+// 【本单新增】输入容器指纹登记：把「输入容器判定」与「前 32 字节十六进制」记入 job 文档的
+//   **新键 `input_container` / `input_head_hex`**（与既有 job 字段不冲突）。
+//   只在容器判定非空（含 `unknown`）时写入，两键**同进同出**；读不到输入文件 ⇒ 不传 ⇒ 键完全不存在。
+//   与 `input_bytes` 同批落库（buildJobFailurePatch 里两个 patch 一并展开）：
+//   失败时「对象被截断（仍为 mp4）」与「源文件本身非 MP4（amr/silk/…）」即可一眼可判。
+//   `input_head_hex`：**小写十六进制、无分隔符（连写）**，固定此一种写法（见 README §2.3）。
+const buildInputFingerprintPatch = ({ inputContainer = '', inputHeadHex = '' } = {}) => {
+  const container = getString(inputContainer).trim().toLowerCase()
+  if (!container) {
+    return {}
+  }
+
+  return {
+    input_container: container,
+    input_head_hex: getString(inputHeadHex).trim().toLowerCase()
+  }
+}
+
 // ② 输入完整性防护：ffprobe 探测输入失败 ⇒ 输入容器无法解析（对象被截断），重试不会变好
 //   ⇒ 包成**永久错误**（classifyFailure 立即终结，不空耗 3 轮）。文案人话 + 可定位：
 //   原因取样自 ffprobe 输出的**首个非空原因行**（如 `[mov,mp4,m4a,...] moov atom not found`、
@@ -596,7 +624,17 @@ const takeFirstReasonLine = (text) => {
 
 const buildInputMediaInvalidError = (error) => {
   const reason = takeFirstReasonLine(error?.stderr) || '无法解析音频容器'
-  const message = `INPUT_MEDIA_INVALID：输入音频不完整（无法解析容器），请重传；ffprobe 原因：${reason}`
+  // 【本单新增，允许项】末尾补一句不敏感的格式线索：已有的人话文案**逐字保留**，只在其后追加
+  //   `；输入容器：<container>`（非 mp4 已知容器补「（非 MP4）」）。容器判定来自 error 上挂载的
+  //   指纹（index.js#assertInputProbeable 在抛错前登记）；无指纹 ⇒ 不追加（文案与从前完全一致）。
+  //   job 文档另有 input_container / input_head_hex 新键（不依赖本句是否被截断）。
+  const container = getString(error?.input_container).trim().toLowerCase()
+  const containerHint = !container
+    ? ''
+    : (container === 'mp4' || container === 'unknown'
+      ? `；输入容器：${container}`
+      : `；输入容器：${container}（非 MP4）`)
+  const message = `INPUT_MEDIA_INVALID：输入音频不完整（无法解析容器），请重传；ffprobe 原因：${reason}${containerHint}`
   return buildPermanentError(message)
 }
 
@@ -892,6 +930,8 @@ module.exports = {
   buildPermanentError,
   // 【本单新增】输入完整性防护 + 输入体积登记（section_audio 链路）
   buildInputSizePatch,
+  // 【本单新增】输入容器指纹登记（input_container / input_head_hex，失败路径落库）
+  buildInputFingerprintPatch,
   buildInputMediaInvalidError,
   // Track 级混音分区（profile = 'track_mix'）——与上面 section_audio 的导出一一对应、互不调用
   isTrackMixJob,

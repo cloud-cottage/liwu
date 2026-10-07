@@ -128,6 +128,26 @@ input`（输入容器不完整）；但**同一对象重新排队 1 次即成功
 （本地 File 字节数；见后台 `database.js#createMedSectionAudio` 与 `MeditationPage.jsx`）——
 两者配对，使「对象 / 下载链路」还是「源文件本身」一眼可判。`source_size` **不进 D6 读契约**。
 
+**④ 输入容器指纹登记（本单新增）**：输入探测失败（`index.js#assertInputProbeable`）时，**只读输入文件前
+`INPUT_HEAD_SAMPLE_BYTES`＝32 字节**（`lib/input-container-fingerprint.js#readInputHeadBuffer`，用
+`openSync`+`readSync(...,0,32,0)`，**绝不多读**整个文件，无隐私风险），登记两个 **job 文档新键**：
+- `input_container`：按**魔数**判定的容器字面值，`lib/input-container-fingerprint.js#detectInputContainer`
+  依序判定 —— 偏移 4 起 `ftyp`⇒`mp4`；`#!AMR`⇒`amr`；`#!SILK` / `\x02#!SILK`⇒`silk`；`RIFF`⇒`wav`；
+  `ID3` 或首两字节 `0xFFFB`/`0xFFF3`⇒`mp3`；`OggS`⇒`ogg`；其余（含空文件）⇒`unknown`。
+- `input_head_hex`：前 32 字节的**小写十六进制、无分隔符（连写）**（`formatInputHeadHex`，`Buffer.toString('hex')`；
+  **固定此一种写法**，本文即写法定点；空文件为 `''`）。
+
+落库与日志（`lib/transcode-state.js#buildInputFingerprintPatch`）：**只在失败回写时写**这两个键
+（成功路径不写；`buildJobFailurePatch` 里与既有 `input_bytes` **同批展开**——已有 `input_bytes` 时一并带上）；
+`job_failed` / `input_media_unreadable` / `track_mix_job_failed` 日志亦带 `input_container` 与
+`input_head_hex`。读不到输入文件 / 无指纹 ⇒ 两键**完全不写入**（既有文档形状与判据不受影响）。
+两键 **不进 D6 读契约**（同 `source_size` 口径）。
+
+**用途**：**无需人工比对**即可分辨两类成因——`input_container=mp4`（且体积偏小）＝对象/上传被截断
+（「上传丢字节」）；`input_container=amr/silk/wav/mp3/ogg`＝**文件本身就不是 MP4 容器**（源文件传错/格式不符）。
+失败文案**逐字保留原人话句**，仅在末尾**追加**一句不敏感的格式线索 `；输入容器：<值>（非 MP4）`
+（`buildInputMediaInvalidError`；`mp4`/`unknown` 不补「非 MP4」；无指纹则与从前完全一致）。
+
 - 边界：**不改** R34 编码参数 / ffmpeg 命令、队列分区、终态判定总语义、D6 读契约。
 
 ## 3. 回写字段（D-B2-6，与 `packages/shared-utils/meditation-section-audio.js` normalizer 逐字对齐）
