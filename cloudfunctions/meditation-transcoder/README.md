@@ -97,25 +97,45 @@
 背景（实测）：批量上传后偶发 ffmpeg 报 `moov atom not found` / `Invalid data found when processing
 input`（输入容器不完整）；但**同一对象重新排队 1 次即成功**，且客户端上传链路已实证逐字节完整、
 云侧处理是串行的 ⇒ 结论：对象本身是好的，**瞬时时段内下载 / 环境异常取到了不完整输入**。用防御纵深吸收，
-不靠猜：
+不靠猜（本单已实测定位根因为「下载未落盘就读取」竞态，见 ①）：
 
-**① 下载后完整性校验（`index.js#downloadFileWithIntegrity`）**：`app.downloadFile` 之后**验证本地文件与对象一致**：
-- 体积判据：优先 `getTempFileURL` 元数据（`size`）→ 否则对临时 URL 发 `HEAD` 取 `content-length`；
-- 可解析判据：两者均不可得时，退回 ffprobe 能否解析（`assertInputProbeable`，复用既有 `buildProbeArgs`，
-  **编码参数一字未动**）；
-- 不一致 / 不可解析 ⇒ **重下（上限 `DOWNLOAD_MAX_REDOWNLOADS`＝2 次、短退避 250ms×n）**；仍不行按类别抛错：
-  对象被截断 ⇒ 永久「输入完整性」类（`INPUT_MEDIA_INVALID` / `INPUT_SIZE_MISMATCH`，1 次即终态）；
-  下载本身失败 ⇒ 「瞬时」类（`INPUT_DOWNLOAD_FAILED`）。
+**① 自管下载 ＋ 写完即验（`index.js#downloadFileWithIntegrity` ＋ `lib/input-structure.js`，本单改造）**。
+生产实测根因（事故复盘）：`app.downloadFile` 返回后、文件尾部内容尚未落盘，ffprobe/ffmpeg 立即读取 ⇒
+`moov atom not found`；本地字节数已到目标值 ⇒ **体积判据检测不到**「尺寸对、尾部空」（同一对象原样取回
+本机 ffprobe 正常 ⇒ 对象完好、上传完好）。对策——「何时算写完」由本执行器自己掌握：
+
+- **自管下载（`downloadObjectViaTempUrl`）**：`getTempFileURL` 拿临时 URL ⇒ `http/https.get` 流式写
+  `<目标>.part`（跟随 302/307 等重定向 ≤5 次、socket 空闲超时 30s、响应体不完整——实收 ≠
+  Content-Length 或连接提前中断——即 reject 并清理 .part），等 write stream **`finish` ＋ `close`
+  （fs.close 完成）**后**原子改名**到目标路径 ⇒ 「下载返回 ⇒ 文件完整落盘」成为执行器自己保证的不变量，
+  目标路径上永远不会出现「半份」文件。
+- **回退**：临时 URL 不可得（`getTempFileURL` 抛错 / 空返回）⇒ 回退 `app.downloadFile`（日志
+  `input_download_fallback_sdk`），完整性与自管路径**同套校验**。
+- **写完即验（内容级，每轮下载后）**：体积 ＝ 远程对象体积（`getTempFileURL` 元数据 size →
+  HEAD content-length → null，沿用既有判据）→ **盒子链扫描**（`lib/input-structure.js#scanMp4BoxChain`，
+  仅对魔数判为 `mp4` 的文件）：从偏移 0 逐盒解析顶层盒子（fd 定位只读每盒 8/16 字节头，不整读文件），
+  支持 `size==1`（64 位 largesize）与 `size==0`（到文件尾）两种头部形态，要求**最后一个盒子的声明结束
+  ＝ 文件长度（链闭合）**且**存在 moov**，盒子类型须为合理 4CC（全零/控制字节 ⇒ 「尾部未写入」判不完整）；
+  **非 MP4 容器（wav/ogg/webm/mp3/amr/silk/unknown…）按魔数跳过扫描**（无通用盒子链，只验体积，不误判）→
+  ffprobe 可解析（`assertInputProbeable`，最终闸门，**编码参数一字未动**）。
+- **重下**：体积不一致 / 盒子链不闭合 / ffprobe 失败 ⇒ **重下（上限 `DOWNLOAD_MAX_REDOWNLOADS`＝2 次、
+  短退避 250ms×n）**；重下后仍不行按**最后一轮失败形态**分派：
+  - 盒子链仍不闭合 ⇒ **瞬时** `INPUT_DOWNLOAD_INCOMPLETE`（体积与对象一致仍缺结构 ＝ 写入未完成竞态残余，
+    对象是好的，重试应能恢复；**绝不判永久**）；
+  - 结构完好 / 非扫描容器但 ffprobe 仍失败 ⇒ 永久 `INPUT_MEDIA_INVALID`（**对象本身无法解析**，维持原语义；
+    mov 解复用器容错极强——moov 内部损坏实测 ffprobe 仍 exit 0，故该分支兜住的是真坏对象）；
+  - 体积仍不匹配 ⇒ 永久 `INPUT_SIZE_MISMATCH`（维持原语义）；
+  - 下载调用本身失败（网络 / HTTP 非 2xx / 响应不完整）⇒ 瞬时 `INPUT_DOWNLOAD_FAILED`。
 - 无头 webm（MediaRecorder 原件 `duration=N/A`）探测**成功** ⇒ 照常放行（不得把「无时长头」误判为不完整）。
-- `section_audio` 与 `track_mix` 两个分区的**每个输入**（人声各段 ＋ 背景）都走此校验。
+- `section_audio` 与 `track_mix` 两个分区的**每个输入**（人声各段 ＋ 背景）都走此路径。
 
 **② 失败分层与重试预算（`lib/transcode-state.js`）**：不改「达到上限 ⇒ 终态 `failed`」的总语义，只改预算与分类。
 `resolveFailureClass` 分三类（错误对象可显式带 `failure_class`；`permanent===true` ⇒ permanent；其余＝ encoding 默认类）：
 
 | 类别 | 触发 | 重试预算 | 退避 |
 |---|---|---|---|
-| `permanent`（输入完整性 / 结构性） | 对象被截断、缺必需字段、二进制缺失 | **1**（立即终态） | — |
-| `transient`（下载 / 网络） | `INPUT_DOWNLOAD_FAILED` 等 | **6** | 指数（60s×2^(n-1)，封顶 900s） |
+| `permanent`（输入完整性 / 结构性） | 对象本身无法解析（`INPUT_MEDIA_INVALID`）、体积不匹配、缺必需字段、二进制缺失 | **1**（立即终态） | — |
+| `transient`（下载 / 网络） | `INPUT_DOWNLOAD_FAILED`、`INPUT_DOWNLOAD_INCOMPLETE`（下载文件结构不完整，本单新增）等 | **6** | 指数（60s×2^(n-1)，封顶 900s） |
 | `encoding`（转码 / 编码，默认） | ffmpeg 命令失败、产物缺失、回写失败 | **3**（维持现状） | — |
 
 - 瞬时类**非终态**时写入 `next_attempt_at`（ISO）；`runBatch` 对未到点的 job **只读跳过**

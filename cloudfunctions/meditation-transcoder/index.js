@@ -52,6 +52,23 @@
 //   （amr / silk / …）」。判定与采样在 lib/input-container-fingerprint.js；回写键见
 //   lib/transcode-state.js#buildInputFingerprintPatch；口径与写法登记见 README §2.3。
 //
+// 【自管下载＋内容级完整性验证（本单新增，根除「下载未落盘就读取」竞态）】生产实测根因：
+//   云函数内 `app.downloadFile` 返回后、文件尾部内容尚未落盘，ffprobe/ffmpeg 立即读取 ⇒
+//   `moov atom not found`；本地字节数已到目标值 ⇒ **体积判据检测不到**「尺寸对、尾部空」。
+//   对策（取输入全部改走新路径，`section_audio` 与 `track_mix` 的每个输入一致）：
+//     ① **自管下载**：`getTempFileURL` 拿临时 URL ⇒ `http/https.get` 流式写 `<目标>.part`
+//        （跟随重定向、请求超时、响应不完整即 reject），等 write stream **`finish` ＋ `close`
+//        （fs.close 完成）**后原子改名到目标路径——「何时算写完」由本执行器自己掌握；
+//        临时 URL 不可得 ⇒ 回退 `app.downloadFile`（校验同套）。
+//     ② **写完即验（内容级）**：体积 ＝ 远程对象体积（沿用既有判据）；对 `ftyp` 头的 MP4/M4A
+//        扫**盒子链**（逐盒解析，支持 largesize 与到文件尾两种形态，要求链闭合且存在 moov，
+//        lib/input-structure.js）；非 MP4 容器按魔数跳过扫描（只验体积）。不完整 ⇒ 重下
+//        （沿用 ≤2 次、短退避）；重下后仍不完整 ⇒ 抛**瞬时类** `INPUT_DOWNLOAD_INCOMPLETE`
+//        （对象是好的，重试应能恢复，不判永久）。
+//     ③ 语义收口：`INPUT_MEDIA_INVALID` 只留给「远程对象本身坏」（结构闭合 / 非 MP4 容器
+//        但 ffprobe 仍解析失败）；`input_bytes` / `input_container` / `input_head_hex`
+//        登记口径不变。编码参数 / ffmpeg 命令、重试预算、队列分区、D6 读契约一律不动。
+//
 // 【时长】D-B2-4：**不得对原始上传件取时长**（实测 duration=N/A），只取转码产物 ffprobe 值，
 //   且仅在 med_section_audios.duration 为空/0 时补写。
 //
@@ -60,6 +77,8 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const http = require('node:http')
+const https = require('node:https')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
 const tcb = require('@cloudbase/node-sdk')
@@ -83,6 +102,10 @@ const { buildTrackMixArgs } = require('./lib/track-mix-command.js')
 // 【本单新增】输入容器指纹：只读输入文件前 32 字节，判 mp4/amr/silk/wav/mp3/ogg/unknown
 // （纯判定 + 只读采样，无副作用；编码参数 / ffmpeg 命令与此无关）。
 const { fingerprintInputFile } = require('./lib/input-container-fingerprint.js')
+
+// 【本单新增】写完即验（内容级）：MP4（ftyp 头）盒子链闭合扫描（闭合 ＋ 存在 moov）；
+// 非 MP4 容器（wav/ogg/webm/mp3…按魔数）无通用盒子链 ⇒ 跳过扫描只验体积，不误判。
+const { verifyDownloadedInputStructure } = require('./lib/input-structure.js')
 
 // Track 双轨口径的精简副本（本执行器只取「集合名 + 背景段白名单」两项，其余口径由状态模块吃）。
 const {
@@ -343,17 +366,29 @@ const assertInputProbeable = async ({ ffprobePath, inputPath, jobId, inputSizeBy
   }
 }
 
-// ─── ① 下载后完整性校验（本单新增）────────────────────────────────────────────
-// 症状（实测）：批量上传后偶发 ffmpeg 报 `moov atom not found` / `Invalid data found when
-//   processing input`（输入容器不完整）；但同一对象重新排队 1 次即成功 ⇒ 瞬时时段内
-//   下载 / 环境异常取到了不完整输入。对象本身是好的，必须用防御纵深吸收、不得靠猜。
-// 对策：`app.downloadFile` 之后**验证本地文件与对象一致**：
-//   · 体积判据：优先 getTempFileURL 元数据（size）→ 否则对临时 URL 发 HEAD 取 content-length；
-//   · 可解析判据：两者均不可得时，退回 ffprobe 能否解析（assertInputProbeable）；
-//   不一致 / 不可解析 ⇒ **重下（上限 2 次、短退避）**；仍不行则按类别抛错
-//   （对象被截断 ＝ 永久「输入完整性」类，1 次即终态；下载本身失败 ＝ 「瞬时」类）。
+// ─── ① 下载后完整性校验 ＋ 自管下载（本单改造）────────────────────────────────
+// 生产实测根因（本次事故）：云函数内「下载 → 使用」之间存在**写入未完成竞态**——
+//   `app.downloadFile` 返回时本地字节数已到目标值，但尾部内容尚未落盘，ffprobe/ffmpeg
+//   立即读取 ⇒ 报 `moov atom not found`；同一对象原样取回本机 ffprobe 正常 ⇒ 对象完好、
+//   上传完好。体积判据检测不到这种「尺寸对、尾部空」。
+// 对策：
+//   ① **自管下载**（downloadObjectViaTempUrl）：临时 URL ⇒ `http/https.get` 流式写
+//      `<目标>.part`，响应体确认完整（实收 ＝ Content-Length、连接未被中断）才收尾，
+//      等 write stream **`finish` ＋ `close`（fs.close 完成）**，再原子改名到目标路径；
+//      临时 URL 不可得 ⇒ 回退 `app.downloadFile`（完整性与自管路径同套校验）。
+//   ② **写完即验（内容级）**：体积比对（沿用既有判据）→ MP4 盒子链闭合扫描（只读盒子头；
+//      非 MP4 容器按魔数跳过）→ ffprobe 可解析（assertInputProbeable，最终闸门，一字未动）。
+//   不一致 / 不完整 ⇒ **重下（上限 2 次、短退避）**；仍不行按类别抛错：
+//   盒子链仍不闭合 ⇒ **瞬时** `INPUT_DOWNLOAD_INCOMPLETE`（对象是好的，重试应能恢复）；
+//   结构完好但 ffprobe 仍失败 ⇒ 永久 `INPUT_MEDIA_INVALID`（对象本身无法解析，维持原语义）；
+//   体积仍不匹配 ⇒ 永久 `INPUT_SIZE_MISMATCH`（维持原语义）；
+//   下载调用本身失败 ⇒ 「瞬时」类 `INPUT_DOWNLOAD_FAILED`。
 const DOWNLOAD_MAX_REDOWNLOADS = 2
 const DOWNLOAD_RETRY_BACKOFF_MS = 250
+// 自管下载参数：socket 空闲超时（数据持续流动不触发，非总时长上限）与重定向上限
+// （COS 临时 URL 可能 302 跳转）。
+const DOWNLOAD_HTTP_TIMEOUT_MS = 30000
+const DOWNLOAD_MAX_REDIRECTS = 5
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
 
@@ -382,40 +417,187 @@ const fetchContentLengthBytes = async (url) => {
   }
 }
 
-// 取对象体积：① getTempFileURL 元数据（size）→ ② HEAD content-length → ③ null（退化用 ffprobe 判据）。
-const resolveRemoteObjectSizeBytes = async ({ app, fileId }) => {
+// 取对象元数据（一次 getTempFileURL 同时拿临时 URL 与体积）：体积①元数据 size → ②HEAD content-length
+// → ③null（退化用内容级校验兜底）。临时 URL 取不到（SDK 异常 / 空返回）⇒ tempFileUrl 为空串，
+// 调用方回退 app.downloadFile。
+const resolveRemoteObjectMeta = async ({ app, fileId }) => {
   const result = await app.getTempFileURL({
     fileList: [{ fileID: fileId, maxAge: TEMP_URL_MAX_AGE_SECONDS }]
   })
   const entry = (result?.fileList || result?.data?.fileList || [])[0] || null
   const metadataSize = Number(entry?.size)
+  const tempFileUrl = entry?.tempFileURL || entry?.download_url || entry?.downloadUrl || ''
 
   if (Number.isFinite(metadataSize) && metadataSize > 0) {
-    return metadataSize
+    return { tempFileUrl, remoteSizeBytes: metadataSize }
   }
 
-  const tempUrl = entry?.tempFileURL || entry?.download_url || entry?.downloadUrl || ''
+  return { tempFileUrl, remoteSizeBytes: await fetchContentLengthBytes(tempFileUrl) }
+}
 
-  return fetchContentLengthBytes(tempUrl)
+// 兼容保留（原体积判据入口；现基于 resolveRemoteObjectMeta，供自测直接驱动）。
+const resolveRemoteObjectSizeBytes = async ({ app, fileId }) => {
+  const meta = await resolveRemoteObjectMeta({ app, fileId })
+
+  return meta.remoteSizeBytes
+}
+
+// ─── 自管下载（本单新增）：临时 URL → 流式写 <目标>.part → finish ＋ fs.close → 原子改名 ──
+// 「何时算写完」由本执行器自己掌握：响应体确认完整（实收 ＝ Content-Length、连接未被中断）
+// 才收尾写流 ⇒ `finish` 只可能在完整数据后触发；`finish` 之后再等 `close`（fs.close 完成、
+// 句柄关闭）；最后原子改名到目标路径——改名成功前目标路径永远不会出现「半份」文件。
+// 任一步失败：清理 .part、reject（调用方按瞬时类处理）。
+const downloadObjectViaTempUrl = async ({ tempFileUrl, targetPath }) => {
+  const partPath = `${targetPath}.part`
+  const writeStream = fs.createWriteStream(partPath, { flags: 'w' })
+
+  try {
+    await new Promise((resolveDownload, rejectDownload) => {
+      let settled = false
+      const settleOnce = (settle, value) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        settle(value)
+      }
+      const rejectOnce = (error) => {
+        writeStream.destroy()
+        settleOnce(rejectDownload, error instanceof Error ? error : new Error(String(error || '下载失败')))
+      }
+
+      writeStream.on('error', (error) => rejectOnce(new Error(`写入临时文件失败：${error?.message || ''}`)))
+      writeStream.on('finish', () => settleOnce(resolveDownload))
+
+      const requestFrom = (url, redirectCount) => {
+        let requestModule = null
+        try {
+          const parsedUrl = new URL(url)
+          requestModule = parsedUrl.protocol === 'https:'
+            ? https
+            : parsedUrl.protocol === 'http:' ? http : null
+          if (!requestModule) {
+            throw new Error(`不支持的下载协议：${parsedUrl.protocol}`)
+          }
+        } catch (error) {
+          rejectOnce(error)
+          return
+        }
+
+        const request = requestModule.get(url, { timeout: DOWNLOAD_HTTP_TIMEOUT_MS }, (response) => {
+          const statusCode = Number(response?.statusCode || 0)
+          const location = typeof response?.headers?.location === 'string' ? response.headers.location : ''
+
+          if ([301, 302, 303, 307, 308].includes(statusCode) && location) {
+            response.on('error', () => {})
+            response.resume()
+            request.destroy()
+            if (redirectCount >= DOWNLOAD_MAX_REDIRECTS) {
+              rejectOnce(new Error(`重定向次数超过上限（${DOWNLOAD_MAX_REDIRECTS} 次）`))
+              return
+            }
+            let nextUrl = ''
+            try {
+              nextUrl = new URL(location, url).toString()
+            } catch (error) {
+              rejectOnce(new Error(`重定向地址无效：${error?.message || ''}`))
+              return
+            }
+            requestFrom(nextUrl, redirectCount + 1)
+            return
+          }
+
+          if (!(statusCode >= 200 && statusCode < 300)) {
+            response.on('error', () => {})
+            response.resume()
+            rejectOnce(new Error(`HTTP 状态码 ${statusCode}`))
+            return
+          }
+
+          response.on('error', (error) => rejectOnce(new Error(`下载响应失败：${error?.message || ''}`)))
+
+          const declaredLength = Number(response?.headers?.['content-length'] || 0)
+          let receivedBytes = 0
+          let responseEnded = false
+
+          response.on('data', (chunk) => {
+            receivedBytes += chunk.length
+          })
+          response.on('end', () => {
+            responseEnded = true
+            if (declaredLength > 0 && receivedBytes !== declaredLength) {
+              rejectOnce(new Error(`响应体不完整：实收 ${receivedBytes} 字节，声明 ${declaredLength} 字节`))
+              return
+            }
+            writeStream.end()
+          })
+          response.on('close', () => {
+            if (!responseEnded) {
+              rejectOnce(new Error('下载连接在响应完成前中断'))
+            }
+          })
+
+          response.pipe(writeStream, { end: false })
+        })
+
+        request.on('timeout', () => request.destroy(new Error(`下载请求超时（${DOWNLOAD_HTTP_TIMEOUT_MS}ms）`)))
+        request.on('error', (error) => rejectOnce(error))
+      }
+
+      requestFrom(tempFileUrl, 0)
+    })
+
+    // finish（数据全部交给 OS）之后还须 fs.close 完成（句柄关闭）才允许继续；
+    // 已自动关闭（autoClose）则立即通过。
+    await new Promise((resolveClose) => {
+      if (writeStream.closed || writeStream.destroyed) {
+        resolveClose()
+        return
+      }
+      writeStream.once('close', resolveClose)
+      writeStream.close(() => {})
+    })
+
+    await fs.promises.rename(partPath, targetPath)
+  } catch (error) {
+    writeStream.destroy()
+    await fs.promises.rm(partPath, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
 const downloadFileWithIntegrity = async ({ app, fileId, targetPath, ffprobePath, jobId, requestId, label = 'input' }) => {
+  // 一次性取对象元数据（临时 URL ＋ 体积）：URL 用于自管下载；体积沿用既有判据。
+  // 元数据不可得（SDK 异常 / 空返回）⇒ 回退 SDK 下载路径，内容级校验照做（不因取不到元数据跳过）。
   let remoteSizeBytes = null
+  let tempFileUrl = ''
 
   try {
-    remoteSizeBytes = await resolveRemoteObjectSizeBytes({ app, fileId })
+    const meta = await resolveRemoteObjectMeta({ app, fileId })
+    tempFileUrl = meta.tempFileUrl
+    remoteSizeBytes = meta.remoteSizeBytes
   } catch (error) {
     logEvent(requestId, 'input_remote_size_unavailable', { jobId, label, message: error?.message || '' })
-    remoteSizeBytes = null
   }
 
-  let lastProbeError = null
-  let lastSizeMismatch = null
+  if (!tempFileUrl) {
+    logEvent(requestId, 'input_download_fallback_sdk', { jobId, label })
+  }
+
+  // 记录**最后一轮**的失败形态（size_mismatch / structure / probe），重下预算耗尽后据此分派错误类别。
+  let lastFailure = null
   let lastLocalSizeBytes = 0
 
   for (let round = 0; round <= DOWNLOAD_MAX_REDOWNLOADS; round += 1) {
     try {
-      await app.downloadFile({ fileID: fileId, tempFilePath: targetPath })
+      if (tempFileUrl) {
+        // 自管下载：流式写盘，等 finish ＋ fs.close（＋原子改名）后才返回——
+        // 「下载返回 ⇒ 文件完整落盘」由此成为本执行器自己保证的不变量。
+        await downloadObjectViaTempUrl({ tempFileUrl, targetPath })
+      } else {
+        // 回退：临时 URL 不可得时沿用 SDK 下载（完整性与自管路径同套校验）。
+        await app.downloadFile({ fileID: fileId, tempFilePath: targetPath })
+      }
     } catch (error) {
       // 下载 / 网络类（瞬时）：交给上层按瞬时预算重试（上限 6 次、指数退避）。
       throw buildTransientError(`INPUT_DOWNLOAD_FAILED：下载输入对象失败（${label}）：${error?.message || ''}`)
@@ -425,23 +607,38 @@ const downloadFileWithIntegrity = async ({ app, fileId, targetPath, ffprobePath,
     lastLocalSizeBytes = localSizeBytes
 
     if (remoteSizeBytes !== null && localSizeBytes !== remoteSizeBytes) {
-      lastSizeMismatch = { localSizeBytes, remoteSizeBytes }
-      lastProbeError = null
+      lastFailure = { kind: 'size_mismatch', localSizeBytes, remoteSizeBytes }
       logEvent(requestId, 'input_size_mismatch', { jobId, label, round, localSizeBytes, remoteSizeBytes })
     } else {
-      try {
-        await assertInputProbeable({
-          ffprobePath,
-          inputPath: targetPath,
+      // 写完即验（内容级）①：结构完整性。MP4/M4A（ftyp 头）扫顶层盒子链（闭合 ＋ 存在 moov）；
+      // 非 MP4 容器（wav/ogg/webm/mp3…按魔数）无通用盒子链 ⇒ 跳过扫描只验体积，不误判。
+      const structure = verifyDownloadedInputStructure(targetPath)
+      if (!structure.ok) {
+        lastFailure = { kind: 'structure', structure }
+        logEvent(requestId, 'input_structure_incomplete', {
           jobId,
-          inputSizeBytes: localSizeBytes,
-          requestId
+          label,
+          round,
+          localSizeBytes,
+          input_container: structure.container || '',
+          reason: structure.reason || '',
+          box_types: (structure.box_types || []).join('→')
         })
-        return { sizeBytes: localSizeBytes, remoteSizeBytes, redownloads: round }
-      } catch (probeError) {
-        lastProbeError = probeError
-        lastSizeMismatch = null
-        logEvent(requestId, 'input_probe_retry', { jobId, label, round, localSizeBytes })
+      } else {
+        // 写完即验（内容级）②：ffprobe 可解析（既有最终闸门；编码参数一字未动）。
+        try {
+          await assertInputProbeable({
+            ffprobePath,
+            inputPath: targetPath,
+            jobId,
+            inputSizeBytes: localSizeBytes,
+            requestId
+          })
+          return { sizeBytes: localSizeBytes, remoteSizeBytes, redownloads: round }
+        } catch (probeError) {
+          lastFailure = { kind: 'probe', probeError }
+          logEvent(requestId, 'input_probe_retry', { jobId, label, round, localSizeBytes })
+        }
       }
     }
 
@@ -450,17 +647,38 @@ const downloadFileWithIntegrity = async ({ app, fileId, targetPath, ffprobePath,
     }
   }
 
-  if (lastProbeError) {
-    // 已是永久「输入完整性」类错误（INPUT_MEDIA_INVALID）——对象本身被截断，重下也无解。
-    // 把最后一次下载到的字节数挂到错误上，供失败回写登记 job.input_bytes（③）。
+  if (lastFailure?.kind === 'structure') {
+    // 盒子链重下预算耗尽仍不闭合。体积与对象一致（传输字节完整）仍缺结构 ⇒ 正是「写入未完成
+    // 竞态」残余 ⇒ 判**瞬时**类（对象是好的，重试自管下载应能恢复），绝不判永久。
+    const structure = lastFailure.structure || {}
+    const incompleteError = buildTransientError(
+      `INPUT_DOWNLOAD_INCOMPLETE：下载的输入文件不完整（${label}，${lastLocalSizeBytes} 字节）：${structure.reason || '容器结构未闭合'}；已自动重下 ${DOWNLOAD_MAX_REDOWNLOADS} 次仍未恢复，请稍后重试`
+    )
     if (lastLocalSizeBytes > 0) {
-      lastProbeError.input_bytes = lastLocalSizeBytes
+      incompleteError.input_bytes = lastLocalSizeBytes
     }
-    throw lastProbeError
+    // 容器指纹照常登记（与既有失败回写同套），让「本地下载不完整」在 job 文档上可一眼定位。
+    const fingerprint = fingerprintInputFile(targetPath)
+    if (fingerprint) {
+      incompleteError.input_container = fingerprint.input_container
+      incompleteError.input_head_hex = fingerprint.input_head_hex
+    }
+    throw incompleteError
   }
 
+  if (lastFailure?.kind === 'probe') {
+    // 结构完好（盒子链闭合 / 非 MP4 容器）但 ffprobe 仍解析失败 ⇒ 已排除「本地下载不完整」，
+    // 对象本身无法解析 ⇒ 永久「输入完整性」类（INPUT_MEDIA_INVALID），语义维持不变。
+    const probeError = lastFailure.probeError
+    if (lastLocalSizeBytes > 0) {
+      probeError.input_bytes = lastLocalSizeBytes
+    }
+    throw probeError
+  }
+
+  // 体积不匹配（重下后本地仍与对象不一致）＝永久「输入完整性」类，语义维持不变。
   const sizeMismatchError = buildPermanentError(
-    `INPUT_SIZE_MISMATCH：重下 ${DOWNLOAD_MAX_REDOWNLOADS} 次后本地体积仍与对象不一致（${label}：本地 ${lastSizeMismatch?.localSizeBytes ?? 0} / 对象 ${lastSizeMismatch?.remoteSizeBytes ?? 0} 字节）`
+    `INPUT_SIZE_MISMATCH：重下 ${DOWNLOAD_MAX_REDOWNLOADS} 次后本地体积仍与对象不一致（${label}：本地 ${lastFailure?.localSizeBytes ?? lastLocalSizeBytes} / 对象 ${lastFailure?.remoteSizeBytes ?? remoteSizeBytes ?? 0} 字节）`
   )
   if (lastLocalSizeBytes > 0) {
     sizeMismatchError.input_bytes = lastLocalSizeBytes
@@ -594,8 +812,10 @@ const processJob = async ({ app, db, envId, job, requestId }) => {
     }
 
     const sourceFileId = resolveJobSourceFileId({ job, envId })
-    // ① 下载 + 完整性校验（体积比对 ＋ ffprobe 可解析）：不一致 / 不可解析自动重下（上限 2 次、短退避），
-    //    仍不行按类别抛错（对象被截断＝永久「输入完整性」类 / 下载失败＝「瞬时」类）。
+    // ① 自管下载（临时 URL 流式写盘，等 finish ＋ fs.close；临时 URL 不可得回退 SDK）＋
+    //    写完即验（体积比对 ＋ MP4 盒子链闭合 ＋ ffprobe 可解析）：不完整自动重下（上限 2 次、
+    //    短退避），仍不行按类别抛错（结构仍不完整＝瞬时 INPUT_DOWNLOAD_INCOMPLETE /
+    //    对象本身无法解析＝永久 INPUT_MEDIA_INVALID / 体积不匹配＝永久 INPUT_SIZE_MISMATCH）。
     const downloaded = await downloadFileWithIntegrity({
       app,
       fileId: sourceFileId,
@@ -1014,8 +1234,9 @@ const processTrackMixJob = async ({ app, db, envId, job, requestId }) => {
     // （某章无可用音频 ⇒ 不计其 gap；precondition 已校验合法）。
     const leadingSilenceSeconds = resolveTrackMixVoiceLeadingSilenceSeconds(job) || 0
 
-    // ① 每个输入（人声各段 ＋ 背景）下载后同样做完整性校验：体积比对 ＋ ffprobe 可解析，
-    //    不一致 / 不可解析自动重下（上限 2 次、短退避），仍不行按类别抛错。
+    // ① 每个输入（人声各段 ＋ 背景）同样走自管下载＋写完即验：体积比对 ＋ MP4 盒子链闭合 ＋
+    //    ffprobe 可解析；不完整自动重下（上限 2 次、短退避），仍不行按类别抛错
+    //    （结构仍不完整＝瞬时 / 对象本身无法解析或体积不匹配＝永久）。
     const voiceInputPaths = []
     for (const [index, voiceInput] of voiceInputs.entries()) {
       const voicePath = path.join(tmpRoot, `voice-${index}${resolveTrackMixInputExtension(voiceInput.file_id)}`)
@@ -1357,6 +1578,9 @@ exports.__test__ = {
   // 【本单新增】输入完整性防护：ffprobe 探测 ＋ 下载后完整性校验（供样本自测直接驱动真实分支）
   assertInputProbeable,
   downloadFileWithIntegrity,
+  // 【本单改造】自管下载 ＋ 对象元数据（临时 URL ＋ 体积），供自测驱动真实下载/回退分支
+  downloadObjectViaTempUrl,
+  resolveRemoteObjectMeta,
   resolveRemoteObjectSizeBytes,
   // 【本单新增】输入容器指纹：失败收口时把错误上挂载的 input_container / input_head_hex 取出
   resolveFailureInputFingerprint,
