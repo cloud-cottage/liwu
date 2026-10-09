@@ -3006,9 +3006,6 @@ const MeditationRecordingControl = ({ disabled, busy, onCaptured, recordLabel = 
           }}
         />
       </label>
-      {recordingCandidate && (
-        <span style={{ fontSize: '11px', color: '#94a3b8' }}>录音格式 {recordingCandidate.mime_type}</span>
-      )}
       {usesMp3Fallback && (
         <span style={{ fontSize: '11px', color: '#b45309' }}>当前浏览器不支持 Opus 录制，按 mp3 兜底链路处理</span>
       )}
@@ -3996,9 +3993,10 @@ const MeditationPage = ({
 
     player.play().catch((playErr) => {
       console.error('section audio playback failed:', playErr);
-      if (playingAudioRef.current === player) {
-        stopSectionAudioPlayback();
+      if (playingAudioRef.current !== player) {
+        return;
       }
+      stopSectionAudioPlayback();
       setAudioStatus(containerId, { error: playErr.message || '试听失败' });
     });
   };
