@@ -2,7 +2,8 @@ import {
   getMeditationSectionAudioFormatCandidates,
   MEDITATION_SECTION_AUDIO_FORMATS,
   MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE,
-  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS
+  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS,
+  resolveMeditationSectionAudioPlaybackCandidatesAsync
 } from '@liwu/shared-utils/meditation-section-audio.js'
 
 // ─── 网页录音（MediaRecorder） ────────────────────────────────────────────────
@@ -195,16 +196,16 @@ const canPlayMeditationAudioCandidate = (candidate = {}) => (
   !candidate.mime_type || canPlayMeditationAudioMimeType(candidate.mime_type)
 )
 
-export const resolveMeditationSectionAudioPlayback = (audio = {}) => {
-  const candidates = getMeditationSectionAudioFormatCandidates(audio)
-
+// 候选选择（同步 / 异步两版共用，口径一致）：
+// Opus 优先，否则 mp3，两缺才报真异常；原始录制文件（转码未完成）即使 canPlayType
+// 通过也必须提示「暂以原始录音试听」，否则该提示在「只有原始件」时永远不可达。
+const selectMeditationSectionAudioPlayback = (candidates) => {
   if (candidates.length === 0) {
     return { error: MEDITATION_AUDIO_UNAVAILABLE_MESSAGE }
   }
 
   const [primary, ...fallbacks] = candidates
-  // 原始录制文件（转码未完成）：即使 canPlayType 通过也必须提示「暂以原始录音试听」，
-  // 否则该提示在「只有 original_url」时永远不可达。
+
   const primaryRawTakeNotice = primary.is_raw_take ? MEDITATION_AUDIO_RAW_TAKE_NOTICE : ''
 
   if (canPlayMeditationAudioCandidate(primary)) {
@@ -230,6 +231,19 @@ export const resolveMeditationSectionAudioPlayback = (audio = {}) => {
       : MEDITATION_AUDIO_RAW_TAKE_NOTICE,
     is_fallback: true
   }
+}
+
+export const resolveMeditationSectionAudioPlayback = (audio = {}) => (
+  selectMeditationSectionAudioPlayback(getMeditationSectionAudioFormatCandidates(audio))
+)
+
+// 异步版播放解析（读取时现签）：候选 URL 由共享模块按 fileID 现签
+//（signFileId 注入、可桩测；落库 URL 仅在对应 fileID 缺失或现签失败时作 best-effort 回退），
+// 可播性判定与提示口径与同步版走同一选择器。现签失败不会抛出，只会回退。
+export const resolveMeditationSectionAudioPlaybackAsync = async (audio = {}, { signFileId } = {}) => {
+  const candidates = await resolveMeditationSectionAudioPlaybackCandidatesAsync(audio, { signFileId })
+
+  return selectMeditationSectionAudioPlayback(candidates)
 }
 
 // ─── 一段一录：单段落落库载荷（段落文本库的录制 / 上传入口） ──────────────────

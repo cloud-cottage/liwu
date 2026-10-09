@@ -61,7 +61,7 @@ import {
   MEDITATION_RECORDING_UNSUPPORTED_MESSAGE,
   resolveMeditationAudioTargetFormat,
   resolveMeditationRecordingMimeType,
-  resolveMeditationSectionAudioPlayback,
+  resolveMeditationSectionAudioPlaybackAsync,
   startMeditationRecording,
   stopMeditationRecording
 } from '../../utils/meditationAudioCapture.js';
@@ -3926,9 +3926,11 @@ const MeditationPage = ({
     }
   };
 
-  const handlePlaySectionAudio = (audio) => {
+  // 读取时现签：优先 fileID 现签（opus=file_id / mp3=fallback_file_id / 原始件=original_file_id），
+  // 落库的临时 URL 仅作回退；现签失败不阻断（best-effort 回退落库 URL），错误展示走既有分支。
+  const handlePlaySectionAudio = async (audio) => {
     const containerId = getAudioStatusContainerId(audio);
-    const resolved = resolveMeditationSectionAudioPlayback(audio);
+    const resolved = await resolveMeditationSectionAudioPlaybackAsync(audio, { signFileId: getAudioTempUrl });
 
     if (resolved.error) {
       setAudioStatus(containerId, { error: resolved.error, notice: '' });
@@ -4430,8 +4432,8 @@ const MeditationPage = ({
             <span>{getSourceKindLabel(audio.source_kind)}</span>
             <span>{MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS[audio.transcode_status] || audio.transcode_status}</span>
             {audio.transcode_error && <span style={{ color: '#ef4444' }}>失败原因：{audio.transcode_error}</span>}
-            <span style={{ color: audio.audio_url ? '#16a34a' : '#94a3b8' }}>Opus {audio.audio_url ? '✓' : '待转码'}</span>
-            <span style={{ color: audio.fallback_audio_url ? '#16a34a' : '#94a3b8' }}>mp3 {audio.fallback_audio_url ? '✓' : '—'}</span>
+            <span style={{ color: audio.file_id ? '#16a34a' : '#94a3b8' }}>Opus {audio.file_id ? '✓' : '待转码'}</span>
+            <span style={{ color: audio.fallback_file_id ? '#16a34a' : '#94a3b8' }}>mp3 {audio.fallback_file_id ? '✓' : '—'}</span>
             {!isMeditationSectionAudioDeliveryComplete(audio) && <span style={medBadgeStyle('warning')}>未完成交付</span>}
             {audio.stale && <span style={medBadgeStyle('warning')}>stale</span>}
             <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handlePlaySectionAudio(audio)}>试听</button>

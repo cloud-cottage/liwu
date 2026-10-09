@@ -217,6 +217,72 @@ export const getMeditationSectionAudioFormatCandidates = (audio = {}) => {
   return candidates
 }
 
+// ─── 读取时现签（D-7：管理端试听） ─────────────────────────────────────────────
+// 落库的 audio_url / fallback_audio_url / original_url 是写侧当时签发的临时 URL，会过期
+//（读取契约：临时 URL 不落库、读取时现签）。播放候选改为优先用 fileID 现签：
+//   Opus 主体＝file_id；mp3 兜底＝fallback_file_id（历史 mp3_file_id 兼容）；原始件＝original_file_id。
+// 落库 URL 一律视为过期缓存：仅当对应 fileID 缺失，或现签失败 / 签出空值时作 best-effort
+// 回退（不因现签失败而抛错阻断）；fileID 与落库 URL 都拿不到 ⇒ 该候选不存在。
+// signFileId 由调用方注入（保持可桩测）：(fileId) => Promise<string>。
+const signMeditationSectionAudioCandidateUrl = async (signFileId, fileId, storedUrl) => {
+  if (!fileId || typeof signFileId !== 'function') {
+    return storedUrl
+  }
+
+  try {
+    return (await signFileId(fileId)) || storedUrl
+  } catch {
+    return storedUrl
+  }
+}
+
+// 异步版播放候选（顺序与 getMeditationSectionAudioFormatCandidates 一致）：
+// Opus 主体 → mp3 兜底 → 原始录制文件；URL 优先现签。是否可播仍由调用方判定
+//（见 admin/utils/meditationAudioCapture.js，注入 canPlayType 后选择）。
+export const resolveMeditationSectionAudioPlaybackCandidatesAsync = async (audio = {}, { signFileId } = {}) => {
+  const candidates = []
+  const fallbackFileId = audio.fallback_file_id || audio.mp3_file_id || ''
+  const fallbackAudioUrl = audio.fallback_audio_url || audio.mp3_url || ''
+  const fallbackMimeType = audio.fallback_mime_type || audio.mp3_mime_type || MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE.mp3
+
+  const opusUrl = await signMeditationSectionAudioCandidateUrl(signFileId, audio.file_id, audio.audio_url)
+
+  if (opusUrl) {
+    candidates.push({
+      format: MEDITATION_SECTION_AUDIO_FORMATS.opus,
+      url: opusUrl,
+      mime_type: audio.mime_type || MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE.opus,
+      is_fallback: false
+    })
+  }
+
+  const mp3Url = await signMeditationSectionAudioCandidateUrl(signFileId, fallbackFileId, fallbackAudioUrl)
+
+  if (mp3Url) {
+    candidates.push({
+      format: MEDITATION_SECTION_AUDIO_FORMATS.mp3,
+      url: mp3Url,
+      mime_type: fallbackMimeType,
+      is_fallback: true
+    })
+  }
+
+  const originalUrl = await signMeditationSectionAudioCandidateUrl(signFileId, audio.original_file_id, audio.original_url)
+
+  if (originalUrl) {
+    const isOpusRecording = String(audio.original_mime_type || '').includes('opus')
+    candidates.push({
+      format: isOpusRecording ? MEDITATION_SECTION_AUDIO_FORMATS.opus : MEDITATION_SECTION_AUDIO_FORMATS.raw,
+      url: originalUrl,
+      mime_type: audio.original_mime_type || '',
+      is_fallback: true,
+      is_raw_take: true
+    })
+  }
+
+  return candidates
+}
+
 // 按 section_type 归集候选池中的实测时长（取最大值，作为 Track 预估的保守值）。
 export const buildMeditationSectionDurationMap = (sectionAudios = []) => (
   (Array.isArray(sectionAudios) ? sectionAudios : []).reduce((accumulator, audio) => {
