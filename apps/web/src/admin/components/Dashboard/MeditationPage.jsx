@@ -47,7 +47,9 @@ import {
   MEDITATION_SECTION_AUDIO_SOURCE_KINDS,
   MEDITATION_SECTION_AUDIO_TARGET_MIME_TYPE,
   MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS,
-  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS
+  MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS,
+  formatMeditationAudioClock,
+  resolveMeditationSectionAudioPlaybackProgress
 } from '@liwu/shared-utils/meditation-section-audio.js';
 import { createDefaultMeditationTrack } from '@liwu/shared-utils/meditation-track-normalizers.js';
 import {
@@ -3377,6 +3379,8 @@ const MeditationPage = ({
   const [sectionRawFormError, setSectionRawFormError] = useState('');
 
   const playingAudioRef = useRef(null);
+  // 当前播放实例的状态键（containerId）；配合 status.playingId 区分同容器多条候选中的「这一条」。
+  const playingSectionAudioContainerIdRef = useRef('');
 
   useEffect(() => () => {
     playingAudioRef.current?.pause?.();
@@ -3635,6 +3639,22 @@ const MeditationPage = ({
       ...previous,
       [containerId]: { ...(previous[containerId] || {}), ...patch }
     }));
+  };
+
+  // 清掉「当前正在播放卡片」的播放态（进度条 / 时钟 / playing 一并清除）；幂等。
+  const clearSectionAudioPlayingStatus = () => {
+    const playingContainerId = playingSectionAudioContainerIdRef.current;
+    playingSectionAudioContainerIdRef.current = '';
+    if (playingContainerId) {
+      setAudioStatus(playingContainerId, { playing: false, playingId: '', currentTime: 0, duration: 0 });
+    }
+  };
+
+  // 停止播放：暂停当前实例并清掉其卡片播放态（单实例语义的唯一停点）。
+  const stopSectionAudioPlayback = () => {
+    playingAudioRef.current?.pause?.();
+    playingAudioRef.current = null;
+    clearSectionAudioPlayingStatus();
   };
 
   const isSectionRawStale = (raw) => {
@@ -3937,14 +3957,55 @@ const MeditationPage = ({
       return;
     }
 
-    playingAudioRef.current?.pause?.();
+    // 单实例：切走前先停旧实例并清掉旧卡片播放态（进度条 / 时钟不残留在旧卡上）。
+    stopSectionAudioPlayback();
+
     const player = new Audio(resolved.url);
     playingAudioRef.current = player;
+    playingSectionAudioContainerIdRef.current = containerId;
+    setAudioStatus(containerId, {
+      playing: true,
+      playingId: audio._id,
+      currentTime: 0,
+      duration: 0,
+      error: '',
+      notice: resolved.notice || ''
+    });
+
+    // 播放中按卡片同步进度；旧实例被替换后其迟到事件不得覆盖新卡状态。
+    const syncPlayingStatus = () => {
+      if (playingAudioRef.current !== player) {
+        return;
+      }
+      setAudioStatus(containerId, {
+        playing: true,
+        playingId: audio._id,
+        currentTime: player.currentTime || 0,
+        duration: player.duration || 0
+      });
+    };
+
+    player.addEventListener('loadedmetadata', syncPlayingStatus);
+    player.addEventListener('timeupdate', syncPlayingStatus);
+    player.addEventListener('ended', () => {
+      if (playingAudioRef.current !== player) {
+        return;
+      }
+      stopSectionAudioPlayback();
+    });
+
     player.play().catch((playErr) => {
       console.error('section audio playback failed:', playErr);
+      if (playingAudioRef.current === player) {
+        stopSectionAudioPlayback();
+      }
       setAudioStatus(containerId, { error: playErr.message || '试听失败' });
     });
-    setAudioStatus(containerId, { error: '', notice: resolved.notice || '' });
+  };
+
+  // 「停止」：暂停当前实例并清掉该卡片播放态，回到非播放态。
+  const handleStopSectionAudio = () => {
+    stopSectionAudioPlayback();
   };
 
   const handleDeleteSectionAudio = async (audio) => {
@@ -3959,7 +4020,7 @@ const MeditationPage = ({
     const containerId = getAudioStatusContainerId(audio);
     setAudioStatus(containerId, { busy: true, error: '', notice: '' });
     try {
-      playingAudioRef.current?.pause?.();
+      stopSectionAudioPlayback();
       await DatabaseService.deleteMedSectionAudio(audio._id);
       // 回写 Section-Raw 候选引用（数据层查库，不依赖 sectionRawItems 内存态）
       const detached = await DatabaseService.detachMedSectionAudioFromRaw(audio.section_raw_id || '', audio._id);
@@ -4423,26 +4484,49 @@ const MeditationPage = ({
         {audios.length === 0 && (
           <span style={{ fontSize: '11px', color: '#94a3b8' }}>{emptyHint}</span>
         )}
-        {audios.map((audio) => (
-          <div key={audio._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: '#475569' }}>
-            <span>#{String(audio._id).slice(-6)}</span>
-            {showSectionType && <span>{audio.section_type ? getMeditationSectionDisplayLabelWithCode(audio.section_type) : '未设置类型'}</span>}
-            {audio.label && <span>{audio.label}</span>}
-            <span>{formatAudioDuration(audio.duration)}</span>
-            <span>{getSourceKindLabel(audio.source_kind)}</span>
-            <span>{MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS[audio.transcode_status] || audio.transcode_status}</span>
-            {audio.transcode_error && <span style={{ color: '#ef4444' }}>失败原因：{audio.transcode_error}</span>}
-            <span style={{ color: audio.file_id ? '#16a34a' : '#94a3b8' }}>Opus {audio.file_id ? '✓' : '待转码'}</span>
-            <span style={{ color: audio.fallback_file_id ? '#16a34a' : '#94a3b8' }}>mp3 {audio.fallback_file_id ? '✓' : '—'}</span>
-            {!isMeditationSectionAudioDeliveryComplete(audio) && <span style={medBadgeStyle('warning')}>未完成交付</span>}
-            {audio.stale && <span style={medBadgeStyle('warning')}>stale</span>}
-            <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handlePlaySectionAudio(audio)}>试听</button>
-            {isMeditationSectionAudioTranscodeRetryable(audio) && (
-              <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handleRetrySectionAudioTranscode(audio)}>重试转码</button>
-            )}
-            <button style={{ ...dangerBtnStyle, padding: '2px 8px' }} onClick={() => handleDeleteSectionAudio(audio)}>删除</button>
-          </div>
-        ))}
+        {audios.map((audio) => {
+          // 播放态按 containerId 存（同容器多条候选共享），用 playingId 区分「这一条」。
+          const audioStatus = sectionAudioStatus[getAudioStatusContainerId(audio)] || {};
+          const isAudioPlaying = Boolean(audioStatus.playing) && audioStatus.playingId === audio._id;
+          const playingPercent = Math.round(
+            resolveMeditationSectionAudioPlaybackProgress(audioStatus.currentTime, audioStatus.duration) * 100
+          );
+
+          return (
+            <div key={audio._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: '#475569' }}>
+              <span>#{String(audio._id).slice(-6)}</span>
+              {showSectionType && <span>{audio.section_type ? getMeditationSectionDisplayLabelWithCode(audio.section_type) : '未设置类型'}</span>}
+              {audio.label && <span>{audio.label}</span>}
+              <span>{formatAudioDuration(audio.duration)}</span>
+              <span>{getSourceKindLabel(audio.source_kind)}</span>
+              <span>{MEDITATION_SECTION_AUDIO_TRANSCODE_STATUS_LABELS[audio.transcode_status] || audio.transcode_status}</span>
+              {audio.transcode_error && <span style={{ color: '#ef4444' }}>失败原因：{audio.transcode_error}</span>}
+              <span style={{ color: audio.file_id ? '#16a34a' : '#94a3b8' }}>Opus {audio.file_id ? '✓' : '待转码'}</span>
+              <span style={{ color: audio.fallback_file_id ? '#16a34a' : '#94a3b8' }}>mp3 {audio.fallback_file_id ? '✓' : '—'}</span>
+              {!isMeditationSectionAudioDeliveryComplete(audio) && <span style={medBadgeStyle('warning')}>未完成交付</span>}
+              {audio.stale && <span style={medBadgeStyle('warning')}>stale</span>}
+              {isAudioPlaying && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: '1 1 140px', minWidth: '140px' }}>
+                  <span style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
+                    <span style={{ display: 'block', height: '100%', width: `${playingPercent}%`, backgroundColor: '#2563eb' }} />
+                  </span>
+                  <span style={{ whiteSpace: 'nowrap', color: '#64748b' }}>
+                    {formatMeditationAudioClock(audioStatus.currentTime)} / {formatMeditationAudioClock(audioStatus.duration)}
+                  </span>
+                </span>
+              )}
+              {isAudioPlaying ? (
+                <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={handleStopSectionAudio}>停止</button>
+              ) : (
+                <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handlePlaySectionAudio(audio)}>试听</button>
+              )}
+              {isMeditationSectionAudioTranscodeRetryable(audio) && (
+                <button style={{ ...ghostBtnStyle, padding: '2px 8px' }} onClick={() => handleRetrySectionAudioTranscode(audio)}>重试转码</button>
+              )}
+              <button style={{ ...dangerBtnStyle, padding: '2px 8px' }} onClick={() => handleDeleteSectionAudio(audio)}>删除</button>
+            </div>
+          );
+        })}
         {showStatus && renderSectionAudioStatus(containerId)}
       </div>
     );
@@ -4462,11 +4546,6 @@ const MeditationPage = ({
 
     return (
       <div style={{ margin: '4px 0 0 8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <div style={{ fontSize: '11px', color: '#64748b' }}>
-          音频：{recommendedSectionType
-            ? `段代号 ${getMeditationSectionDisplayLabelWithCode(recommendedSectionType)}`
-            : '该段落类型无推荐段代号，不能录制或上传'}
-        </div>
         {renderSectionAudioList(paragraphId, audios, { emptyHint: '该段落暂无音频' })}
         {recommendedSectionType && (
           <MeditationRecordingControl

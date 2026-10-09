@@ -299,3 +299,26 @@ export const buildMeditationSectionDurationMap = (sectionAudios = []) => (
     }
   }, {})
 )
+
+// ─── 试听播放进度（管理端音频卡片） ───────────────────────────────────────────
+// 时钟：mm:ss（分钟两位补零）；满 1 小时转 h:mm:ss（小时不补零）。
+// 非有限 / 负数输入（NaN、Infinity、undefined、负值等）一律归 0 ⇒ '00:00'，不显示负时钟。
+export const formatMeditationAudioClock = (seconds) => {
+  const totalSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
+  const hour = Math.floor(totalSeconds / 3600)
+  const minuteAndSecond = `${String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0')}:${String(totalSeconds % 60).padStart(2, '0')}`
+
+  return hour > 0 ? `${hour}:${minuteAndSecond}` : minuteAndSecond
+}
+
+// 播放进度比例：currentTime / duration，封顶 [0, 1]；时长或当前时间无效（非有限 / ≤0）⇒ 0。
+export const resolveMeditationSectionAudioPlaybackProgress = (currentTime, duration) => {
+  const totalDuration = Number(duration)
+  const elapsed = Number(currentTime)
+
+  if (!Number.isFinite(totalDuration) || totalDuration <= 0 || !Number.isFinite(elapsed) || elapsed <= 0) {
+    return 0
+  }
+
+  return Math.min(1, elapsed / totalDuration)
+}
