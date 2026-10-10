@@ -92,6 +92,10 @@ import {
   buildMeditationTrackMixJobPayload,
   MEDITATION_TRACK_MIX_JOB_STATUS
 } from '../utils/meditationTrackMixJob.js';
+import {
+  buildSlotValidationMessage,
+  validateMeditationTrackSlots
+} from '../utils/meditationTrackSlots.js';
 
 const { collections } = DATABASE_CONFIG;
 const MEDITATION_SETTINGS_KEY = 'meditation_rewards';
@@ -576,6 +580,17 @@ const assertCloudBaseUpdateTookEffect = async (result, collectionName, options =
   }
 
   return result;
+};
+
+// ─── 写入侧槽位校验（R49-② 写入侧纪律）────────────────────────────────────────
+// 复用与 UI 同一份 `validateMeditationTrackSlots`（**不新造第二套归一 / 校验**）；空 `slots`＝老语义
+// （R49-③，不迁移）⇒ 老 Track 天然通过。非法槽位在写前显式拒绝、逐项给文案，**不得静默发出**。
+const assertMeditationTrackSlotsWritable = (chapters) => {
+  const result = validateMeditationTrackSlots({ chapters });
+
+  if (!result.ok) {
+    throw new Error(buildSlotValidationMessage(result));
+  }
 };
 
 // 后台自动修复路径（品牌/分类/标签关系的 reconcile，均由读库自动触发、非用户点击）专用：
@@ -6253,6 +6268,8 @@ class DatabaseService {
         updated_at: now,
         created_by: data?.created_by || ''
       };
+      // 写入侧槽位校验：非法槽位在写前显式拒绝（逐项文案、不得静默）。
+      assertMeditationTrackSlotsWritable(payload.chapters);
       const result = assertCloudBaseCreateResult(
         await db.collection(MEDITATION_TRACK_COLLECTION).add(payload),
         MEDITATION_TRACK_COLLECTION
@@ -6275,6 +6292,8 @@ class DatabaseService {
         version: trackPayload.version + 1,
         updated_at: now
       };
+      // 写入侧槽位校验：非法槽位在写前显式拒绝（逐项文案、不得静默）。
+      assertMeditationTrackSlotsWritable(payload.chapters);
       await assertCloudBaseUpdateTookEffect(
         await db.collection(MEDITATION_TRACK_COLLECTION).doc(id).update(payload),
         MEDITATION_TRACK_COLLECTION,

@@ -77,6 +77,11 @@ import {
   resolveMeditationTrackMixWarningLines
 } from '../../utils/meditationTrackMixJob.js';
 import MeditationTrackPreview from './MeditationTrackPreview.jsx';
+import MeditationTrackSlotsEditor from './MeditationTrackSlotsEditor.jsx';
+import {
+  buildSlotValidationMessage,
+  validateMeditationTrackSlots
+} from '../../utils/meditationTrackSlots.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -3019,7 +3024,7 @@ const MeditationRecordingControl = ({ disabled, busy, onCaptured, recordLabel = 
 
 // ─── 冥想轨道（med_tracks）────────────────────────────────────────────────────
 
-const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSave, onRefreshTrack }) => {
+const MeditationTracksTab = ({ track, sectionDurationSecondsByType, sectionAudios, saving, onSave, onRefreshTrack }) => {
   const [draft, setDraft] = useState(() => track);
   const [saveNotice, setSaveNotice] = useState('');
   const [saveError, setSaveError] = useState('');
@@ -3029,6 +3034,11 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
     chapters: draft.chapters,
     sectionDurationSecondsByType
   });
+
+  // 槽位写侧校验（R49-② 写入侧纪律）：`slot_index` 同章唯一且有序 / `section_type` 非空且在章允许
+  // 范围（无推荐映射不得写空）/ `pinned` 的 `audio_id` 必须存在于音频库 / `policy` 属允许值。
+  // 空 `slots`＝老语义（R49-③，不迁移），故老 Track 天然通过、保存不写槽位。逐项错误上屏、不得静默。
+  const slotValidation = validateMeditationTrackSlots({ chapters: draft.chapters, sectionAudios });
 
   // ── 混合音频（服务端预混产物）─────────────────────────────────────────────
   // 产物台账＝med_tracks.mix_audio（云侧转码器回写）；「产物缺失或版本落后」＝无 mix_audio
@@ -3130,6 +3140,11 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
   const handleSave = async () => {
     setSaveNotice('');
     setSaveError('');
+    // 写入前校验（不得把非法槽位发出去）；逐项错误上屏、不得静默、不得声称「无权限」。
+    if (!slotValidation.ok) {
+      setSaveError(buildSlotValidationMessage(slotValidation));
+      return;
+    }
     try {
       const saved = await onSave(draft);
       // 版本号回写草稿：同一会话内连续保存必须基于新版本，才能每次保存 +1（D7 可复现追溯）。
@@ -3150,12 +3165,17 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
       <div
         key={chapter.chapter_key}
         style={{
+          paddingTop: index > 0 ? '8px' : 0,
+          borderTop: index > 0 ? '1px solid #f8fafc' : 'none'
+        }}
+      >
+      <div
+        style={{
           display: 'flex',
           alignItems: 'center',
           gap: '12px',
           flexWrap: 'wrap',
-          padding: '8px 0',
-          borderTop: index > 0 ? '1px solid #f8fafc' : 'none'
+          padding: '8px 0'
         }}
       >
         <div style={{ width: '140px' }}>
@@ -3201,6 +3221,13 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
         {chapterEstimate?.exceeds_max_duration && (
           <span style={medBadgeStyle('danger')}>⚠ 超出时长上限</span>
         )}
+      </div>
+      <MeditationTrackSlotsEditor
+        chapter={chapter}
+        poolAudios={sectionAudios || []}
+        errors={slotValidation.errors.filter((error) => error.chapter_key === chapter.chapter_key)}
+        onChange={(slots) => updateChapter(chapter.chapter_key, { slots })}
+      />
       </div>
     );
   };
@@ -3260,7 +3287,7 @@ const MeditationTracksTab = ({ track, sectionDurationSecondsByType, saving, onSa
           预览 Track
         </button>
         {saveNotice && <span style={{ fontSize: '12px', color: '#16a34a' }}>✅ {saveNotice}</span>}
-        {saveError && <span style={{ fontSize: '12px', color: '#ef4444' }}>❌ {saveError}</span>}
+        {saveError && <span role="alert" style={{ fontSize: '12px', color: '#ef4444', whiteSpace: 'pre-line' }}>❌ {saveError}</span>}
       </div>
 
       {/* 混合音频（服务端预混单流产物）：产物缺失或版本落后时才给「生成混合音频」入口；
@@ -4750,6 +4777,7 @@ const MeditationPage = ({
             key={track._id || track.track_key}
             track={track}
             sectionDurationSecondsByType={buildMeditationSectionDurationMap(sectionAudios)}
+            sectionAudios={sectionAudios}
             saving={savingMedTracks}
             onSave={saveMedTrack}
             onRefreshTrack={loadMedTracks}
