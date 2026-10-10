@@ -618,15 +618,25 @@ const resolveNewActionDeliverability = (audio = {}) => {
 }
 
 // 池元数据条目（R51-①：**只** id / section_type / duration / 标签；**绝不含任何 URL / file_id**）。
+// 【可交付标记（本单新增）】`deliverable` —— 布尔，值＝该 `med_section_audios` 是否**可交付**。
+//   · 口径**复用** `resolveNewActionDeliverability`（＝R39-④ 可交付判据 ＋ R51-④ raw 前缀排除）——
+//     正是 `signAudios` 用来剔除不可交付项的那个函数 ⇒ **不新造第二套判据**，保证
+//     「池里被标记可选中 ⇔ signAudios 能现签」一致（否则选中的条目会在现签阶段被剔除 ⇒ 又回到 0 段）。
+//   · **未交付项按现有口径保留**（带 `deliverable:false`，**不剔除**）——与 R51-①「池＝候选集、
+//     不按可交付过滤」一致，并让端侧可区分两类缺音频：「池空 `EMPTY_POOL`」与
+//     「池非空但无一可交付 `NO_PLAYABLE_FORMAT`」（对齐 R43-⑤）。
 const buildPoolMetadataEntry = ({ audio = {}, sectionType = '' } = {}) => ({
   id: getString(audio._id || audio.id).trim(),
   section_type: sectionType || normalizeMeditationSectionCode(getString(audio.section_type)),
   duration: Number(audio.duration) > 0 ? Number(audio.duration) : 0,
-  label: getString(audio.label)
+  label: getString(audio.label),
+  deliverable: resolveNewActionDeliverability(audio).deliverable === true
 })
 
 // 按 section_type 分组的池**元数据**（R51-①）。池 = 候选集（**不按可交付过滤**——可交付过滤发生在
 // signAudios；依据 R43-⑤ 的「池空 / 池非空但无可用格式」两分：池本身可含不可用候选）。
+// 【本单】每条带**可交付标记** `deliverable`（见 buildPoolMetadataEntry）⇒ 端侧无需 URL 即可选中
+//   「可交付」条目（不可交付项带 `deliverable:false`、不剔除）。
 // 每个 section_type 截断到 limit（默认 20）并如实回报截断标记（不假装全量，对齐 R39-⑨）。
 const buildSectionAudioPoolsMetadata = ({ requestedSectionTypes = [], candidates = [], limit = MAX_POOL_CANDIDATES_PER_SECTION_TYPE } = {}) => {
   const pools = {}

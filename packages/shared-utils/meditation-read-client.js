@@ -7,7 +7,10 @@
 //     listTracks）。成功 `{ok:true,data,meta}`、失败 `{ok:false,error,message,details?}`；
 //     **调用方按 `error` 码分支、不解析 `message` 文本**（README §1 同样口径）。
 //   · R39 ⑤ / C11：临时链接 `maxAge = 7200`（2 小时）、端侧缓存 **≤ 半有效期（≈1 小时）** 或按
-//     `url_policy.expires_at` 判陈旧 ⇒ 本模块导出 `MEDITATION_READ_URL_MAX_AGE_SECONDS`。
+//     `url_policy.expires_at` 判陈旧 ⇒ 本模块保留常量 `MEDITATION_READ_URL_MAX_AGE_SECONDS`。
+//     【本单清理】原「陈旧判定纯函数」`resolveMeditationUrlPolicyStaleness` 与其配套常量
+//     `MEDITATION_READ_URL_STALE_AFTER_SECONDS` **已删除**（全仓零消费方：端侧改由 `signAudios`
+//     抽中后现签、403 即重签，不再据「半有效期」预判重签）。
 //   · R39 ③：**不把「没报错」当「读到了」、不返回部分数据当成功** ⇒ 本模块 `ok !== true` 一律抛错，
 //     绝不把部分 / 残缺数据当成功返回。
 //
@@ -36,61 +39,6 @@ export const MEDITATION_READ_FUNCTION_NAME = 'meditation-read'
 
 // 临时链接有效期（秒）：与规范 C11 / 质检 X14 的 `maxAge = 7200` 一致。
 export const MEDITATION_READ_URL_MAX_AGE_SECONDS = 7200
-
-// 端侧缓存陈旧阈值（秒）：R39 ⑪「缓存 ≤ max_age_seconds 的一半（≈1 小时）」。
-export const MEDITATION_READ_URL_STALE_AFTER_SECONDS = MEDITATION_READ_URL_MAX_AGE_SECONDS / 2
-
-// ─── 临时 URL 陈旧判定（R39 ⑤ / ⑪；纯函数，供 App / 小程序共用） ─────────────────────
-// 背景：响应**不下发 `file_id`** ⇒ 端侧「重签」＝**同参重调 getTrack**；本函数只回答「什么时候该调」。
-// 口径（**时钟偏移免疫**，这是刻意的）：
-//   ① 以**端侧收到该响应的本地时刻**（`receivedAtMs`，或端侧写入策略对象的 `received_at_ms`）起算已用时长，
-//      **不**拿本地绝对时钟去减服务端 `issued_at` / 与 `expires_at` 直接比较——两端时钟不同步时，
-//      刚拿到手的链接会被判成「已过期」，于是每段播放前都重签一次（正是要禁止的「无脑重调」）；
-//   ② 阈值＝有效期的一半（`max_age_seconds / 2`，默认 7200/2 ＝ 3600s）⇒「距过期不足半有效期」即判陈旧；
-//   ③ `max_age_seconds` 缺失 / 非正数时，退用 `issued_at → expires_at` 的**跨度**当有效期（同一基准）；
-//   ④ 无策略 / 时间戳不可解析 / 缺收到时刻 ⇒ `stale: false`（**不**据此重签，交给 403 兜底），
-//      并回 `reason` 供调用方记录；**不抛错**（判定失败不得阻断播放）。
-export const resolveMeditationUrlPolicyStaleness = ({
-  urlPolicy = null,
-  receivedAtMs = null,
-  nowMs = Date.now()
-} = {}) => {
-  const policy = isPlainObject(urlPolicy) ? urlPolicy : null
-  const now = toFiniteNumberOrNull(nowMs)
-  const explicitReceivedAtMs = toFiniteNumberOrNull(receivedAtMs)
-  const receivedAt = explicitReceivedAtMs !== null ? explicitReceivedAtMs : toFiniteNumberOrNull(policy?.received_at_ms)
-  const declaredMaxAgeSeconds = toFiniteNumberOrNull(policy?.max_age_seconds)
-  const issuedAtMs = Date.parse(getString(policy?.issued_at))
-  const expiresAtMs = Date.parse(getString(policy?.expires_at))
-  const parsedIssuedAtMs = Number.isFinite(issuedAtMs) ? issuedAtMs : null
-  const parsedExpiresAtMs = Number.isFinite(expiresAtMs) ? expiresAtMs : null
-  const spanSeconds = parsedIssuedAtMs !== null && parsedExpiresAtMs !== null && parsedExpiresAtMs > parsedIssuedAtMs
-    ? (parsedExpiresAtMs - parsedIssuedAtMs) / 1000
-    : null
-  const maxAgeSeconds = declaredMaxAgeSeconds !== null && declaredMaxAgeSeconds > 0
-    ? declaredMaxAgeSeconds
-    : spanSeconds
-  const staleAfterSeconds = maxAgeSeconds !== null && maxAgeSeconds > 0 ? maxAgeSeconds / 2 : null
-
-  if (!policy) {
-    return { stale: false, reason: 'no_policy', age_seconds: null, stale_after_seconds: staleAfterSeconds, max_age_seconds: maxAgeSeconds }
-  }
-
-  if (staleAfterSeconds === null || receivedAt === null || now === null) {
-    return { stale: false, reason: 'unknown_validity', age_seconds: null, stale_after_seconds: staleAfterSeconds, max_age_seconds: maxAgeSeconds }
-  }
-
-  const ageSeconds = Math.max(0, (now - receivedAt) / 1000)
-  const stale = ageSeconds >= staleAfterSeconds
-
-  return {
-    stale,
-    reason: stale ? 'half_life_elapsed' : 'fresh',
-    age_seconds: ageSeconds,
-    stale_after_seconds: staleAfterSeconds,
-    max_age_seconds: maxAgeSeconds
-  }
-}
 
 export const MEDITATION_READ_ACTIONS = Object.freeze({
   getTrack: 'getTrack',

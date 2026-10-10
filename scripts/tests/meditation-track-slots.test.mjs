@@ -11,7 +11,8 @@
 //   ③ `pool` 抽签可注入（`rng`）＋ `policy=no_repeat` 不重抽（含用尽 ⇒ `NO_REPEAT_EXHAUSTED`）；
 //   ④ `pinned` 锁定生效；⑤ `selections` / `segments` 均带 `slot_index`；
 //   ⑥ `buildSessionSolidification` 载荷带 `slot_index`（只增不减、旧载荷逐字不变）；
-//   ⑦ D6 `getTrack` 桩面：出参带逐章 `slots`（白名单，无 URL/file_id）＋ `slot_pools`（仅 4 键、无 URL）；
+//   ⑦ D6 `getTrack` 桩面：出参带逐章 `slots`（白名单，无 URL/file_id）＋ `slot_pools`（5 键＝4 键
+//      ＋ **可交付标记 `deliverable`**、无 URL）；
 //      老 Track ⇒ 省略 `slot_pools`、章节 `slots===[]`、**旧字段形状不变**。
 //
 // 【证据分级】**桩面测试**（本文件）≠ 真实云函数往返（部署后 `--params` 真调另验）。
@@ -534,8 +535,8 @@ const runGetTrack = async (trackDoc, audiosByType) => {
 
   ok('getTrack 桩：含 slot_pools（带槽位）', Boolean(result.data.slot_pools) && typeof result.data.slot_pools === 'object')
   const slotPoolEntries = Object.values(result.data.slot_pools || {}).flat()
-  ok('getTrack 桩：slot_pools 条目键只有白名单 4 键', slotPoolEntries.every((entry) => (
-    JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(['duration', 'id', 'label', 'section_type'])
+  ok('getTrack 桩：slot_pools 条目键只有白名单 5 键（含 deliverable）', slotPoolEntries.every((entry) => (
+    JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(['deliverable', 'duration', 'id', 'label', 'section_type'])
   )), JSON.stringify(slotPoolEntries[0] || {}))
   ok('getTrack 桩：slot_pools 无 URL/file_id', scanForbidden(result.data.slot_pools, FORBIDDEN_KEYS) === null,
     String(scanForbidden(result.data.slot_pools, FORBIDDEN_KEYS)))

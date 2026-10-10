@@ -34,7 +34,9 @@
 //      `track`（`'background'` / `'voice'`）**附加字段**用于路由（字面契约只列 5 个键，附加键不破坏契约）；
 //   ② `background.audio` ＝ 计划里**第一个背景轨段**已抽中的音频（通常 `sec-nature`）**复用同一抽签结果**，
 //      **不额外抽签** ⇒ 一次运行内 `rng` 调用次数 ＝ 池非空的 `section_type` 数（可测）；
-//   ③ 抽签**只从「有可用格式」的候选中抽**（池非空但全无可用 URL ⇒ `NO_PLAYABLE_FORMAT`；
+//   ③ 抽签**只从「可选中」的候选中抽** —— 可选中判据（R51-① 配套）＝**优先**池条目的可交付标记
+//      `deliverable`（`true` ⇒ 可选中、`false` ⇒ 不可选中，**两者都不看 URL**）；**缺该标记**（老响应 /
+//      过渡态）才回退旧判据「存在可用 URL 格式」。（池非空但无一可选中 ⇒ `NO_PLAYABLE_FORMAT`；
 //      池缺失 / 空数组 ⇒ `EMPTY_POOL`）；这两类**只跳过该段并记 warning，不整场失败**；
 //   ④ 空池 / 无可用格式的段落**不产生** `segment` 也不产生 `selection`；
 //   ⑤ `duration_seconds` 一律取响应的**实测** `duration`（`>0` 才用，否则记 `0`），**不使用标称值**；
@@ -275,8 +277,39 @@ export const resolveMeditationPlayableFormats = (audio = {}) => (
     .filter((format) => Boolean(format.format) && Boolean(format.url))
 )
 
+// 交付双格式（R39-④：可交付 ⇔ `transcoded_formats` 同时含 opus 与 mp3 且 file_id 齐备）。
+//   元数据-only 池（R51-①：池只下发 `id` / `section_type` / `duration` / `标签`，**无 URL**）里
+//   条目没有可播 URL，故据「可交付标记」判定可选中后，按此**派生**格式清单，使端侧仍能据
+//   `formats[].format` 组装播放清单（真实 URL 由 `signAudios` 抽中后现签）。**不改变**带 URL 候选的输出。
+const MEDITATION_PLAYBACK_DELIVERED_FORMATS = Object.freeze(['opus', 'mp3'])
+
+// 可交付标记（D6 池元数据新增；R51-① 配套）：`audio.deliverable` 为布尔时以其为准（**URL 一律忽略**）；
+//   缺该键（老响应 / 过渡态）⇒ 返回 `null` ⇒ 调用方回退旧判据（存在可用 URL 格式）。
+//   `deliverable === false` ⇒ 恒不可选中（不可交付项不得被抽中）。
+export const resolveMeditationAudioDeliverable = (audio = {}) => (
+  isPlainObject(audio) && typeof audio.deliverable === 'boolean' ? audio.deliverable : null
+)
+
+// 「可选中」判据（R49-⑤⑧ / R51-①）：**优先**可交付标记（存在即以其为准、**不要求 `formats[].url`**）；
+//   无标记 ⇒ 回退旧判据（`formats[].url` 非空）。**向后兼容**：URL 池（无标记）逐字沿用旧行为。
+export const isMeditationAudioSelectable = (audio = {}) => {
+  const deliverable = resolveMeditationAudioDeliverable(audio)
+  return deliverable !== null ? deliverable : resolveMeditationPlayableFormats(audio).length > 0
+}
+
 const buildPlayableAudio = ({ audio = {}, sectionType = '' }) => {
-  const formats = resolveMeditationPlayableFormats(audio)
+  const explicitFormats = resolveMeditationPlayableFormats(audio)
+  // 可交付标记为真、但池未带可播 URL（R51-① 元数据-only 池）⇒ 按交付契约（R39-④ 双格式）派生格式清单。
+  const formats = explicitFormats.length > 0
+    ? explicitFormats
+    : (resolveMeditationAudioDeliverable(audio) === true
+      ? MEDITATION_PLAYBACK_DELIVERED_FORMATS.map((format) => ({
+        format,
+        url: '',
+        mime_type: '',
+        is_fallback: format === MEDITATION_PLAYBACK_MIX_FORMATS.mp3
+      }))
+      : [])
   const primary = formats[0] || null
 
   return {
@@ -291,14 +324,14 @@ const buildPlayableAudio = ({ audio = {}, sectionType = '' }) => {
   }
 }
 
-// 抽 1 条：先滤掉「无可用格式」的候选，再从可播候选里按 `rng` 抽（默认 `Math.random`）。
+// 抽 1 条：先滤掉「不可选中」的候选（可交付标记为准、无标记才要求可用 URL），再从可选中候选里按 `rng` 抽（默认 `Math.random`）。
 export const selectMeditationPlayableAudio = ({ sectionType = '', pool = null, rng = Math.random } = {}) => {
   if (!Array.isArray(pool) || pool.length === 0) {
     return { ok: false, code: MEDITATION_PLAYBACK_WARNING_CODES.emptyPool }
   }
 
   const playableCandidates = pool
-    .filter((audio) => resolveMeditationPlayableFormats(audio).length > 0)
+    .filter((audio) => isMeditationAudioSelectable(audio))
     .map((audio) => buildPlayableAudio({ audio, sectionType }))
 
   if (playableCandidates.length === 0) {
@@ -382,7 +415,7 @@ const resolvePinnedSlotAudio = ({ pools, sectionType, audioId }) => {
     const match = pool.find((audio) => getString(audio?._id || audio?.id).trim() === audioId)
 
     if (match) {
-      if (resolveMeditationPlayableFormats(match).length === 0) {
+      if (!isMeditationAudioSelectable(match)) {
         return { ok: false, code: MEDITATION_PLAYBACK_WARNING_CODES.noPlayableFormat }
       }
 

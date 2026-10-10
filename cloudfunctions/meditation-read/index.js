@@ -19,7 +19,8 @@
 //     **`file_id` 仍不下发**（R46-⑥ 白名单增量，原 15 项禁发与其余白名单不变）；
 //     **缺失 / 不齐 / 签发失败 ⇒ 不下发该键**（端侧据此回退双轨，端侧口径见 R45-⑥）。
 //   · **R51（v4.34，2026-10-10）新增两个 action（登记附录 C / C35 · C44；只增不改）**：
-//     ① `getPools`＝**池元数据下发**（只 `id` / `section_type` / `duration` / `label`，**无 URL / file_id**）；
+//     ① `getPools`＝**池元数据下发**（只 `id` / `section_type` / `duration` / `label` /
+//        **可交付标记 `deliverable`**，**无 URL / file_id**）；
 //        上限＝每个 `section_type` ≤ MAX_POOL_CANDIDATES_PER_SECTION_TYPE（20，收敛 R39 「查询 50 / 下发 10」口径）。
 //     ② `signAudios`＝**按 `audio_id` 批量现签**（`med_section_audios` 文档 id）——内部按
 //        **单次 ≤ 50 个 fileID 分批**（R51-② 硬上限）现签，逐批 ≤ MAX_TEMP_URL_BATCH_SIZE（50）；
@@ -573,8 +574,8 @@ const resolvePoolScope = async ({ db, event }) => {
   }
 }
 
-// `getPools`（R51-① / C35）：只下发**池元数据**（`id` / `section_type` / `duration` / `label`），
-//   **绝不签发、绝不下发任何 URL / file_id**——URL 一律由 `signAudios` 在抽中后按需现签。
+// `getPools`（R51-① / C35）：只下发**池元数据**（`id` / `section_type` / `duration` / `label` /
+//   **`deliverable`**），**绝不签发、绝不下发任何 URL / file_id**——URL 一律由 `signAudios` 在抽中后按需现签。
 //   上限＝每个 `section_type` ≤ MAX_POOL_CANDIDATES_PER_SECTION_TYPE（20），截断如实回报。
 const handleGetPools = async ({ db, event, requestId }) => {
   const scopeResult = await resolvePoolScope({ db, event })
