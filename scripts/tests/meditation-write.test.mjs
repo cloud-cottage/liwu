@@ -106,6 +106,59 @@ const stubApp = ({ identity = {} } = {}) => ({
   auth: () => ({ getUserInfo: () => ({ ...identity }) })
 })
 
+// 有状态桩 db（供 updateTrack 部分更新链路：create→update→get 真读回）：update/remove 真改内存 store。
+const createStatefulDb = (seed = {}) => {
+  const store = new Map()
+  Object.entries(seed).forEach(([name, docs]) => {
+    store.set(name, (docs || []).map((doc) => ({ ...doc })))
+  })
+  const rows = (name) => {
+    if (!store.has(name)) {
+      store.set(name, [])
+    }
+    return store.get(name)
+  }
+  let seq = 0
+
+  return {
+    command: { in: (values) => ({ __in: values }), gt: (value) => ({ __gt: value }) },
+    collection: (name) => ({
+      doc: (id) => ({
+        get: async () => ({ data: rows(name).filter((doc) => doc._id === id) }),
+        update: async (payload) => {
+          const doc = rows(name).find((item) => item._id === id)
+          if (!doc) {
+            return { updated: 0 }
+          }
+          Object.assign(doc, payload)
+          return { updated: 1 }
+        },
+        remove: async () => {
+          const list = rows(name)
+          const index = list.findIndex((item) => item._id === id)
+          if (index < 0) {
+            return { deleted: 0 }
+          }
+          list.splice(index, 1)
+          return { deleted: 1 }
+        }
+      }),
+      where: (cond) => ({
+        limit: (n) => ({ get: async () => ({ data: rows(name).filter((doc) => matchCond(doc, cond)).slice(0, n) }) }),
+        get: async () => ({ data: rows(name).filter((doc) => matchCond(doc, cond)) }),
+        count: async () => ({ total: rows(name).filter((doc) => matchCond(doc, cond)).length })
+      }),
+      limit: (n) => ({ get: async () => ({ data: rows(name).slice(0, n) }) }),
+      add: async (data) => {
+        seq += 1
+        const id = `auto_${name}_${seq}`
+        rows(name).push({ ...data, _id: id })
+        return { id }
+      }
+    })
+  }
+}
+
 // 默认 admin 种子（u-admin 带【管理员】标签；u-plain 无标签）。
 const ADMIN_SEED = {
   users: [
@@ -424,6 +477,135 @@ console.log('\n== ⑤ 静态边界与文案 ==')
   ]
   eq('E8 action 清单逐条一致（21 条）', contract.ACTIONS && Object.values(contract.ACTIONS).sort(), [...expectedActions].sort())
   ok('E9 ACTION_HANDLERS 覆盖全部 action', expectedActions.every((a) => typeof meditationWrite.__test__.ACTION_HANDLERS[a] === 'function'))
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+console.log('\n== ⑥ updateTrack 真部分更新（回归断言：仅改 name 不得重建 / 丢失 chapters）==')
+
+{
+  const H = meditationWrite.__test__.ACTION_HANDLERS
+  const dummyAuth = { ok: true, user_id: 'u-admin', binding: 'claimed_auth_uid' }
+  const CH = template.MEDITATION_TRACK_CHAPTER_TEMPLATE
+  const clone = (value) => JSON.parse(JSON.stringify(value))
+  const slot = (index, sectionType) => ({
+    slot_index: index,
+    section_type: sectionType,
+    selector: { kind: 'pool', section_type: sectionType, tags: [] },
+    policy: 'random'
+  })
+
+  // create 载荷：section-start 带 1 个槽 + gap 5；section-end enabled=false；其余默认。
+  const buildChapters = () => CH.map((chapter) => {
+    const base = {
+      chapter_key: chapter.chapter_key,
+      order: chapter.order,
+      enabled: true,
+      max_duration_seconds: chapter.max_duration_seconds,
+      gap_after_seconds: chapter.chapter_key === 'section-end'
+        ? 0
+        : template.MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
+      section_types: [...chapter.section_types]
+    }
+    if (chapter.chapter_key === 'section-start') {
+      return { ...base, gap_after_seconds: 5, slots: [slot(0, 'anchorGreeting')] }
+    }
+    if (chapter.chapter_key === 'section-end') {
+      return { ...base, enabled: false }
+    }
+    return base
+  })
+
+  const db = createStatefulDb({ med_tracks: [] })
+
+  const created = await H.createTrack({
+    db,
+    event: { data: { track_key: 'track-partial', name: '一版', chapters: buildChapters() } },
+    requestId: 'r',
+    auth: dummyAuth
+  })
+  ok('F1 createTrack（带 slots/gap/enabled=false）成功、version=1', created.ok === true && created.data.document.version === 1)
+  const trackId = created.data.id
+
+  // 快照（深拷贝，避免与库内对象别名导致「比较恒真」）——create 后的章节基线。
+  const beforeDoc = clone((await H.getTrack({ db, event: { id: trackId }, requestId: 'r', auth: dummyAuth })).data.document)
+  const beforeChapters = beforeDoc.chapters
+  const startBefore = beforeChapters.find((c) => c.chapter_key === 'section-start')
+  const endBefore = beforeChapters.find((c) => c.chapter_key === 'section-end')
+  ok('F2 create 后 section-start 有 1 个槽', Array.isArray(startBefore.slots) && startBefore.slots.length === 1)
+  eq('F3 create 后 section-start gap=5', startBefore.gap_after_seconds, 5)
+  eq('F4 create 后 section-end enabled=false', endBefore.enabled, false)
+
+  // ① update 仅 name ⇒ chapters 逐字段不变（slots 数量与内容、gap、enabled 全保真）。
+  const upd1 = await H.updateTrack({ db, event: { id: trackId, data: { name: '一版 v2' } }, requestId: 'r', auth: dummyAuth })
+  ok('F5 updateTrack 仅 name ⇒ 成功', upd1.ok === true)
+  const after1 = clone((await H.getTrack({ db, event: { id: trackId }, requestId: 'r', auth: dummyAuth })).data.document)
+  eq('F6 update 仅 name ⇒ name 已改', after1.name, '一版 v2')
+  eq('F7 update 仅 name ⇒ chapters 逐字段与 create 后完全相同', after1.chapters, beforeChapters)
+  const startAfter1 = after1.chapters.find((c) => c.chapter_key === 'section-start')
+  eq('F8 update 仅 name ⇒ slots 未丢（仍 1 个、内容一致）', startAfter1.slots, startBefore.slots)
+  eq('F9 update 仅 name ⇒ section-start gap 未变（5，非模板默认 141）', startAfter1.gap_after_seconds, 5)
+  eq('F10 update 仅 name ⇒ section-end enabled 未变（false，非 true）', after1.chapters.find((c) => c.chapter_key === 'section-end').enabled, false)
+  eq('F11 update 后 version=2（库内基线 +1）', after1.version, 2)
+
+  // ② update 传部分 chapters ⇒ 未提及的章不变；提及的章只改传入子字段。
+  const upd2 = await H.updateTrack({
+    db,
+    event: { id: trackId, data: { chapters: [{ chapter_key: 'section-truth', gap_after_seconds: 30 }] } },
+    requestId: 'r',
+    auth: dummyAuth
+  })
+  ok('F12 updateTrack 传部分 chapters ⇒ 成功', upd2.ok === true)
+  const after2 = clone((await H.getTrack({ db, event: { id: trackId }, requestId: 'r', auth: dummyAuth })).data.document)
+  eq('F13 未提及的章（section-start）逐字段不变', after2.chapters.find((c) => c.chapter_key === 'section-start'), startBefore)
+  eq('F14 提及的章 section-truth gap 更新为 30', after2.chapters.find((c) => c.chapter_key === 'section-truth').gap_after_seconds, 30)
+  eq('F15 未提及的章 section-end enabled 仍 false', after2.chapters.find((c) => c.chapter_key === 'section-end').enabled, false)
+  eq('F16 未提及的章 chapter-nature 与 create 后一致', after2.chapters.find((c) => c.chapter_key === 'chapter-nature'), beforeChapters.find((c) => c.chapter_key === 'chapter-nature'))
+
+  // ③ update 传某章 slots ⇒ 只替换该章（其它章槽位 / 整章不动）。
+  const endBefore3 = clone(after2.chapters.find((c) => c.chapter_key === 'section-end'))
+  const upd3 = await H.updateTrack({
+    db,
+    event: { id: trackId, data: { chapters: [{ chapter_key: 'section-breath', slots: [slot(0, 'essentialBreath'), slot(1, 'flowingRespiration')] }] } },
+    requestId: 'r',
+    auth: dummyAuth
+  })
+  ok('F17 updateTrack 传某章 slots ⇒ 成功', upd3.ok === true)
+  const after3 = clone((await H.getTrack({ db, event: { id: trackId }, requestId: 'r', auth: dummyAuth })).data.document)
+  const breathAfter = after3.chapters.find((c) => c.chapter_key === 'section-breath')
+  eq('F18 section-breath 槽位整体替换为该章传入值（2 槽）', breathAfter.slots, [slot(0, 'essentialBreath'), slot(1, 'flowingRespiration')])
+  eq('F19 其它章（section-start）槽位不变', after3.chapters.find((c) => c.chapter_key === 'section-start').slots, startBefore.slots)
+  eq('F20 其它章（section-end）整章不变', after3.chapters.find((c) => c.chapter_key === 'section-end'), endBefore3)
+
+  // ④ update 传非法槽位 ⇒ 仍走槽位校验、显式拒绝。
+  let threwBad = ''
+  try {
+    await H.updateTrack({
+      db,
+      event: { id: trackId, data: { chapters: [{ chapter_key: 'section-start', slots: [slot(0, 'sec-nature')] }] } },
+      requestId: 'r',
+      auth: dummyAuth
+    })
+  } catch (error) { threwBad = error.message }
+  ok('F21 updateTrack 非法槽位（越界段类型）⇒ 抛并给槽位文案', threwBad.includes('槽位配置有') && threwBad.includes('不属于本章允许范围'))
+
+  // ⑤ 未传 chapters ⇒ 写入载荷不含 chapters 键（绝不重建）；只含传入字段 + version + updated_at。
+  let capturedPayload = null
+  const dbCapture = createDb(
+    { med_tracks: [{ _id: 't1', name: 'orig', version: 3, chapters: buildChapters() }] },
+    { update: (name, id, payload) => { capturedPayload = payload; return { updated: 1 } } }
+  )
+  await H.updateTrack({ db: dbCapture, event: { id: 't1', data: { name: 'renamed' } }, requestId: 'r', auth: dummyAuth })
+  ok('F22 未传 chapters ⇒ 写入载荷不含 chapters 键（绝不重建）', capturedPayload !== null && !('chapters' in capturedPayload))
+  eq('F23 未传 chapters ⇒ 载荷 version＝库内基线+1（3→4）', capturedPayload.version, 4)
+  eq('F24 未传 chapters ⇒ 载荷只含传入字段 + version + updated_at', Object.keys(capturedPayload).sort(), ['name', 'updated_at', 'version'])
+
+  // ⑥ 纯函数契约：mergeMedTrackChapters 只合并传入子字段、未出现的章原样保留。
+  const mergeNorm = norm.mergeMedTrackChapters({
+    incoming: [{ chapter_key: 'section-start', gap_after_seconds: 9 }],
+    existing: buildChapters()
+  })
+  eq('F25 mergeMedTrackChapters 未提及的章原样（section-end enabled=false 保真）', mergeNorm.find((c) => c.chapter_key === 'section-end').enabled, false)
+  eq('F26 mergeMedTrackChapters 提及章只改传入子字段（gap=9、slots 保留）', [mergeNorm.find((c) => c.chapter_key === 'section-start').gap_after_seconds, mergeNorm.find((c) => c.chapter_key === 'section-start').slots.length], [9, 1])
 }
 
 console.log(`\n== 汇总：${pass} PASS / ${fail} FAIL ==`)

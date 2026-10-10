@@ -189,6 +189,71 @@ const toMedTrackPayload = (track = {}) => {
   }
 }
 
+// ─── 部分更新：chapters 逐章合并（updateTrack 部分更新语义） ──────────────────────
+// 规则（只更新传入的子字段，绝不重建未提及的章）：
+//   · 按 `chapter_key` 定位（旧别名先归一）；**未出现的章原样保留**（不折回模板默认值）；
+//   · 出现的章只覆盖传入的子字段（label / enabled / max_duration_seconds /
+//     gap_after_seconds / slots），未传的子字段保留库内原值；
+//   · `slots` 传入 ⇒ **整体替换该章槽位**（随后由调用方跑槽位校验 + 归一白名单）；未传 ⇒ 保留原值；
+//   · 章序 `order` / `section_types` **不可由调用方改**（由模板派生，归一即折回模板）。
+const TRACK_CHAPTER_OVERRIDABLE_KEYS = Object.freeze([
+  'label',
+  'enabled',
+  'max_duration_seconds',
+  'gap_after_seconds',
+  'slots'
+])
+
+const mergeMedTrackChapterEntry = (existing = {}, patch = {}) => {
+  const source = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}
+  const incoming = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
+  const merged = { ...source }
+
+  TRACK_CHAPTER_OVERRIDABLE_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(incoming, key)) {
+      merged[key] = incoming[key] // slots ⇒ 整体替换（非逐槽合并）
+    }
+  })
+
+  return merged
+}
+
+const resolveTrackChapterKey = (chapter = {}) => {
+  const raw = chapter?.chapter_key
+  const normalized = normalizeMeditationChapterCode(raw)
+  return normalized || (raw != null ? String(raw).trim() : '')
+}
+
+const mergeMedTrackChapters = ({ incoming = [], existing = [] } = {}) => {
+  const incomingList = Array.isArray(incoming) ? incoming : []
+  const existingList = Array.isArray(existing) ? existing : []
+
+  const incomingByKey = new Map()
+  incomingList.forEach((chapter) => {
+    const key = resolveTrackChapterKey(chapter)
+    if (key && !incomingByKey.has(key)) {
+      incomingByKey.set(key, chapter)
+    }
+  })
+  const existingKeys = new Set(existingList.map((chapter) => resolveTrackChapterKey(chapter)))
+
+  // 以库内章为基（保序、保原值），逐章按 key 覆盖传入子字段；未出现的章**原样保留**。
+  const merged = existingList.map((chapter) => {
+    const patch = incomingByKey.get(resolveTrackChapterKey(chapter))
+    return patch ? mergeMedTrackChapterEntry(chapter, patch) : chapter
+  })
+  // 传入但库内不存在的章（罕见）⇒ 追加后由归一折回六章模板。
+  incomingList.forEach((chapter) => {
+    const key = resolveTrackChapterKey(chapter)
+    if (key && !existingKeys.has(key)) {
+      merged.push(chapter)
+    }
+  })
+
+  // 归一（六章模板折回 + 槽位白名单 4 键）：对**已归一**文档幂等，故未提及的章逐字段保真。
+  return normalizeMedTrackChapters(merged)
+}
+
 module.exports = {
   MEDITATION_TRACK_COLLECTION,
   MEDITATION_TRACK_DEFAULT_KEY,
@@ -197,6 +262,8 @@ module.exports = {
   normalizeSlotSelector,
   normalizeChapterSlots,
   normalizeMedTrackChapters,
+  mergeMedTrackChapterEntry,
+  mergeMedTrackChapters,
   normalizeMedTrack,
   toMedTrackPayload
 }

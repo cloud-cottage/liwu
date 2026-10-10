@@ -33,7 +33,8 @@ const {
 
 const {
   MEDITATION_TRACK_COLLECTION,
-  toMedTrackPayload
+  toMedTrackPayload,
+  mergeMedTrackChapters
 } = require('./meditation-track-normalizers.js')
 
 // ─── 集合名 ──────────────────────────────────────────────────────────────────
@@ -521,15 +522,57 @@ const buildTrackCreatePayload = (data = {}, nowIso = '') => {
   }
 }
 
-const buildTrackUpdatePayload = (data = {}, nowIso = '') => {
-  const trackPayload = toMedTrackPayload(data)
+// updateTrack 可直接覆盖的**标量 / 顶层字段**（白名单）：只有传入时才写入。
+//   `chapters` 单独处理（逐章合并）；`version` / `created_at` / `created_by` 不在此列（服务端派生 / 不可改）。
+const TRACK_UPDATE_TOP_LEVEL_KEYS = Object.freeze([
+  'track_key',
+  'name',
+  'description',
+  'enabled',
+  'is_default',
+  'total_target_seconds',
+  'background_track',
+  'voice_track',
+  'updated_by'
+])
 
-  return {
-    ...trackPayload,
-    // 版本推进：每次保存 version +1（D7 可复现追溯以版本号为准）。
-    version: trackPayload.version + 1,
-    updated_at: nowIso
+const toPositiveVersion = (value, fallback) => {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : fallback
+}
+
+// ─── updateTrack 载荷：**真部分更新**（只更新传入的字段；未传一章不动） ────────────────
+// 【缺陷修复】旧实现把整份文档过 `toMedTrackPayload` 归一 ⇒ 只传 `name` 时 `chapters` 被
+//   整章重建为默认模板 ⇒ 丢 `slots` / 章间留白覆盖 / 章启用态。现改为：
+//   · 未传入的顶层字段**一概不写**（`chapters` 未传 ⇒ 写入载荷不含该键，库内章节原样保留）；
+//   · `chapters` 传入 ⇒ **逐章按 `chapter_key` 合并**：未出现的章原样保留、出现的章只覆盖传入
+//     子字段，`slots` 传入 ⇒ 整体替换该章槽位（未传 ⇒ 保留原值）；由 handler 在写入前跑槽位校验。
+//   · `version` 以**库内既有值**为基线 +1（`existingDocument` 缺省时回退到 `data.version`，仅供
+//     纯函数单测；handler 一律传入既有文档）。
+const buildTrackUpdatePayload = (data = {}, nowIso = '', existingDocument = null) => {
+  const source = isPlainObject(data) ? data : {}
+  const existing = isPlainObject(existingDocument) ? existingDocument : {}
+  const payload = {}
+
+  TRACK_UPDATE_TOP_LEVEL_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      payload[key] = source[key]
+    }
+  })
+
+  if (Object.prototype.hasOwnProperty.call(source, 'chapters')) {
+    payload.chapters = mergeMedTrackChapters({
+      incoming: source.chapters,
+      existing: existing.chapters
+    })
   }
+
+  // 版本推进：每次成功保存 version +1（D7 可复现追溯以版本号为准）；基线取库内既有值。
+  const baseVersion = toPositiveVersion(existing.version, toPositiveVersion(source.version, 1))
+  payload.version = baseVersion + 1
+  payload.updated_at = nowIso
+
+  return payload
 }
 
 module.exports = {

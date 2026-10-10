@@ -41,6 +41,13 @@
 `create*`→`{ collection, id, document }`；`update*`→`{ collection, id, updated, read_back_verified }`；
 `remove*`→`{ collection, id, deleted }`。
 
+> **`read_back_verified` 语义（与 R40 有条件例外口径一致）**：本字段＝**本次是否按 R40「有条件例外」
+> 走了『一次性读回比对』**。取值 `true` ⇒ `updated<1` 且无 `code`，已读回并对「本次写入的键」做
+> `Date→ISO`／键序无关深比较且**一致**（幂等 no-op）；取值 `false` ⇒ `updated>=1` 快路径——写入
+> **已由「内容真正发生变化的文档数」确认生效**、**无需读回**。**两者都是「已确认写入生效」**；
+> `false` **绝不代表**校验失败或未校验。R40 的有条件例外本就**只在 `updated<1` 分支**触发，故本
+> 字段如实反映该分支是否被走到，不改变判据。
+
 | # | action | 入参 | 说明 |
 |---|--------|------|------|
 | 1 | `whoami` | `user_id?`、`auth_uid?` | **唯一不抛**的动作：回报 `{authorized, error_code, binding, user_id, is_admin, framework_identity_present, framework_identity_source}`。供后台判定登录态。 |
@@ -62,7 +69,7 @@
 | 17 | `listTracks` | `limit?` | 列 `med_tracks`。 |
 | 18 | `getTrack` | `id` | 取单条（**原样返回落库文档**，不做读侧折回；折回属 `meditation-read`）。 |
 | 19 | `createTrack` | `data` | 建；`chapters` 走**权威归一**（六章模板、末章 gap=0、**槽位白名单 4 键**）；`version=1`；**写入前槽位校验**（非法 ⇒ 抛、逐项文案）。 |
-| 20 | `updateTrack` | `id`、`data` | 改；`version+1`；**槽位校验**；**R40 读回比对**。 |
+| 20 | `updateTrack` | `id`、`data` | 改；**真部分更新**（见 §4.1）；`version+1`（以库内既有值为基线）；**槽位校验**；**R40 读回比对**。 |
 | 21 | `removeTrack` | `id` | 删（**R38-① 断言**）。 |
 
 > `chapters[].slots[]` 形状＝`{ slot_index, section_type, selector, policy }`；`selector` 只认
@@ -124,6 +131,27 @@
 - **`remove` 断言影响条数**：`deleted < 1` ⇒ 抛「**{entityLabel}删除失败：影响条数为 0（文档不存在或无权删除）**」。
 - CloudBase 以 **resolve** 返回 `{code,message}`（权限静默 / 集合缺失）⇒ 一律**显式抛错**，不把「没报错」当「写到了」。
 
+### 4.1 `updateTrack` 的真部分更新语义（缺陷修复；只更新传入的字段）
+
+**规则（硬）**：`updateTrack` **只更新 `data` 里出现的字段**，未传入的字段**一概不写**（库内原值保留）。
+
+- **未传 `chapters`** ⇒ 写入载荷**不含 `chapters` 键** ⇒ 章节（含每章 `slots` / `gap_after_seconds` /
+  `enabled` / `max_duration_seconds` / `label`）**原样保留，绝不重建**。
+  ⚠ 历史缺陷：旧实现把整份文档过 `toMedTrackPayload` 归一 ⇒ 只传 `{name}` 时 `chapters` 被**整章重建
+  为默认模板** ⇒ 同时丢失「`slots`（有槽 → 0）」「章间留白覆盖（如 5 → 141）」「章启用态（false → true）」。本语义即修复。
+- **传入 `chapters`** ⇒ **逐章按 `chapter_key` 合并**（旧别名先归一）：
+  - **未出现的章原样保留**（不折回模板默认值）；
+  - 出现的章**只覆盖传入的子字段**（`label` / `enabled` / `max_duration_seconds` /
+    `gap_after_seconds` / `slots`），未传子字段保留库内原值；
+  - 传入 `slots` ⇒ **整体替换该章槽位**（非逐槽合并），并照常跑**槽位校验**（取值域 v4.39 / 白名单 4 键；非法 ⇒ 拒绝）；
+  - 章序 `order` / 章内 `section_types` **不可由调用方改**（由模板派生，归一折回六项模板）。
+- **`version+1`**：每次成功保存 `version + 1`，基线取**库内既有 `version`**（新建从 1 起）。
+- **底层实现**：handler 先 `fetchDocumentById` 读既有文档 → `buildTrackUpdatePayload(data, nowIso, existing)`
+  做「按字段白名单覆盖 + `mergeMedTrackChapters` 逐章合并」→ `beforeWrite` 槽位校验 → `updateDocumentAndVerify`
+  （R40：`updated>=1` 直通；`updated<1` 且无 `code` ⇒ 一次性读回比对；文案口径同一）。文档不存在 ⇒ `DOC_NOT_FOUND`。
+- **回归断言**：`scripts/tests/meditation-write.test.mjs` §⑥ F1~F26（create 带 slots/gap/enabled=false →
+  update 仅 name → chapters 逐字段不变；部分 chapters ⇒ 未提及章不变；某章 slots ⇒ 只替换该章；非法槽位拒绝）。
+
 ---
 
 ## 5. 部署
@@ -153,4 +181,4 @@ cloudfunctions/meditation-write/
 - **D-B2-8**：SCF 只打包函数目录，`lib/*.js` 为权威源（`packages/shared-utils/*`、
   `apps/web/src/admin/utils/meditationTrackSlots.js`）的**精简等价副本**，各自文件头注明权威源与同步责任；
   不一致时一律以权威源为准。
-- 桩测：`node scripts/tests/meditation-write.test.mjs`（69 条，桩面 / 静态；**不等于**真实 CloudBase 往返）。
+- 桩测：`node scripts/tests/meditation-write.test.mjs`（95 条，桩面 / 静态；**不等于**真实 CloudBase 往返）。

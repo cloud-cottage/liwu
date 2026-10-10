@@ -393,7 +393,8 @@ const createCollectionHandlers = ({
   actions,
   buildCreatePayload,
   buildUpdatePayload,
-  beforeWrite
+  beforeWrite,
+  resolveUpdatePayload
 }) => {
   const names = actions
 
@@ -448,7 +449,26 @@ const createCollectionHandlers = ({
       }
 
       const nowIso = new Date().toISOString()
-      const payload = buildUpdatePayload(dataResult.value, nowIso)
+      // 部分更新（med_tracks 专属）：resolveUpdatePayload 需读既有文档做逐章合并 ⇒ 用它替代确定性
+      // 的 buildUpdatePayload；返回 `{ ok:false, error }` 视为结构化错误直接短路（如文档不存在）。
+      let payload
+      if (typeof resolveUpdatePayload === 'function') {
+        const resolved = await resolveUpdatePayload({
+          db,
+          collection,
+          id: idResult.value,
+          data: dataResult.value,
+          nowIso
+        })
+
+        if (resolved && resolved.ok === false && typeof resolved.error === 'string') {
+          return resolved
+        }
+
+        payload = resolved
+      } else {
+        payload = buildUpdatePayload(dataResult.value, nowIso)
+      }
 
       if (typeof beforeWrite === 'function') {
         beforeWrite(payload)
@@ -550,6 +570,17 @@ const tracks = createCollectionHandlers({
   },
   buildCreatePayload: buildTrackCreatePayload,
   buildUpdatePayload: buildTrackUpdatePayload,
+  // updateTrack＝**真部分更新**：先读既有文档，再做「只改传入字段 + chapters 逐章合并」的载荷组装
+  // （未传 `chapters` ⇒ 载荷不含该键、库内章节原样保留，绝不重建）。文档不存在 ⇒ 结构化 DOC_NOT_FOUND。
+  resolveUpdatePayload: async ({ db, id, data, nowIso }) => {
+    const existing = await fetchDocumentById({ db, collection: COLLECTIONS.medTracks, id })
+
+    if (!existing) {
+      return buildDocNotFound(COLLECTIONS.medTracks, id)
+    }
+
+    return buildTrackUpdatePayload(data, nowIso, existing)
+  },
   beforeWrite: assertTrackSlotsWritable
 })
 
