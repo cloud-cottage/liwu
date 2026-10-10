@@ -43,6 +43,13 @@
       "installDependency": true
     },
     {
+      "name": "meditation-write",
+      "timeout": 30,
+      "memorySize": 128,
+      "runtime": "Nodejs18.15",
+      "installDependency": true
+    },
+    {
       "name": "meditation-transcoder",
       "timeout": 300,
       "memorySize": 512,

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# 部署冥想云函数（meditation-read / meditation-session / meditation-transcoder）——前置检查 + 部署
+# 部署冥想云函数（meditation-read / meditation-session / meditation-write / meditation-transcoder）——前置检查 + 部署
 # 风格对齐 scripts/deploy-fortune-daily-settlement.sh。
 #
 # 用法：
-#   ./scripts/deploy-meditation-functions.sh <read|session|transcoder|all> [--yes] [--force]
+#   ./scripts/deploy-meditation-functions.sh <read|session|write|transcoder|all> [--yes] [--force]
 #
 # 安全默认（默认不动手）：
 #   * 不带 --yes ⇒ **dry-run**：只做只读检查（CLI / 登录态 / 环境 ID / cloudbaserc.json 条目与层回填）
@@ -42,11 +42,12 @@ FORCE="${FORCE:-0}"
 
 usage() {
   cat <<'EOF'
-用法：./scripts/deploy-meditation-functions.sh <read|session|transcoder|all> [--yes] [--force]
+用法：./scripts/deploy-meditation-functions.sh <read|session|write|transcoder|all> [--yes] [--force]
   read        只处理 meditation-read
   session     只处理 meditation-session（上报＋发放写云函数）
+  write       只处理 meditation-write（后台 med_* 写云函数；必须鉴权）
   transcoder  只处理 meditation-transcoder（先查 ffmpeg 层，缺则中止并提示 README §4）
-  all         三个都处理
+  all         四个都处理
   --yes       真正执行（缺省为 dry-run：仅只读检查 + 回显命令）
   --force     部署时附加 --force（覆盖同名函数）
 EOF
@@ -100,7 +101,7 @@ for arg in "$@"; do
 done
 
 case "$TARGET" in
-  read | session | transcoder | all) ;;
+  read | session | write | transcoder | all) ;;
   *) usage; exit 2 ;;
 esac
 
@@ -153,6 +154,9 @@ assert_cfg meditation-read memorySize 128
 assert_cfg meditation-session installDependency true
 assert_cfg meditation-session timeout 30
 assert_cfg meditation-session memorySize 128
+assert_cfg meditation-write installDependency true
+assert_cfg meditation-write timeout 30
+assert_cfg meditation-write memorySize 128
 assert_cfg meditation-transcoder installDependency true
 assert_cfg meditation-transcoder timeout 300
 assert_cfg meditation-transcoder memorySize 512
@@ -269,6 +273,9 @@ fi
 if [ "$TARGET" = "session" ] || [ "$TARGET" = "all" ]; then
   deploy_function meditation-session
 fi
+if [ "$TARGET" = "write" ] || [ "$TARGET" = "all" ]; then
+  deploy_function meditation-write
+fi
 if [ "$TARGET" = "transcoder" ] || [ "$TARGET" = "all" ]; then
   deploy_function meditation-transcoder
 fi
@@ -280,6 +287,10 @@ fi
 if [ "$TARGET" = "session" ] || [ "$TARGET" = "all" ]; then
   say "cloudbase functions:invoke meditation-session -e $ENV_ID --params '{\"action\":\"reportCompletion\",...}'   # 参数只能走 --params"
   say "  · 依赖控制台把新集合 med_play_sessions 的客户端权限关死（仅云函数可写），见 meditation-session/README.md §5"
+fi
+if [ "$TARGET" = "write" ] || [ "$TARGET" = "all" ]; then
+  say "cloudbase functions:invoke meditation-write -e $ENV_ID --params '{\"action\":\"whoami\",\"user_id\":\"...\"}'   # 参数只能走 --params"
+  say "  · 依赖后台把 meditation-write 的鉴权路径落成（管理标签＋身份关联），见 meditation-write/README.md §3"
 fi
 if [ "$TARGET" = "transcoder" ] || [ "$TARGET" = "all" ]; then
   say "cloudbase functions:detail meditation-transcoder -e $ENV_ID   # 复核环境变量 FFMPEG_PATH=${FFMPEG_PATH}（envVariables 为覆盖式）"
