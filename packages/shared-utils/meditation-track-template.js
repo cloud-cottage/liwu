@@ -509,6 +509,21 @@ export const MEDITATION_WORD_COUNT_STATUS_TONES = Object.freeze({
   muted: { color: '#64748b', backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }
 })
 
+// ─── 槽位（R49-②）：selector 类型 与 policy 档位 ─────────────────────────────
+// `med_tracks.chapters[].slots[]` 的取值即权威（`slots[].selector.kind` / `slots[].policy`）。
+// 组合化＝「配方＝发行单位 ＋ 每章有序槽位」；本处只定义**取值域**，不定义任何具体槽位。
+// `random`＝池内随机抽一条；`no_repeat`＝一条配方内不重复（同一次组装不得抽到重复条目）。
+// 读侧（云函数精简副本 / 端侧计划层）改动这几个值＝改口径，先读正本 R49。
+export const MEDITATION_TRACK_SLOT_SELECTOR_KINDS = Object.freeze({
+  pinned: 'pinned',
+  pool: 'pool'
+})
+
+export const MEDITATION_TRACK_SLOT_POLICIES = Object.freeze({
+  random: 'random',
+  noRepeat: 'no_repeat'
+})
+
 // ─── Track 播放模型（双轨） ───────────────────────────────────────────────────
 
 export const MEDITATION_TRACK_BACKGROUND_SECTION_TYPES = Object.freeze(['sec-nature', 'sec-bowl'])

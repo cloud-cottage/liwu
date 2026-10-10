@@ -402,6 +402,18 @@ const MEDITATION_TRACK_VOICE_CONFIG = Object.freeze({
   volume: MEDITATION_TRACK_VOLUMES.voice
 })
 
+// ─── 槽位（R49-②）：selector 类型 与 policy 档位（镜像权威源，同值同步） ─────────
+// `med_tracks.chapters[].slots[]` 的取值即权威（`slots[].selector.kind` / `slots[].policy`）。
+const MEDITATION_TRACK_SLOT_SELECTOR_KINDS = Object.freeze({
+  pinned: 'pinned',
+  pool: 'pool'
+})
+
+const MEDITATION_TRACK_SLOT_POLICIES = Object.freeze({
+  random: 'random',
+  noRepeat: 'no_repeat'
+})
+
 // 段码合法性判定：归一后判定（旧码在新体系下仍视为已知段）。
 const isMeditationSectionType = (sectionType = '') => MEDITATION_SECTION_TYPE_ORDER.includes(
   normalizeMeditationSectionCode(sectionType)
@@ -433,5 +445,7 @@ module.exports = {
   MEDITATION_TRACK_VOICE_SECTION_TYPES,
   MEDITATION_TRACK_BACKGROUND_CONFIG,
   MEDITATION_TRACK_VOICE_CONFIG,
+  MEDITATION_TRACK_SLOT_SELECTOR_KINDS,
+  MEDITATION_TRACK_SLOT_POLICIES,
   isMeditationSectionType
 }

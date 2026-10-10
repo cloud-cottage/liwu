@@ -22,12 +22,6 @@
 //     并在本计划里**标注**（`playback_source` ＋ `mix_audio` ＋ warning 码 `MIX_AUDIO_UNAVAILABLE`）。
 //     **回退路径的双轨数据照旧组装**（`background` / `voice` / `segments` / `selections` / `totals`
 //     语义与取值不变）⇒ 两种来源共用同一份计划结构，端侧按 `playback_source` 分流。
-//   · **R49（v4.32，段落音频组合化与端侧组装）**：配方＝发行单位 ＋ 每章**有序槽位** `chapters[].slots[]`
-//     （`{ slot_index, section_type, selector: pinned(audio_id) | pool(section_type, tags[]), policy }`）。
-//     **有 `slots` ⇒ 以 slots 为准（章内顺序＝数组序）**、段/选择均带 `slot_index`；**无 `slots` 的老 Track
-//     ⇒（R49-③）逐字回退现有 `section_types` 一类型一槽语义**（不写迁移脚本、现网数据不失效）。
-//     `policy` 至少两档：`random`（池内随机）与 `no_repeat`（**一条配方内不重复**，本函数内去重、
-//     不重抽到已用过的 `audio_id`）；槽内抽签仍走 `selectMeditationPlaybackAudio`（`rng` 可注入）。
 //
 // 【设计口径】（本模块自有，规范未逐字规定，已报告 Zang）
 //   ① `segments` 覆盖**启用章**的全部 `section_type`（含背景轨成员），顺序＝模板顺序；每段附
@@ -65,19 +59,6 @@ export const MEDITATION_PLAYBACK_MODES = Object.freeze({
 export const MEDITATION_PLAYBACK_SOURCES = Object.freeze({
   mixAudio: 'mix_audio',
   dualTrack: 'dual_track'
-})
-
-// 槽位（R49-②）的 selector 类型 / policy 档位 —— 值即权威（镜像
-//   `packages/shared-utils/meditation-track-template.js` 的 `MEDITATION_TRACK_SLOT_*`；本模块按 §D9
-//   零 import ⇒ **模板改值时必须同步本处**）。`no_repeat`＝一条配方内不重复（同一次组装不得抽到重复条目）。
-export const MEDITATION_PLAYBACK_SLOT_SELECTOR_KINDS = Object.freeze({
-  pinned: 'pinned',
-  pool: 'pool'
-})
-
-export const MEDITATION_PLAYBACK_SLOT_POLICIES = Object.freeze({
-  random: 'random',
-  noRepeat: 'no_repeat'
 })
 
 // 混音产物两键 → 播放格式名：与权威源 `MEDITATION_SECTION_AUDIO_FORMATS` 的取值**逐字一致**
@@ -133,12 +114,7 @@ export const MEDITATION_PLAYBACK_WARNING_CODES = Object.freeze({
   emptyPool: 'EMPTY_POOL',
   noPlayableFormat: 'NO_PLAYABLE_FORMAT',
   // R45-⑥：混音产物缺失 ⇒ 回退双轨（计划级标注，**无 `section_type`**：不是段级跳过）。
-  mixAudioUnavailable: 'MIX_AUDIO_UNAVAILABLE',
-  // R49 槽位路径专用（**不改变旧 `section_types` 语义**）：selector 非法 / pinned 目标不可用 /
-  //   `no_repeat` 下可播候选被全量剔除（与「池本来为空」区分）。均按「跳过该槽 ＋ 记 warning」处置。
-  slotSelectorInvalid: 'SLOT_SELECTOR_INVALID',
-  pinnedAudioUnavailable: 'PINNED_AUDIO_UNAVAILABLE',
-  noRepeatExhausted: 'NO_REPEAT_EXHAUSTED'
+  mixAudioUnavailable: 'MIX_AUDIO_UNAVAILABLE'
 })
 
 export const MEDITATION_PLAYBACK_PLAN_ERROR_CODES = Object.freeze({
@@ -313,131 +289,6 @@ export const selectMeditationPlayableAudio = ({ sectionType = '', pool = null, r
   return { ok: true, audio: playableCandidates[Math.min(index, playableCandidates.length - 1)] }
 }
 
-// ─── 槽位（R49-②③④）：章内有序槽位解析与抽签 ──────────────────────────────────
-//
-// 规范依据：R49-②（slot 形状 `{ slot_index, section_type, selector, policy }`）、R49-③（**无 `slots`
-//   的老 Track 回退现有 `section_types` 语义**）、R49-④（`slot_index` 为固化字段，**不得再用稳定下标充当**）。
-// 键名口径：以库 / D6 下发的 snake_case 为准（`selector.kind` / `selector.audio_id` /
-//   `selector.section_type` / `selector.tags`）；`kind` 缺失时按字段**容忍推断**（有 audio_id ⇒ pinned、
-//   有 section_type ⇒ pool）——不吞、不猜语义、不抛。
-
-// selector 归一：只认 `pinned(audio_id)` / `pool(section_type, tags[])`；无法判定 ⇒ null。
-const resolveSlotSelector = (selector) => {
-  if (!isPlainObject(selector)) {
-    return null
-  }
-
-  const kind = getString(selector.kind).trim().toLowerCase()
-  const audioId = getString(selector.audio_id != null ? selector.audio_id : selector.audioId).trim()
-  const sectionType = getString(
-    selector.section_type != null ? selector.section_type : selector.sectionType
-  ).trim()
-  const tags = (Array.isArray(selector.tags) ? selector.tags : [])
-    .map((tag) => getString(tag).trim())
-    .filter(Boolean)
-
-  if (kind === MEDITATION_PLAYBACK_SLOT_SELECTOR_KINDS.pinned || (!kind && audioId)) {
-    return audioId ? { kind: MEDITATION_PLAYBACK_SLOT_SELECTOR_KINDS.pinned, audio_id: audioId } : null
-  }
-
-  if (kind === MEDITATION_PLAYBACK_SLOT_SELECTOR_KINDS.pool || (!kind && sectionType)) {
-    return { kind: MEDITATION_PLAYBACK_SLOT_SELECTOR_KINDS.pool, section_type: sectionType, tags }
-  }
-
-  return null
-}
-
-// 章内槽位定义：`trackChapter.slots[]` 非空数组 ⇒ 以 slots 为准（**章内顺序＝数组序**）；
-//   否则返回 `null` ⇒ 调用方走旧 `section_types` 一类型一槽语义（R49-③，逐字不变）。
-const resolveChapterSlotDefinitions = (trackChapter) => {
-  const slots = Array.isArray(trackChapter?.slots) ? trackChapter.slots : []
-
-  if (slots.length === 0) {
-    return null
-  }
-
-  return slots.map((slot, index) => {
-    const selector = resolveSlotSelector(slot?.selector)
-    const declaredSectionType = getString(slot?.section_type).trim()
-    const sectionType = declaredSectionType || (selector ? selector.section_type : '') || ''
-    const policy = getString(slot?.policy).trim() || MEDITATION_PLAYBACK_SLOT_POLICIES.random
-    const rawSlotIndex = Number(slot?.slot_index)
-    // `slot_index` 用**数据里的值**（R49-④；不得拿数组下标充当）；缺失 / 非法时才防御性回退下标。
-    const slotIndex = Number.isInteger(rawSlotIndex) && rawSlotIndex >= 0 ? rawSlotIndex : index
-
-    return { slot_index: slotIndex, section_type: sectionType, selector, policy }
-  })
-}
-
-// 定位 pinned 音频：优先该槽 `section_type` 的池，缺则全池扫描（容忍历史数据段码与槽不一致）。
-const resolvePinnedSlotAudio = ({ pools, sectionType, audioId }) => {
-  const poolsObject = isPlainObject(pools) ? pools : {}
-  const scopedPool = Array.isArray(poolsObject[sectionType]) ? poolsObject[sectionType] : []
-  const otherPools = Object.keys(poolsObject)
-    .filter((key) => key !== sectionType)
-    .map((key) => (Array.isArray(poolsObject[key]) ? poolsObject[key] : []))
-  const candidatePools = [scopedPool, ...otherPools]
-
-  for (const pool of candidatePools) {
-    const match = pool.find((audio) => getString(audio?._id || audio?.id).trim() === audioId)
-
-    if (match) {
-      if (resolveMeditationPlayableFormats(match).length === 0) {
-        return { ok: false, code: MEDITATION_PLAYBACK_WARNING_CODES.noPlayableFormat }
-      }
-
-      return {
-        ok: true,
-        audio: buildPlayableAudio({
-          audio: match,
-          sectionType: getString(match?.section_type).trim() || sectionType
-        })
-      }
-    }
-  }
-
-  return { ok: false, code: MEDITATION_PLAYBACK_WARNING_CODES.pinnedAudioUnavailable }
-}
-
-// 抽一个槽的音频：pinned ⇒ 锁定；pool ⇒ 走 `selectMeditationPlayableAudio`（`rng` 可注入）。
-// `no_repeat` ⇒ 先剔除「本配方已用过的 audio_id」，**不得重抽到已用过的**（用尽则记 `NO_REPEAT_EXHAUSTED`）。
-const drawSlotSelection = ({ slotDefinition, pools, usedAudioIds, rng }) => {
-  const selector = slotDefinition.selector
-
-  if (!selector) {
-    return { ok: false, code: MEDITATION_PLAYBACK_WARNING_CODES.slotSelectorInvalid }
-  }
-
-  if (selector.kind === MEDITATION_PLAYBACK_SLOT_SELECTOR_KINDS.pinned) {
-    return resolvePinnedSlotAudio({
-      pools,
-      sectionType: slotDefinition.section_type,
-      audioId: selector.audio_id
-    })
-  }
-
-  const poolSectionType = selector.section_type || slotDefinition.section_type
-  const rawPool = isPlainObject(pools) && Array.isArray(pools[poolSectionType]) ? pools[poolSectionType] : []
-  const noRepeat = slotDefinition.policy === MEDITATION_PLAYBACK_SLOT_POLICIES.noRepeat
-
-  if (!noRepeat) {
-    return selectMeditationPlayableAudio({ sectionType: poolSectionType, pool: rawPool, rng })
-  }
-
-  const filteredPool = rawPool.filter((audio) => {
-    const id = getString(audio?._id || audio?.id).trim()
-    return !id || !usedAudioIds.has(id)
-  })
-  const selection = selectMeditationPlayableAudio({ sectionType: poolSectionType, pool: filteredPool, rng })
-
-  // 原池非空、但候选被 `no_repeat` 全量剔除 ⇒ 单独记码（与「池本来为空」区分）。
-  if (!selection.ok && rawPool.length > 0 && filteredPool.length === 0) {
-    return { ok: false, code: MEDITATION_PLAYBACK_WARNING_CODES.noRepeatExhausted }
-  }
-
-  return selection
-}
-
 // ─── 混音单流（R45）：响应 `track.mix_audio` → 可播混音条目 ────────────────────────────
 //
 // 口径（**只认响应，不拼路径、不猜 URL**）：
@@ -532,9 +383,6 @@ export const buildMeditationTrackPlaybackPlan = ({
   const mixAudio = resolveMeditationMixPlayback(track)
 
   // 第一遍：按模板顺序逐章抽签（章序 / 段序只读，不重排、不排序）。
-  // `usedAudioIds`＝本配方**已抽中**的 audio_id 集合（供 `no_repeat` 去重；跨章共享为一「配方」）。
-  const usedAudioIds = new Set()
-
   chapters.forEach((chapter) => {
     const trackChapter = trackChapterMap.get(getString(chapter?.chapter_key).trim())
 
@@ -543,85 +391,37 @@ export const buildMeditationTrackPlaybackPlan = ({
     }
 
     const chapterSegments = []
-    // R49：有 `slots` ⇒ 以 slots 为准（章内顺序＝数组序）；无 ⇒ null ⇒ 走旧语义。
-    const slotDefinitions = resolveChapterSlotDefinitions(trackChapter)
 
-    if (slotDefinitions) {
-      // ── 槽位路径（R49-②③④）：段 / 选择均带 `slot_index`（固化字段，不得用稳定下标充当）。 ──
-      slotDefinitions.forEach((slotDefinition) => {
-        const selection = drawSlotSelection({ slotDefinition, pools, usedAudioIds, rng })
-
-        // 槽不可用（selector 非法 / pinned 缺失 / 池空 / 无可用格式 / no_repeat 用尽）⇒ 跳过该槽并记码。
-        if (!selection.ok) {
-          warnings.push({
-            slot_index: slotDefinition.slot_index,
-            section_type: slotDefinition.section_type,
-            code: selection.code
-          })
-          return
-        }
-
-        const sectionType = slotDefinition.section_type || getString(selection.audio.section_type).trim()
-        const trackKey = resolveMeditationPlaybackTrackKey({ sectionType, track })
-        const segment = {
-          slot_index: slotDefinition.slot_index,
-          section_type: sectionType,
-          track: trackKey,
-          audio: selection.audio,
-          duration_seconds: selection.audio.duration_seconds,
-          gap_after_seconds: 0,
-          starts_after_gap: false
-        }
-
-        chapterSegments.push(segment)
-        selections.push({
-          slot_index: slotDefinition.slot_index,
-          section_type: sectionType,
-          audio_id: selection.audio.id,
-          duration_seconds: selection.audio.duration_seconds
-        })
-
-        if (selection.audio.id) {
-          usedAudioIds.add(selection.audio.id)
-        }
+    resolveChapterSectionTypes(chapter).forEach((sectionType) => {
+      const selection = selectMeditationPlayableAudio({
+        sectionType,
+        pool: pools[sectionType],
+        rng
       })
-    } else {
-      // ── 旧路径（R49-③ 向后兼容，逐字不变）：一类型一槽、**不产生 `slot_index`**。 ──
-      resolveChapterSectionTypes(chapter).forEach((sectionType) => {
-        const selection = selectMeditationPlayableAudio({
-          sectionType,
-          pool: pools[sectionType],
-          rng
-        })
 
-        // 空池 / 无可用格式 ⇒ 跳过该段并记码（**不整场失败**）。
-        if (!selection.ok) {
-          warnings.push({ section_type: sectionType, code: selection.code })
-          return
-        }
+      // 空池 / 无可用格式 ⇒ 跳过该段并记码（**不整场失败**）。
+      if (!selection.ok) {
+        warnings.push({ section_type: sectionType, code: selection.code })
+        return
+      }
 
-        const trackKey = resolveMeditationPlaybackTrackKey({ sectionType, track })
-        const segment = {
-          section_type: sectionType,
-          track: trackKey,
-          audio: selection.audio,
-          duration_seconds: selection.audio.duration_seconds,
-          gap_after_seconds: 0,
-          starts_after_gap: false
-        }
+      const trackKey = resolveMeditationPlaybackTrackKey({ sectionType, track })
+      const segment = {
+        section_type: sectionType,
+        track: trackKey,
+        audio: selection.audio,
+        duration_seconds: selection.audio.duration_seconds,
+        gap_after_seconds: 0,
+        starts_after_gap: false
+      }
 
-        chapterSegments.push(segment)
-        selections.push({
-          section_type: sectionType,
-          audio_id: selection.audio.id,
-          duration_seconds: selection.audio.duration_seconds
-        })
-
-        if (selection.audio.id) {
-          usedAudioIds.add(selection.audio.id)
-        }
+      chapterSegments.push(segment)
+      selections.push({
+        section_type: sectionType,
+        audio_id: selection.audio.id,
+        duration_seconds: selection.audio.duration_seconds
       })
-    }
+    })
 
     chapterEntries.push({
       segments: chapterSegments,
@@ -739,42 +539,24 @@ export const buildSessionSolidification = ({
     )
   }
 
-  const seenKeys = new Set()
+  const seenSectionTypes = new Set()
   const normalizedSelections = []
 
   ;(Array.isArray(selections) ? selections : []).forEach((selection) => {
     const sectionType = getString(selection?.section_type).trim()
     const audioId = getString(selection?.audio_id).trim()
-    const rawSlotIndex = Number(selection?.slot_index)
-    // R49-④：`slot_index` 为固化字段（有则透传，**只增不减**；旧载荷无该键 ⇒ 逐字不变）。
-    const hasSlotIndex = Number.isInteger(rawSlotIndex) && rawSlotIndex >= 0
 
-    // 缺 id 的项不固化（无 id 无法复现）。
-    if (!sectionType || !audioId) {
+    // 缺 id 的项不固化（无 id 无法复现）；同一 section_type 只固化第一条（确定性）。
+    if (!sectionType || !audioId || seenSectionTypes.has(sectionType)) {
       return
     }
 
-    // 去重键：有 `slot_index` ⇒ 按槽去重（同 `section_type` 的多槽各自保留）；
-    //   无 ⇒ 沿用旧口径「同一 section_type 只固化第一条」（确定性、逐字不变）。
-    const dedupeKey = hasSlotIndex ? `slot:${rawSlotIndex}` : `section:${sectionType}`
-
-    if (seenKeys.has(dedupeKey)) {
-      return
-    }
-
-    seenKeys.add(dedupeKey)
-
-    const entry = {
+    seenSectionTypes.add(sectionType)
+    normalizedSelections.push({
       section_type: sectionType,
       audio_id: audioId,
       duration_seconds: toPositiveSecondsOrZero(selection?.duration_seconds)
-    }
-
-    if (hasSlotIndex) {
-      entry.slot_index = rawSlotIndex
-    }
-
-    normalizedSelections.push(entry)
+    })
   })
 
   return {

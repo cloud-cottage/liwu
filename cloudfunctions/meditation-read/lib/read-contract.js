@@ -433,6 +433,36 @@ const resolveTrackSectionTypes = (track = {}) => {
   )))
 }
 
+// ─── 槽位（R49-②③）：章内有序槽位引用的 section_type（供 getTrack 的池元数据下发定范围） ──────
+// 无 `slots` 的老 Track ⇒ 空数组（getTrack 出参不含 `slot_pools`，R49-③ 向后兼容）。
+const resolveTrackSlotsSectionTypes = (track = {}) => {
+  const referenced = new Set()
+  const chapters = Array.isArray(track?.chapters) ? track.chapters : []
+
+  chapters.forEach((chapter) => {
+    ;(Array.isArray(chapter?.slots) ? chapter.slots : []).forEach((slot) => {
+      const slotSectionType = normalizeMeditationSectionCode(getString(slot?.section_type).trim())
+      if (slotSectionType) {
+        referenced.add(slotSectionType)
+      }
+
+      const selectorSectionType = normalizeMeditationSectionCode(getString(slot?.selector?.section_type).trim())
+      if (selectorSectionType) {
+        referenced.add(selectorSectionType)
+      }
+    })
+  })
+
+  return MEDITATION_SECTION_TYPE_ORDER.filter((sectionType) => referenced.has(sectionType))
+}
+
+// 该 Track 是否带任何槽位（决定 getTrack 是否下发 `slot_pools`；无槽位 ⇒ 省略该键）。
+const trackHasSlots = (track = {}) => (
+  (Array.isArray(track?.chapters) ? track.chapters : []).some((chapter) => (
+    Array.isArray(chapter?.slots) && chapter.slots.length > 0
+  ))
+)
+
 // 缺省 Track 解析顺序：显式 track_id → 显式 track_key → `is_default` → 业务键 `track-default`。
 const resolveTrackQueryPlan = ({ trackId = '', trackKey = '', defaultKey = 'track-default' } = {}) => {
   if (trackId) {
@@ -753,6 +783,8 @@ module.exports = {
   buildTrackMixAudioEntry,
   buildChapterTemplate,
   resolveTrackSectionTypes,
+  resolveTrackSlotsSectionTypes,
+  trackHasSlots,
   resolveTrackQueryPlan,
   buildSectionAudioPools,
   collectSignableFileIds,

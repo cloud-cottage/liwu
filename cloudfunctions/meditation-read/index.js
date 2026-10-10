@@ -77,6 +77,8 @@ const {
   readOptionalIdentifier,
   resolveRequestedSectionTypes,
   resolveTrackSectionTypes,
+  resolveTrackSlotsSectionTypes,
+  trackHasSlots,
   resolveTrackQueryPlan,
   buildSectionAudioPools,
   collectSignableFileIds,
@@ -343,6 +345,9 @@ const loadDeliverableAudioPools = async ({ db, app, sectionTypes, requestId, ext
     pools,
     // 本次批量签发的 file_id → 临时链接映射（混音产物在这里取自己的两个链接，不额外再签一次）。
     urlMap,
+    // 原始候选（**未按可交付过滤**）：供 getTrack 组装槽位池元数据 `slot_pools`（R49-② / R51-①，
+    //   「池元数据与 URL 现签分离」⇒ 元数据不带 URL），避免二次查询。既有 action 忽略该键。
+    candidates,
     stats: {
       ...stats,
       requested_section_types: [...sectionTypes],
@@ -408,7 +413,7 @@ const handleGetTrack = async ({ app, db, event, requestId }) => {
 
   // 只下发该 Track **启用章**覆盖的 section_type（禁用章不取音频）。
   const sectionTypes = resolveTrackSectionTypes(track)
-  const { pools, stats, urlMap } = await loadDeliverableAudioPools({
+  const { pools, stats, urlMap, candidates } = await loadDeliverableAudioPools({
     db,
     app,
     sectionTypes,
@@ -420,6 +425,18 @@ const handleGetTrack = async ({ app, db, event, requestId }) => {
   // 缺失 / 不齐 / 签发失败 ⇒ **不下发该键**（**不置 null、不返回半条混音**）⇒ 端侧回退双轨。
   const mixAudio = buildTrackMixAudioEntry({ track, urls: urlMap })
 
+  // R49-② / R51-①：Track 带槽位 ⇒ 下发**池元数据引用** `slot_pools`（`getPools` 同款口径：
+  //   条目只有 `id` / `section_type` / `duration` / `label`，**无 URL / file_id**）。
+  //   无槽位的老 Track ⇒ **省略该键**（R49-③ 向后兼容）。逐章槽位本身随 `track.chapters[].slots`
+  //   下发（normalizers 已按白名单裁剪：只含 `slot_index` / `section_type` / `selector` / `policy`）。
+  const slotPools = trackHasSlots(track)
+    ? buildSectionAudioPoolsMetadata({
+        requestedSectionTypes: resolveTrackSlotsSectionTypes(track),
+        candidates,
+        limit: MAX_POOL_CANDIDATES_PER_SECTION_TYPE
+      }).pools
+    : null
+
   return {
     ok: true,
     data: {
@@ -429,6 +446,7 @@ const handleGetTrack = async ({ app, db, event, requestId }) => {
       },
       chapter_template: buildChapterTemplate(),
       section_audio_pools: pools,
+      ...(slotPools ? { slot_pools: slotPools } : {}),
       url_policy: buildUrlPolicy({ issuedAtMs: Date.now() }),
       stats: {
         ...stats,
@@ -790,6 +808,8 @@ exports.__test__ = {
   handleSignAudios,
   resolveTrackForRead,
   resolvePoolScope,
+  resolveTrackSlotsSectionTypes,
+  trackHasSlots,
   loadDeliverableAudioPools,
   fetchTracks,
   fetchSectionAudioCandidates,

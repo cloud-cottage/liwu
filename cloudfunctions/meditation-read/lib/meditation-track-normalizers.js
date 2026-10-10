@@ -3,7 +3,7 @@
 // 【权威源（authoritative source）】packages/shared-utils/meditation-track-normalizers.js
 //   云函数（SCF）只打包函数目录，**不能** require 仓库内共享模块（Zang 裁定 D-B2-8）⇒ 本副本。
 //   只搬运**读侧**用得到的部分：MEDITATION_TRACK_COLLECTION / MEDITATION_TRACK_DEFAULT_KEY /
-//   MEDITATION_TRACK_DEFAULT_NAME / normalizeMedTrackChapters / normalizeMedTrack。
+//   MEDITATION_TRACK_DEFAULT_NAME / normalizeChapterSlots / normalizeMedTrackChapters / normalizeMedTrack。
 //   （`createDefaultMeditationTrack` / `toMedTrackPayload` 属写侧，只读云函数不用，故未搬运。）
 //
 // 【同步责任】权威源里上述导出与归一化规则（章序折回、末章留白固定 0、脏值回退默认）的任一改动
@@ -19,6 +19,8 @@ const {
   MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT,
   MEDITATION_TRACK_BACKGROUND_CONFIG,
   MEDITATION_TRACK_VOICE_CONFIG,
+  MEDITATION_TRACK_SLOT_POLICIES,
+  MEDITATION_TRACK_SLOT_SELECTOR_KINDS,
   DEFAULT_MEDITATION_SESSION_SECONDS,
   normalizeMeditationChapterCode
 } = require('./meditation-track-template.js')
@@ -37,6 +39,53 @@ const toNonNegativeNumber = (value, fallback) => {
   return Number.isFinite(number) && number >= 0 ? number : fallback
 }
 
+// ─── 槽位归一（R49-②；字段白名单硬约束） ───────────────────────────────────
+// 只保留 `slot_index` / `section_type` / `selector` / `policy` —— **绝不放行任何 URL / file_id**
+// （D6 字段白名单，R39-⑥）。selector 只认 `pinned(audio_id)` / `pool(section_type, tags[])`。
+const normalizeSlotSelector = (selector) => {
+  if (!selector || typeof selector !== 'object' || Array.isArray(selector)) {
+    return null
+  }
+
+  const kind = selector.kind != null ? String(selector.kind).trim() : ''
+
+  if (kind === MEDITATION_TRACK_SLOT_SELECTOR_KINDS.pinned) {
+    const audioId = selector.audio_id != null ? String(selector.audio_id).trim() : ''
+    return audioId ? { kind: MEDITATION_TRACK_SLOT_SELECTOR_KINDS.pinned, audio_id: audioId } : null
+  }
+
+  if (kind === MEDITATION_TRACK_SLOT_SELECTOR_KINDS.pool) {
+    const sectionType = selector.section_type != null ? String(selector.section_type).trim() : ''
+    const tags = (Array.isArray(selector.tags) ? selector.tags : [])
+      .map((tag) => String(tag).trim())
+      .filter(Boolean)
+    return sectionType
+      ? { kind: MEDITATION_TRACK_SLOT_SELECTOR_KINDS.pool, section_type: sectionType, tags }
+      : null
+  }
+
+  return null
+}
+
+const normalizeChapterSlots = (slots = []) => (
+  (Array.isArray(slots) ? slots : [])
+    .map((slot, index) => {
+      if (!slot || typeof slot !== 'object' || Array.isArray(slot)) {
+        return null
+      }
+
+      const selector = normalizeSlotSelector(slot.selector)
+      const declaredSectionType = slot.section_type != null ? String(slot.section_type).trim() : ''
+      const sectionType = declaredSectionType || (selector ? selector.section_type : '') || ''
+      const rawSlotIndex = Number(slot.slot_index)
+      const slotIndex = Number.isInteger(rawSlotIndex) && rawSlotIndex >= 0 ? rawSlotIndex : index
+      const policy = (slot.policy != null ? String(slot.policy).trim() : '') || MEDITATION_TRACK_SLOT_POLICIES.random
+
+      return { slot_index: slotIndex, section_type: sectionType, selector, policy }
+    })
+    .filter(Boolean)
+)
+
 const normalizeChapterEntry = (chapter = {}, templateChapter = {}, isLastChapter = false) => ({
   chapter_key: templateChapter.chapter_key,
   order: templateChapter.order,
@@ -47,7 +96,9 @@ const normalizeChapterEntry = (chapter = {}, templateChapter = {}, isLastChapter
   gap_after_seconds: isLastChapter
     ? 0
     : toNonNegativeNumber(chapter.gap_after_seconds, MEDITATION_TRACK_GAP_AFTER_SECONDS_DEFAULT),
-  section_types: [...templateChapter.section_types]
+  section_types: [...templateChapter.section_types],
+  // 槽位（R49-②）：有序槽位数组；**无 `slots` 的老 Track ⇒ 空数组**（R49-③ 向后兼容）。
+  slots: normalizeChapterSlots(chapter.slots)
 })
 
 const normalizeMedTrackChapters = (chapters = []) => {
@@ -95,6 +146,7 @@ module.exports = {
   MEDITATION_TRACK_COLLECTION,
   MEDITATION_TRACK_DEFAULT_KEY,
   MEDITATION_TRACK_DEFAULT_NAME,
+  normalizeChapterSlots,
   normalizeMedTrackChapters,
   normalizeMedTrack
 }
