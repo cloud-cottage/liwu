@@ -913,10 +913,17 @@ const MeditationPlayer = () => {
 
         // 固化载荷的 `date_key` / `session_key` 与本次组装取**同一个时刻**（不给两处各取一次 `new Date()`）。
         const now = new Date();
+        // 抽签源＝**池元数据** `slot_pools`（R51-①：条目只有 `id` / `section_type` / `duration` /
+        //   `label` ＋ **可交付标记 `deliverable`**，**零 URL**）。
+        //   · `deliverable` 在此**真正被消费** —— 只有 `deliverable:true` 的候选可被抽中（`false` 恒不可选）；
+        //   · 带现签 URL 的旧形状池 `section_audio_pools` **不再作为抽签源**（URL 一律由 `signAudios`
+        //     在「本段将要播放（＋下一段预取）」时才现签；**不得回退到池里的 URL**）；
+        //   · 过渡兼容：池条目**缺 `deliverable`**（老 / 过渡响应）时，计划层沿用既有回退判据
+        //     （见 `isMeditationAudioSelectable`）——**该回退不重新把 URL 变成抽签依赖**。
         const playbackPlan = buildMeditationTrackPlaybackPlan({
           track: data?.track || null,
           chapterTemplate: data?.chapter_template || null,
-          sectionAudioPools: data?.section_audio_pools || null
+          sectionAudioPools: data?.slot_pools || null
         });
         const nextPlan = buildRuntimeTrackPlan({
           playbackPlan,

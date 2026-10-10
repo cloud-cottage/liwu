@@ -30,6 +30,9 @@ import {
   resolveTrackVolume,
   createMeditationAudioSourceResolver
 } from '../../apps/app/src/modules/meditate/meditationAudioSource.js'
+// 计划层（共享）：App 播放器把**元数据池** `slot_pools` 传给它抽签（R51-①）。
+import { buildMeditationTrackPlaybackPlan } from '../../packages/shared-utils/meditation-track-playback-plan.js'
+import * as meditationTrackTemplate from '../../packages/shared-utils/meditation-track-template.js'
 
 let pass = 0
 let fail = 0
@@ -316,6 +319,131 @@ console.log('== ⑥ 源码接线扫描 ==')
 
   ok('S15 服务层导出 `signAudios` 现签通道', serviceSource.includes('signAudios: (audioIds = []) => meditationSignAudiosClient.signAudios(audioIds)'))
   ok('S16 服务层用 `createMeditationSignAudiosClient`（同一套代码）', serviceSource.includes('createMeditationSignAudiosClient('))
+}
+
+// ── ⑦ App 抽签源＝元数据池 `slot_pools`（无 URL）＋ `deliverable` 真正被消费（R51-①）────────────
+// 覆盖本单验收：① 元数据池（无 URL）能选中（deliverable:true）；② `deliverable:false` 恒不被选中；
+//   ③ 计划阶段零 `signAudios`；④ 段开播前只对「当前段 ＋ 预取段」现签；⑤ 预取走 `fetch → blob`。
+console.log('\n== ⑦ 抽签源＝元数据池 slot_pools（无 URL）＋ deliverable 消费 ==')
+{
+  const CH = meditationTrackTemplate.MEDITATION_TRACK_CHAPTER_TEMPLATE
+  const DEFAULT_GAP = 141
+  const buildChapterTemplate = () => CH.map((chapter, index) => ({
+    chapter_key: chapter.chapter_key,
+    order: chapter.order,
+    label: chapter.label,
+    enabled_by_default: true,
+    max_duration_seconds: chapter.max_duration_seconds,
+    gap_after_seconds_default: index === CH.length - 1 ? 0 : DEFAULT_GAP,
+    section_types: [...chapter.section_types]
+  }))
+
+  // 池条目形状＝ D6 `slot_pools[type][]`（元数据 only：`id`/`section_type`/`duration`/`label`/`deliverable`，**零 URL**）。
+  const metaEntry = (id, sectionType, deliverable, duration = 10) => ({
+    id, section_type: sectionType, duration, label: id, deliverable
+  })
+
+  const track = {
+    track_key: 'track-default',
+    version: 3,
+    background_track: { volume: 0.33, section_types: ['sec-nature', 'sec-bowl'] },
+    voice_track: { volume: 1, section_types: ['anchorGreeting', 'basePreparation'] },
+    chapters: [
+      { chapter_key: 'chapter-nature', enabled: true, gap_after_seconds: DEFAULT_GAP, section_types: ['sec-nature'] },
+      {
+        chapter_key: 'section-start',
+        enabled: true,
+        gap_after_seconds: DEFAULT_GAP,
+        section_types: ['anchorGreeting', 'basePreparation'],
+        slots: [
+          { slot_index: 0, section_type: 'anchorGreeting', selector: { kind: 'pool', section_type: 'anchorGreeting', tags: [] }, policy: 'random' },
+          { slot_index: 1, section_type: 'basePreparation', selector: { kind: 'pool', section_type: 'basePreparation', tags: [] }, policy: 'random' }
+        ]
+      }
+    ]
+  }
+
+  // 元数据池：**无任何 URL**；每类的**第一条 `deliverable:false`**（rng=0 会先命中它——它必不被选中）。
+  const slotPools = {
+    'sec-nature': [metaEntry('nat-1', 'sec-nature', true, 30)],
+    anchorGreeting: [metaEntry('ag-bad', 'anchorGreeting', false, 9), metaEntry('ag-ok', 'anchorGreeting', true, 12)],
+    basePreparation: [metaEntry('bp-bad', 'basePreparation', false, 7), metaEntry('bp-ok', 'basePreparation', true, 14)]
+  }
+
+  // 抽签与现签共用一套桩：计划阶段**零 callFunction**。
+  const { stub, calls: signCalls } = createStubCallFunction([
+    { result: signEnvelope(['ag-ok', 'bp-ok']) }
+  ])
+  const client = createMeditationSignAudiosClient({ callFunction: stub })
+  const { fetchImpl, calls: fetchCalls } = createStubFetch()
+  const resolver = createMeditationAudioSourceResolver({
+    signAudios: client.signAudios,
+    fetchImpl,
+    createObjectURL: () => `blob:pool/${Date.now()}`,
+    revokeObjectURL: () => {}
+  })
+
+  // 计划阶段：**元数据池（无 URL）**抽签；`rng:()=>0` 会先命中每类的 `deliverable:false` 条目。
+  const plan = buildMeditationTrackPlaybackPlan({
+    track,
+    chapterTemplate: buildChapterTemplate(),
+    sectionAudioPools: slotPools,
+    rng: () => 0
+  })
+
+  eq('Q1 计划阶段 ⇒ 零 `signAudios`（抽签不取 URL）', signCalls.length, 0)
+  eq('Q2 抽中可交付条目（deliverable:true，**无 URL**）', plan.selections.map((s) => s.audio_id), ['nat-1', 'ag-ok', 'bp-ok'])
+  ok('Q3 `deliverable:false` 候选恒不被选中', plan.selections.every((s) => ['nat-1', 'ag-ok', 'bp-ok'].includes(s.audio_id)))
+  ok('Q4 计划各段格式为响应派生（opus/mp3，url 全空）', plan.segments.every((s) => s.audio.formats.length === 2 && s.audio.formats.every((f) => f.url === '')))
+  ok('Q5 计划整体零 URL', JSON.stringify(plan.segments).indexOf('http') === -1)
+
+  // 播放清单：**只带抽中的 `audio_id`、零 URL**（由元数据池条目构造，等价播放器 `buildRuntimeTrackPlan` 取 `segment.audio`）。
+  const voiceSegments = plan.segments
+    .filter((segment) => segment.track === 'voice')
+    .map((segment, index) => ({
+      id: `${segment.section_type}-${index}`,
+      trackKey: 'voice',
+      playlist: buildPlaylistItems({ audio: segment.audio, durationSeconds: segment.duration_seconds })
+    }))
+  ok('Q6 清单条目只带 audioId、audioUrl 全空', voiceSegments.every((s) => s.playlist.length > 0 && s.playlist.every((item) => item.audioId && item.audioUrl === '')))
+  ok('Q7 清单序列化后不含 http 链接', voiceSegments.every((s) => !JSON.stringify(s.playlist).includes('http')))
+
+  // 段开播前：**只对「当前段 ＋ 下一段」**现签（一次批量），且走 `fetch → blob` 预取。
+  const currentVoice = voiceSegments[0]
+  const window = resolveTrackPrefetchWindow({ segments: voiceSegments, trackKey: 'voice', segmentId: currentVoice.id })
+  const windowIds = [...new Set(window.flatMap((segment) => segment.playlist.map((item) => item.audioId)))]
+  eq('Q8 预取窗口＝当前段 ＋ 下一段（id 集）', windowIds, ['ag-ok', 'bp-ok'])
+
+  await resolver.prefetchAudioIds(windowIds)
+  eq('Q9 开播前**只**发起 1 次 `signAudios`（当前段 ＋ 下一段）', signCalls.length, 1)
+  eq('Q10 现签 ids ＝ 当前段 ＋ 下一段（无其它段）', signCalls[0].data.audio_ids, ['ag-ok', 'bp-ok'])
+  ok('Q11 预取走 `fetch → blob`（每 id 两种格式 ⇒ 4 次取流）', fetchCalls.length === 4 && fetchCalls.every((url) => url.startsWith('https://')))
+
+  // 播放取源：命中缓存 ⇒ 零新增现签 / 零新增 fetch。
+  const src = await resolver.resolvePlayableSrc({ audioId: 'ag-ok', format: 'opus' })
+  ok('Q12 取源返回现签后 blob（非池内 URL）', String(src).startsWith('blob:'))
+  eq('Q13 复用缓存 ⇒ 无新增现签', signCalls.length, 1)
+  eq('Q14 复用缓存 ⇒ 无新增 fetch', fetchCalls.length, 4)
+
+  // 全部 `deliverable:false` ⇒ 该槽记 `NO_PLAYABLE_FORMAT`、不产生段（**不整场失败**）。
+  const allBadPlan = buildMeditationTrackPlaybackPlan({
+    track,
+    chapterTemplate: buildChapterTemplate(),
+    sectionAudioPools: {
+      'sec-nature': [metaEntry('nat-1', 'sec-nature', true, 30)],
+      anchorGreeting: [metaEntry('ag-bad', 'anchorGreeting', false, 9)],
+      basePreparation: [metaEntry('bp-bad', 'basePreparation', false, 7)]
+    },
+    rng: () => 0
+  })
+  eq('Q15 全不可交付 ⇒ 该槽无 selection', allBadPlan.selections.map((s) => s.section_type), ['sec-nature'])
+  ok('Q16 全不可交付 ⇒ 记 `NO_PLAYABLE_FORMAT`（不整场失败）', allBadPlan.warnings.some((w) => w.code === 'NO_PLAYABLE_FORMAT' && w.section_type === 'anchorGreeting'))
+
+  // 源码接线：播放器**只**把 `slot_pools` 传给计划层；**不再**传带 URL 的 `section_audio_pools`。
+  const playerCode2 = stripComments(readSource(PLAYER_PATH))
+  ok('S17 播放器抽签源＝`slot_pools`（元数据池）', playerCode2.includes('sectionAudioPools: data?.slot_pools'))
+  ok('S18 播放器**不再**把带 URL 的 `section_audio_pools` 传给计划层', !playerCode2.includes('section_audio_pools'))
+  ok('S19 播放器仍由 `signAudios` 现签（URL 抽中后现取）', playerCode2.includes('meditationReadService.signAudios(audioIds)'))
 }
 
 console.log(`\n结果：${pass} PASS / ${fail} FAIL`)
