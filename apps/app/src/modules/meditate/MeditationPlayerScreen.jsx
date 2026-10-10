@@ -6,7 +6,6 @@ import { useCloudAwareness } from '../../context/CloudAwarenessContext';
 import { meditationReadService, meditationSessionService } from '../../services/cloudbase.js';
 import {
   DEFAULT_MEDITATION_SESSION_SECONDS,
-  getMeditationAudioMimeType,
   getMeditationSessionKey,
   getShanghaiDateKey,
   MEDITATION_TRACK_KEYS
@@ -17,7 +16,14 @@ import {
   buildSessionSolidification
 } from '@liwu/shared-utils/meditation-track-playback-plan.js';
 import { writeLocalStorageJSON } from '@liwu/shared-utils/cloudbase-browser-storage.js';
-import { resolveMeditationUrlPolicyStaleness } from '@liwu/shared-utils/meditation-read-client.js';
+// 取流层（R51 / R49-⑤⑧ v4.34）：抽中后现签（`signAudios`）＋ 预取（`fetch → blob`）＋ 音量配比分支。
+// 纯模块（零 import）⇒ 同一套代码由播放器与桩面测试共用。
+import {
+  buildPlaylistItems,
+  createMeditationAudioSourceResolver,
+  resolveTrackPrefetchWindow,
+  resolveTrackVolume
+} from './meditationAudioSource.js';
 // R50（完成度上报与福豆发放）：幂等键 / 收听累加器 / 完播判定 / 用户可见文案。
 // 端侧只组装证据、由 `meditationSessionService.reportCompletion` 走后端发放（**客户端不再直写余额**）。
 import {
@@ -50,7 +56,7 @@ const MEDITATION_READ_ERROR_FALLBACK_MESSAGE = '冥想内容加载失败，请�
 // 响应合法但无可播段（音频池全空 / 全无可用格式）：同样以**可见错误态**呈现，不回退老音频库。
 const MEDITATION_EMPTY_PLAN_MESSAGE = '本次冥想暂无可播放音频（音频池为空），请联系管理员';
 
-// ─── 运行时恢复路径 / 格式降级（R39 ⑤ / R41-⑥⑦） ─────────────────────────────
+// ─── 运行时恢复路径 / 格式降级（R42-④ / R41-⑥⑦） ─────────────────────────────
 // 取源失败一律**可见**——不静默、不回退老音频库（D9）；跨格式降级与跳段属**已定口径**的运行行为。
 const AUDIO_FETCH_SIGNATURE_ERROR = 'AUDIO_FETCH_403';
 
@@ -111,7 +117,7 @@ const solidifyMeditationSession = ({
 // 单段坏掉不得整场失败 —— R41-⑦；另一条轨（含背景轨）继续播）。
 const MEDITATION_SEGMENT_SKIPPED_MESSAGE = '部分音频暂不可播放，已跳过该段并继续本次冥想';
 
-// 段内 playlist 的定位键：重签覆盖 / 重入防护都以「轨 + 段」为粒度（同一段最多重调 1 次）。
+// 段内 playlist 的定位键：重入防护（同段最多重签 1 次）以「轨 + 段」为粒度。
 const buildSegmentPlaylistKey = (trackKey, segment) => `${trackKey}:${String(segment?.id || '')}`;
 
 // ─── 混音单流（R45，v4.22）：App 用**单个音频元素**播服务端预混版 ───────────────────────
@@ -122,7 +128,7 @@ const buildSegmentPlaylistKey = (trackKey, segment) => `${trackKey}:${String(seg
 //     冻结层，不得改写 ⇒ 本页各自持有单流键）；
 //   · 混音是**单条**现签 URL（opus 在前、mp3 兜底），段窗口＝`[0, 混音时长]` ⇒ 整场由**这一个**
 //     音频元素推进；端侧**不再**叠加配比（voice 1.0 / background 0.33 已烘焙进产物）⇒ 音量恒 1；
-//   · 双轨口径、失败可见、同参重调、格式降级等既有机制**两条路径共用**（不另起一套）。
+//   · 双轨口径、失败可见、现签重签、格式降级等既有机制**两条路径共用**（不另起一套）。
 const MEDITATION_MIX_TRACK_KEY = 'mix_audio';
 // 运行时轨键全集：**同步 / 暂停 / 收尾一律全覆盖**（混音单流时另两个元素本就空闲：
 // `pause()` 与清 `src` 对空闲元素都无副作用）⇒ 两种来源共用同一套运行时循环，不按来源分叉。
@@ -158,31 +164,18 @@ const describeMeditationReadError = (error) => {
 // 数据源＝D6 `getTrack` 响应 + 共享 plan（`buildMeditationTrackPlaybackPlan`）；
 // **不做任何本地兜底**：无老音频库、无本地兜底 plan、无 fixture 开关、无桩分支。
 //   · **R45 混音单流**：响应 Track 带可播 `mix_audio` ⇒ 运行时计划＝**单个音频元素**的单段；
-//     否则＝下面这套既有双轨（回退路径，**代码保留、语义未改**）；
+//     否则＝下面这套既有双轨（**端侧组装，R49 主路径**）；
 //   · 背景轨：单条已抽中音频 `loop` 铺底，覆盖整场（含章间留白；规范「播放模型（双轨）」）；
 //   · 人声轨：按响应给定顺序逐段 `sequence`，段间按段上挂的 `gap_after_seconds` 留白；
-//   · 音量取响应值（缺省才由共享 plan 回退常量；**混音单流不取响应音量**——配比已烘焙进产物）；
+//   · 音量配比分支（R49-⑤，硬）：端侧组装按响应值（`voice_track.volume` / `background_track.volume`）；
+//     混音单流**端侧不设音量**（配比已烘焙进产物）——两条路径见 `resolveTrackVolume`；
 //   · **每段 playlist 按响应 `formats[]` 顺序一条格式一项**（opus 在前、mp3 兜底，R41-⑥）
 //     ⇒ 「opus 失败降级 mp3」在网络层（fetch 403）与解码层（`audio.onerror`）都能成立；
-//   · playlist 项**不含 `fileId`**：响应刻意不下发长期标识（R39 ⑤），链接失效只能**同参重调 getTrack**
-//     重签（见 `reissueSegmentPlaylist`），端侧**不得**持有 file_id、也不再有 fileId 重签分支。
-const buildRuntimePlaylistItems = ({ audio = null, durationSeconds = 0 }) => {
-  const formats = Array.isArray(audio?.formats) ? audio.formats : [];
-  const audioId = String(audio?.id || '').trim();
+//   · 清单项**只带抽中的 `audio_id`、不带任何 URL**（R51-①：池阶段零 URL）；URL 在播放前由
+//     `signAudios` 现签（`resolvePlayableAudioSrc`），403 时**重签**（见 `tryResignSegmentAudio`）；
+//     端侧**不得**持有 `file_id`（R39 ⑤ 响应不下发）。
 
-  return formats
-    .map((format, formatIndex) => ({
-      id: `${audioId || 'audio'}-${formatIndex}`,
-      title: String(audio?.label || ''),
-      audioUrl: String(format?.url || '').trim(),
-      format: String(format?.format || '').trim().toLowerCase(),
-      mimeType: String(format?.mime_type || ''),
-      duration: durationSeconds
-    }))
-    .filter((item) => Boolean(item.audioUrl));
-};
-
-// 临时 URL 策略 ＋ **端侧收到时刻**：陈旧判定（半有效期）与「同参重调」的唯一基准。
+// 临时 URL 策略 ＋ **端侧收到时刻**：随计划记录（供可观测 / 诊断；现签 URL 一律以 `signAudios` 现取为准）。
 // 收到时刻由端侧自己记（**不**拿本地时钟与响应里的 `issued_at` 对齐——时钟偏移会造成重签风暴）。
 const buildRuntimeUrlPolicy = ({ urlPolicy = null, receivedAtMs = Date.now() } = {}) => {
   const receivedAtValue = Number(receivedAtMs);
@@ -198,7 +191,7 @@ const buildRuntimeUrlPolicy = ({ urlPolicy = null, receivedAtMs = Date.now() } =
 // 混音单流运行时计划（R45）：**单个音频元素、单段覆盖整场**。
 // 不满足（无混音产物 / 无可播 URL / 时长非正）⇒ 返回 `null`（调用方走既有双轨）。
 // 段形态与双轨段同形（`playlist` / `startSeconds` / `endSeconds` / `playbackMode`）⇒ 段推进、
-// 格式降级、同参重调等既有运行时机制**不需要分叉**。
+// 格式降级、现签重签等既有运行时机制**不需要分叉**。
 const buildRuntimeMixTrackPlan = ({
   playbackPlan,
   trackName = '',
@@ -212,7 +205,7 @@ const buildRuntimeMixTrackPlan = ({
 
   const mixAudio = playbackPlan?.mix_audio || null;
   const sessionDuration = Math.max(0, Number(mixAudio?.duration_seconds) || 0);
-  const playlist = buildRuntimePlaylistItems({
+  const playlist = buildPlaylistItems({
     audio: mixAudio?.audio,
     durationSeconds: sessionDuration
   });
@@ -225,8 +218,7 @@ const buildRuntimeMixTrackPlan = ({
     playbackSource: MEDITATION_PLAYBACK_SOURCES.mixAudio,
     segments: [{
       id: 'mix-audio-session',
-      // 混音产物不是 `med_section_audios` 行（无 `_id` / `section_type`）⇒ 空串；同参重调后的
-      // 段匹配按「轨键 ＋ sectionType」进行，两侧恒等空串 ⇒ 命中同一条单流段。
+      // 混音产物不是 `med_section_audios` 行（无 `_id` / `section_type`）⇒ 空串；段匹配按「轨键 ＋ sectionType」进行，两侧恒等空串 ⇒ 命中同一条单流段。
       sectionType: '',
       trackKey: MEDITATION_MIX_TRACK_KEY,
       startSeconds: 0,
@@ -263,7 +255,7 @@ const buildRuntimeTrackPlan = ({
   const backgroundAudio = playbackPlan?.background?.audio || null;
   const backgroundVolume = Number(playbackPlan?.background?.volume);
   const voiceVolume = Number(playbackPlan?.voice?.volume);
-  const backgroundPlaylist = buildRuntimePlaylistItems({
+  const backgroundPlaylist = buildPlaylistItems({
     audio: backgroundAudio,
     durationSeconds: Number(backgroundAudio?.duration_seconds) || 0
   });
@@ -272,7 +264,7 @@ const buildRuntimeTrackPlan = ({
 
   (Array.isArray(playbackPlan?.segments) ? playbackPlan.segments : []).forEach((segment, index) => {
     const durationSeconds = Math.max(0, Number(segment.duration_seconds) || 0);
-    const playlist = buildRuntimePlaylistItems({ audio: segment.audio, durationSeconds });
+    const playlist = buildPlaylistItems({ audio: segment.audio, durationSeconds });
 
     if (segment.track === 'voice') {
       if (playlist.length > 0) {
@@ -358,7 +350,10 @@ const MeditationPlayer = () => {
   const naturalEndReachedRef = useRef(false);
   // ④ 是否真正开始过播放：用户主动结束时的上报名义门（从未播放 ⇒ 不上报，避免空场记录）。
   const playbackStartedRef = useRef(false);
-  const blobUrlCacheRef = useRef(new Map());
+  // ─── 取流层（R51 / R49-⑤⑧ v4.34）：抽中后现签 ＋ 预取（`fetch → blob`）＋ 释放 ─────────────
+  // 解析器实例（内含「现签缓存 ＋ blob 缓存」）挂在 ref 上：**挂载时创建**（见下方 effect）、
+  // **卸场 / 切源时释放**（`revokeObjectURL`，R42-④）。同场按签名 URL 去重、复用。
+  const audioSourceResolverRef = useRef(null);
   const trackLoadTokenRef = useRef({ background: 0, voice: 0, [MEDITATION_MIX_TRACK_KEY]: 0 });
   const isPlayingRef = useRef(false);
   const sessionPlanRef = useRef(null);
@@ -368,18 +363,11 @@ const MeditationPlayer = () => {
     voice: { segmentId: '', itemIndex: 0, completed: false },
     [MEDITATION_MIX_TRACK_KEY]: { segmentId: '', itemIndex: 0, completed: false }
   });
-  // ─── 恢复路径（R39 ⑤ / R41-⑥⑦）的四个防护 ref ────────────────────────────────
-  // ① 首读与重签**必须完全同参**：端侧不持有 file_id ⇒ 重签＝用这份参数再调一次 `getTrack`。
-  //    任何将来的定位参数（track_id / track_key）都必须走这里，不许两处各拼一份。
+  // ─── 失败恢复（R41-⑥⑦ / R42-④）：只在「链接签名失效」时**重签一次**（重入防护）──────────
+  // 首读的定位参数（同参重签 = 现签同一 `audio_id`，不再重取整场 Track）。
   const trackRequestParamsRef = useRef({});
-  // ② 重入防护（**同段最多重调 1 次**）：`${trackKey}:${segmentId}` 先入集合再 await ⇒ 并发与连续失败都只会重调一次。
+  // 重入防护（**同段最多重签 1 次**）：`${trackKey}:${segmentId}` 先入集合再 await ⇒ 并发与连续失败都只会重签一次。
   const reissuedSegmentKeysRef = useRef(new Set());
-  // ③ 陈旧判定基准：当前生效的 `url_policy` ＋ 端侧收到时刻（重签成功后整体刷新）。
-  const trackUrlPolicyRef = useRef(null);
-  // ④ 预置重签闸门：整场至多一次「未过期前主动重签」——防「每段都无脑重调」；**不因重签成功而重置**（宁可少签一次）。
-  const preemptiveReissueRef = useRef({ attempted: false });
-  // ⑤ 重签后的段内 playlist 覆盖（**不就地改写计划对象**：时间轴仍是首次组装的结果）。
-  const segmentPlaylistOverrideRef = useRef(new Map());
   const canPlayMeditation = !authLoading && Boolean(authStatus?.isAuthenticated);
 
   const getAudioRef = useCallback((trackKey) => {
@@ -391,96 +379,52 @@ const MeditationPlayer = () => {
     return trackKey === 'background' ? backgroundAudioRef : voiceAudioRef;
   }, []);
 
-  // 段内 playlist：优先用重签后的覆盖（同 `sectionType` 的新链接），否则用计划里的原 playlist。
-  const resolveSegmentPlaylist = useCallback((trackKey, segment) => {
-    const override = segmentPlaylistOverrideRef.current.get(buildSegmentPlaylistKey(trackKey, segment));
+  // 段内 playlist：清单条目**只带 `audio_id`（端侧组装）或产品 URL（混音单流）**，二者皆无则丢弃。
+  const resolveSegmentPlaylist = useCallback((trackKey, segment) => (
+    Array.isArray(segment?.playlist)
+      ? segment.playlist.filter((item) => Boolean(item?.audioId || item?.audioUrl))
+      : []
+  ), []);
 
-    if (Array.isArray(override) && override.length > 0) {
-      return override;
+  // 失败恢复的**唯一入口**（R42-④）：只在「链接签名失效（403）」时**重签一次**——
+  // 同 `audio_id` 经 `signAudios` 现取新 URL（并释放旧 blob）；解码类错误（`audio.onerror`，
+  // 源是本地 blob）与链接无关，走格式降级、不浪费重签。
+  // 返回是否已重签（调用方据此重试当前格式或降级）。
+  const tryResignSegmentAudio = useCallback(async ({ trackKey, segment, item = null, error = null }) => {
+    if (String(error?.message || '') !== AUDIO_FETCH_SIGNATURE_ERROR) {
+      return false;
     }
 
-    return Array.isArray(segment?.playlist) ? segment.playlist.filter((item) => item?.audioUrl) : [];
-  }, []);
+    const audioId = String(item?.audioId || '').trim();
 
-  // 陈旧判定（要求②）：实现在共享层 `resolveMeditationUrlPolicyStaleness`（半有效期 / 缺策略不重签），
-  // 这里只提供基准（当前 url_policy ＋ 端侧收到时刻）。
-  const isTrackUrlStale = useCallback(() => resolveMeditationUrlPolicyStaleness({
-    urlPolicy: trackUrlPolicyRef.current,
-    receivedAtMs: trackUrlPolicyRef.current?.received_at_ms,
-    nowMs: Date.now()
-  }).stale, []);
-
-  // 同参重调 D6 重新签发（R39 ⑤：端侧不持有 file_id，重签＝同参重调本函数）。
-  // 只取「与当前段同 section_type」的新 playlist；**不替换整场时间轴**（进度 / 段窗口不动）。
-  const reissueSegmentPlaylist = useCallback(async (segment) => {
-    const { data } = await meditationReadService.getTrack(trackRequestParamsRef.current);
-    const refreshedPlan = buildRuntimeTrackPlan({
-      playbackPlan: buildMeditationTrackPlaybackPlan({
-        track: data?.track || null,
-        chapterTemplate: data?.chapter_template || null,
-        sectionAudioPools: data?.section_audio_pools || null
-      }),
-      trackName: data?.track?.name || '',
-      urlPolicy: data?.url_policy || null
-    });
-
-    // 重签成功 ⇒ 陈旧基准刷新（本地收到时刻重置为「现在」⇒ 后续段判为 fresh，不会重复重调）。
-    trackUrlPolicyRef.current = refreshedPlan.urlPolicy;
-
-    const refreshedSegment = refreshedPlan.segments.find((candidate) => (
-      candidate.trackKey === segment.trackKey &&
-      String(candidate.sectionType || '') === String(segment.sectionType || '')
-    )) || null;
-    const refreshedPlaylist = Array.isArray(refreshedSegment?.playlist) ? refreshedSegment.playlist : [];
-    // 键与 `resolveSegmentPlaylist` 的读取同源同构：同一份 `buildSegmentPlaylistKey(轨, 段)`（段的 `trackKey`
-    // 由 plan 显式挂上，调用点传入的 `trackKey` 与它恒等）。
-    const segmentPlaylistKey = buildSegmentPlaylistKey(segment?.trackKey, segment);
-
-    // D1：重签结果**必须写回段内 playlist 覆盖表**——**只写当前段**，不改写计划对象 / 不替换整场时间轴（R42-⑥）。
-    // 段内再入（提前 `onended` 的段内前进 / 新格式 `onerror` 的格式降级）会重新 `resolveSegmentPlaylist`，
-    // 不写回就回落计划里的**旧签** URL ⇒ 403 ⇒ 同段重调被 `reissuedSegmentKeysRef` 挡住 ⇒ 误报 `SEGMENT_SKIPPED`
-    // 并清空该段 audio（也不放宽「同段至多重调 1 次」）。
-    // 重签后该 section_type 已无可交付音频 ⇒ **删键**（与读取侧「缺覆盖即回落计划 playlist」自洽，
-    // 不留「覆盖表有键但空」的中间态）。
-    if (refreshedPlaylist.length > 0) {
-      segmentPlaylistOverrideRef.current.set(segmentPlaylistKey, refreshedPlaylist);
-    } else {
-      segmentPlaylistOverrideRef.current.delete(segmentPlaylistKey);
+    // 混音单流产物的 URL 由 D6 现签、无 `audio_id` ⇒ 此处不重签（走降级 / 跳段）。
+    if (!audioId) {
+      return false;
     }
 
-    return refreshedPlaylist.length > 0 ? refreshedPlaylist : null;
-  }, []);
-
-  // 失败恢复的**唯一入口**（要求①）：只对「疑似链接问题」同参重调一次——403 / 签名失败，
-  // 或按 `url_policy` 判定已陈旧；解码类错误（`audio.onerror`，源是本地 blob）走格式降级，不浪费重调。
-  // 返回刷新后的 playlist（成功）或 null（不可用 / 已用过 / 重调失败 ⇒ 调用方走降级或跳段）。
-  const tryReissueSegmentPlaylist = useCallback(async ({ trackKey, segment, error = null }) => {
     const segmentKey = buildSegmentPlaylistKey(trackKey, segment);
 
-    // 重入防护：**先入集合再 await** ⇒ 同一段并发 / 连续失败最多重调 1 次，不可能无限循环。
+    // 重入防护：**先入集合再 await** ⇒ 同一段并发 / 连续失败最多重签 1 次，不可能无限循环。
     if (reissuedSegmentKeysRef.current.has(segmentKey)) {
-      return null;
-    }
-
-    if (String(error?.message || '') !== AUDIO_FETCH_SIGNATURE_ERROR && !isTrackUrlStale()) {
-      return null;
+      return false;
     }
 
     reissuedSegmentKeysRef.current.add(segmentKey);
 
     try {
-      return await reissueSegmentPlaylist(segment);
+      return await audioSourceResolverRef.current.resignAudio(audioId);
     } catch (reissueError) {
       // 重签本身失败：只记日志，交给降级 / 跳段收尾（不静默、也不把整场判死）。
       console.warn(`[meditation] ${MEDITATION_TRACK_WARNING_CODES.reissueFailed}`, {
         track_key: trackKey,
         section_type: String(segment?.sectionType || ''),
         segment_id: String(segment?.id || ''),
+        audio_id: audioId,
         reason: String(reissueError?.message || 'UNKNOWN_ERROR')
       });
-      return null;
+      return false;
     }
-  }, [isTrackUrlStale, reissueSegmentPlaylist]);
+  }, []);
 
   // 段内全部格式都失败 ⇒ 跳段（可见提示 ＋ 可检索 warning，**不整场失败**、不回退老音频库）。
   const warnSegmentSkipped = useCallback(({ trackKey, segment, playlist, index, error = null, stage = 'load' }) => {
@@ -498,30 +442,56 @@ const MeditationPlayer = () => {
     setSessionError(MEDITATION_SEGMENT_SKIPPED_MESSAGE);
   }, []);
 
-  // 取可播源：D6 已**现签** URL（`formats[]` 每条各一个）⇒ 直接 `fetch → Blob → objectURL`。
-  // **无 fileId 重签分支**（R39 ⑤：响应不下发 file_id；重签＝同参重调 getTrack，见上）。
-  const resolvePlayableAudioSrc = useCallback(async (playlistItem = {}) => {
-    const audioUrl = String(playlistItem.audioUrl || '').trim();
-    const cache = blobUrlCacheRef.current;
+  // 取可播源（R51-① / R42-④）：清单条目带 `audio_id` ⇒ 现签后按格式取 URL；带产品 URL（混音单流）
+  // ⇒ 直取。一律 `fetch → Blob → objectURL`（**禁用 `new Audio()+load` 作预取**，R49-⑧ v4.34）。
+  const resolvePlayableAudioSrc = useCallback((playlistItem = {}) => {
+    const resolver = audioSourceResolverRef.current;
 
-    if (audioUrl && cache.has(audioUrl)) {
-      return cache.get(audioUrl) || '';
+    if (!resolver) {
+      return Promise.reject(new Error('AUDIO_SOURCE_NOT_READY'));
     }
 
-    const response = await fetch(audioUrl, { method: 'GET' });
-    if (!response.ok && response.status !== 206) {
-      // 403 ＝ 临时链接签名失效 / 过期 ⇒ 上层据此触发「同参重调」。
-      throw new Error(`AUDIO_FETCH_${response.status}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const blob = new Blob([arrayBuffer], {
-      type: String(playlistItem.mimeType || '').trim() || getMeditationAudioMimeType(audioUrl)
-    });
-    const blobUrl = URL.createObjectURL(blob);
-    cache.set(audioUrl, blobUrl);
-    return blobUrl;
+    return resolver.resolvePlayableSrc(playlistItem);
   }, []);
+
+  // 预取（R49-⑤，硬）：窗口 ≥ **当前段 ＋ 下一段**（同一轨）——现签（一次批量）＋ `fetch → blob`。
+  // 只对窗口内**已抽中**的 `audio_id` 现签（**绝不一次把整场全签**，R51-②）；失败不阻断播放。
+  const prefetchTrackSegments = useCallback((trackKey, segment) => {
+    const plan = sessionPlanRef.current;
+    const resolver = audioSourceResolverRef.current;
+
+    if (!plan || !resolver) {
+      return;
+    }
+
+    const window = resolveTrackPrefetchWindow({
+      segments: plan.segments,
+      trackKey,
+      segmentId: String(segment?.id || '')
+    });
+    const audioIds = [];
+
+    window.forEach((windowSegment) => {
+      resolveSegmentPlaylist(trackKey, windowSegment).forEach((item) => {
+        if (item?.audioId) {
+          audioIds.push(item.audioId);
+        }
+      });
+    });
+
+    if (audioIds.length === 0) {
+      return;
+    }
+
+    void resolver.prefetchAudioIds(audioIds).catch((error) => {
+      // 预取失败**只记日志**（不阻断）：真正播放时 `resolvePlayableAudioSrc` 会再取一次并如实报错。
+      console.warn(`[meditation] PREFETCH_FAILED`, {
+        track_key: trackKey,
+        segment_id: String(segment?.id || ''),
+        reason: String(error?.message || 'UNKNOWN_ERROR')
+      });
+    });
+  }, [resolveSegmentPlaylist]);
 
   const getElapsedSeconds = useCallback(() => {
     if (isPlayingRef.current && sessionStartMsRef.current != null) {
@@ -683,25 +653,16 @@ const MeditationPlayer = () => {
       completed: false
     };
 
+    // 取流（R51 / R49-⑤⑧ v4.34）：**先预取「当前段 ＋ 下一段」**（现签 ＋ `fetch → blob`）；
+    // 再按 formats[] 顺序（opus 在前、mp3 兜底）逐条尝试——403 ⇒ **重签一次**并重试当前格式；
+    // 解码失败（`onerror`，见下）⇒ 下一条格式；末条也失败 ⇒ 跳段 ＋ warning ＋ 可见提示（不整场失败）。
+    prefetchTrackSegments(trackKey, segment);
+
     void (async () => {
-      // ─── 取源：同参重调（要求①）＋ 陈旧预置重签（要求②）＋ 格式降级（要求③）────────
-      // 每段按 formats[] 顺序（opus 在前、mp3 兜底）逐条尝试；每条失败后先问一次「要不要同参重调」，
-      // 不能重调（已用过 / 与链接无关）就前进到下一条；末条也失败 ⇒ 跳段 ＋ warning（不整场失败）。
-      let candidatePlaylist = playlist;
+      const candidatePlaylist = playlist;
       let index = normalizedIndex;
       let playableSrc = '';
       let failure = null;
-
-      // ② 陈旧判定：需要播放时若链接已过期 / 距过期不足半有效期 ⇒ **先**同参重调一次（整场至多一次）。
-      if (!preemptiveReissueRef.current.attempted && isTrackUrlStale()) {
-        preemptiveReissueRef.current.attempted = true;
-        const preemptivePlaylist = await tryReissueSegmentPlaylist({ trackKey, segment, error: null });
-
-        if (Array.isArray(preemptivePlaylist) && preemptivePlaylist.length > 0) {
-          candidatePlaylist = preemptivePlaylist;
-          index = Math.min(normalizedIndex, candidatePlaylist.length - 1);
-        }
-      }
 
       for (;;) {
         const candidateItem = candidatePlaylist[index];
@@ -714,16 +675,14 @@ const MeditationPlayer = () => {
           failure = error;
         }
 
-        // ① 403 / 签名过期 ⇒ 同参重调一次并用新 URL 重试**当前**格式（同段最多 1 次，防重入）。
-        const refreshedPlaylist = await tryReissueSegmentPlaylist({ trackKey, segment, error: failure });
+        // 403 / 签名失效 ⇒ 重签当前 audio（同段最多 1 次，防重入），用新 URL 重试**当前**格式。
+        const resigned = await tryResignSegmentAudio({ trackKey, segment, item: candidateItem, error: failure });
 
-        if (Array.isArray(refreshedPlaylist) && refreshedPlaylist.length > 0) {
-          candidatePlaylist = refreshedPlaylist;
-          index = Math.min(index, candidatePlaylist.length - 1);
+        if (resigned) {
           continue;
         }
 
-        // ③ 不能重调 ⇒ 同段降级到下一条格式；末条 ⇒ 跳出走跳段。
+        // 不能重签（已用过 / 与链接无关）⇒ 同段降级到下一条格式；末条 ⇒ 跳出走跳段。
         if (index + 1 < candidatePlaylist.length) {
           index += 1;
           continue;
@@ -752,8 +711,12 @@ const MeditationPlayer = () => {
       audio.pause();
       audio.currentTime = 0;
       audio.src = playableSrc;
-      // 音量取本轮计划的响应值（D6 Track 的 `background_track.volume` / `voice_track.volume`）。
-      audio.volume = sessionPlanRef.current?.volumes?.[trackKey] ?? 1;
+      // 音量配比分支（R49-⑤，硬）：端侧组装按响应值；混音单流**端侧不设音量**（配比已烘焙进产物）。
+      audio.volume = resolveTrackVolume({
+        isSingleStream: sessionPlanRef.current?.playbackSource === MEDITATION_PLAYBACK_SOURCES.mixAudio,
+        volumes: sessionPlanRef.current?.volumes,
+        trackKey
+      });
       audio.onwaiting = () => setIsBuffering(true);
       audio.oncanplay = () => setIsBuffering(false);
       audio.onplaying = () => setIsBuffering(false);
@@ -808,7 +771,7 @@ const MeditationPlayer = () => {
         });
       }
     })();
-  }, [clearTrackRuntime, completeTrackSegment, getAudioRef, getElapsedSeconds, isTrackUrlStale, pausePlayback, resolvePlayableAudioSrc, resolveSegmentPlaylist, tryReissueSegmentPlaylist, warnSegmentSkipped]);
+  }, [clearTrackRuntime, completeTrackSegment, getAudioRef, getElapsedSeconds, pausePlayback, prefetchTrackSegments, resolvePlayableAudioSrc, resolveSegmentPlaylist, tryResignSegmentAudio, warnSegmentSkipped]);
 
   const syncTrackPlayback = useCallback((elapsedSeconds) => {
     const plan = sessionPlanRef.current;
@@ -912,18 +875,24 @@ const MeditationPlayer = () => {
     }, 250);
   }, [completePlayback, getElapsedSeconds, sampleMediaListened, syncTrackPlayback]);
 
+  // 取流解析器（R51 / R49-⑤⑧）：挂载时创建一次（现签缓存 ＋ blob 缓存），卸场 `releaseAll()` 释放。
+  useEffect(() => {
+    audioSourceResolverRef.current = createMeditationAudioSourceResolver({
+      signAudios: (audioIds) => meditationReadService.signAudios(audioIds)
+    });
+
+    return () => {
+      audioSourceResolverRef.current?.releaseAll();
+      audioSourceResolverRef.current = null;
+    };
+  }, []);
+
   useEffect(() => {
     let active = true;
-    // 缓存 Map 的实例在组件生命周期内恒定（useRef(new Map())，从不整体替换）⇒ 在 effect 内捕获引用
-    // 供 cleanup 使用，避免 react-hooks/exhaustive-deps 对 `ref.current` 在 cleanup 中取值的告警。
-    const blobUrlCache = blobUrlCacheRef.current;
 
     void (async () => {
-      // 恢复路径的防护状态在每次取计划前清空（重入集合 / 段内 playlist 覆盖 / 预置重签闸门 / 陈旧基准）。
+      // 失败恢复的重入集合在每次取计划前清空（同段最多重签 1 次）。
       reissuedSegmentKeysRef.current.clear();
-      segmentPlaylistOverrideRef.current.clear();
-      preemptiveReissueRef.current = { attempted: false };
-      trackUrlPolicyRef.current = null;
       setSessionStorageError('');
       // R50：本场上报状态复位（幂等键 / 上下文 / 收听累加器 / 完播与播放标志）。
       reportSessionKeyRef.current = '';
@@ -935,7 +904,7 @@ const MeditationPlayer = () => {
 
       try {
         // 唯一数据源：D6 只读云函数（`meditation-read` / action `getTrack`）→ 共享 plan（D9）。
-        // 入参**只从这里取**：同参重调（重签）复用同一份，保证首读与重签完全同参（R39 ⑤）。
+        // 抽签结果（`audio_id`）只在本份计划里确定一次；URL 一律在播放前由 `signAudios` 现签（R51-①）。
         const { data } = await meditationReadService.getTrack(trackRequestParamsRef.current);
 
         if (!active) {
@@ -953,12 +922,9 @@ const MeditationPlayer = () => {
           playbackPlan,
           trackName: data?.track?.name || '',
           now,
-          // `url_policy`（响应现签策略）⇒ 陈旧判定基准；`received_at_ms` 由 buildRuntimeTrackPlan 记本地收到时刻。
+          // `url_policy`（响应现签策略）随计划记录、供可观测；现签 URL 一律现取（见 signAudios）。
           urlPolicy: data?.url_policy || null
         });
-
-        // 陈旧判定基准就位（后续每段是否需要重签都看它）。
-        trackUrlPolicyRef.current = nextPlan.urlPolicy;
 
         // 响应合法但没有任何可播段（音频池全空 / 全无可用格式）：显式错误态，**不回退老音频库**。
         if (nextPlan.segments.length === 0 || nextPlan.sessionDuration <= 0) {
@@ -1012,7 +978,7 @@ const MeditationPlayer = () => {
 
         // ── R41-⑤ / D7：计划组装完成（抽签已确定）⇒ **开始播放前**固化本次会话 ──────────────
         // `selections` 取**本份计划**的抽签结果（同一批、**不二次抽签**——`playbackPlan` 只在这里组装一次，
-        // 重签路径的重新组装只用于取新 playlist，不改写本份固化结果）。
+        // 播放期只现签 URL，**绝不重新抽签**）。
         // 落点＝**本地 storage 键 `liwu_meditation_session_v1`**（零云写：C18 未裁）；写失败可见但不阻断播放。
         solidifyMeditationSession({
           trackId: data?.track?.id || data?.track?._id || '',
@@ -1043,14 +1009,8 @@ const MeditationPlayer = () => {
       active = false;
       stopTicker();
       MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => clearTrackRuntime(trackKey));
-      blobUrlCache.forEach((blobUrl) => {
-        try {
-          URL.revokeObjectURL(blobUrl);
-        } catch {
-          // revokeObjectURL 失败无需处理：缓存随之 clear，不做任何回退或提示。
-        }
-      });
-      blobUrlCache.clear();
+      // 卸场释放全部 blob（`revokeObjectURL`）：解析器的 `releaseAll()`（R42-④）。
+      audioSourceResolverRef.current?.releaseAll();
     };
   }, [clearTrackRuntime, stopTicker]);
 

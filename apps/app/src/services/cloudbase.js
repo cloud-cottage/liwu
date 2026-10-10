@@ -102,6 +102,8 @@ import {
 } from '@liwu/shared-utils/cloudbase-wealth-snapshot.js';
 import { MEDITATION_SETTINGS_KEY } from '@liwu/shared-utils/meditation-reward-settings.js';
 import { createMeditationReadClient } from '@liwu/shared-utils/meditation-read-client.js';
+// R51（抽中后现签）：`signAudios` 客户端工厂（纯模块、与播放器共用同一套代码）。
+import { createMeditationSignAudiosClient } from '../modules/meditate/meditationAudioSource.js';
 import {
   buildMeditationReportCompletionParams,
   createMeditationSessionClient,
@@ -159,6 +161,13 @@ const { app, db, auth, command: _ } = createCloudBaseSdk(cloudbase, { env, regio
 // D6 只读云函数（`meditation-read`）客户端：端侧读 `med_tracks` / `med_section_audios` 的**唯一通道**
 // （规范 §5 / R30 / R39 ①②③）。`callFunction` 的 this 绑定到 `app`（wx / CloudBase 的 callFunction 依赖 this）。
 const meditationReadClient = createMeditationReadClient({
+  callFunction: app.callFunction.bind(app)
+});
+
+// R51-①（抽中后现签）：`signAudios` 客户端——只对「**已抽中**的 `audio_id`」按需现签
+// （服务端内部按 ≤50 fileID 分批）；**计划阶段不取 URL**（见 MeditationPlayerScreen 取流层）。
+// 与 `meditationReadClient` 同款注入（`app.callFunction.bind(app)`）——**不新造调用通道**。
+const meditationSignAudiosClient = createMeditationSignAudiosClient({
   callFunction: app.callFunction.bind(app)
 });
 
@@ -2023,7 +2032,9 @@ export const rewardSettingsService = {
 export const meditationReadService = {
   getTrack: (params = {}) => meditationReadClient.getTrack(params),
   getSectionAudios: (params = {}) => meditationReadClient.getSectionAudios(params),
-  listTracks: (params = {}) => meditationReadClient.listTracks(params)
+  listTracks: (params = {}) => meditationReadClient.listTracks(params),
+  // R51-①：按 `audio_id` 现签（URL 只在抽中后按需取；`audio_ids` 非空字符串数组）。
+  signAudios: (audioIds = []) => meditationSignAudiosClient.signAudios(audioIds)
 };
 
 // ─── 冥想「完成度上报 + 福豆发放」（R50 写云函数） ────────────────────────────────────
