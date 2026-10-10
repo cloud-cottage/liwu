@@ -223,6 +223,29 @@ export const resolveTrackVolume = ({ isSingleStream = false, volumes = null, tra
   return Number.isFinite(value) && value > 0 ? value : 1
 }
 
+// ─── 抽签源：池元数据优先、老形状回退（R49-③ 向后兼容，硬）────────────────────────────
+// 抽签源＝**池元数据** `slot_pools`（R51-①：带 URL 的旧形状池 `section_audio_pools` **不再**作为
+//   「有元数据池时」的抽签依赖 —— 有元数据池时 URL 一律由 `signAudios` 现签）。
+// **回归修复**：**无 `slots` 的老 Track**，D6 `getTrack` **省略** `slot_pools`（R49-③ 向后兼容）⇒
+//   必须回退**带 URL 的旧形状池** `section_audio_pools`（老 Track 走这条，计划层的 URL 回退判据
+//   `isMeditationAudioSelectable` 会自行生效），否则老 Track 会被当成空池、播不出来。
+// 判据：「元数据池可用」＝**非空对象**且**至少一条 `section_type` 有非空候选数组**（缺键 / 空对象的
+//   空池不冒充有票源）；不可用 ⇒ 回退 `section_audio_pools`；两者均缺 / 均空 ⇒ 返回 `null`
+//   ⇒ 计划层走现有**可见空池错误态**（`EMPTY_POOL` / 空计划，**不整场静默**）。
+// **不得**在此把 URL 变成「有元数据池时」的抽签依赖（仅在回退分支才让老形状池参与抽签）。
+export const resolveMeditationTrackPoolSource = ({ slotPools = null, sectionAudioPools = null } = {}) => {
+  const hasUsableSlotPools = isPlainObject(slotPools)
+    && Object.keys(slotPools).some((sectionType) => (
+      Array.isArray(slotPools[sectionType]) && slotPools[sectionType].length > 0
+    ))
+
+  if (hasUsableSlotPools) {
+    return slotPools
+  }
+
+  return isPlainObject(sectionAudioPools) ? sectionAudioPools : null
+}
+
 // ─── 取流解析器（现签 ＋ `fetch → blob` 预取 ＋ 缓存/释放）────────────────────────────
 
 // `signAudios`：形如 `(audioIds) => Promise<{ audios: [{audioId, formats:[{format,url,mimeType}]}] }>`。

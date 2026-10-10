@@ -21,6 +21,7 @@ import { writeLocalStorageJSON } from '@liwu/shared-utils/cloudbase-browser-stor
 import {
   buildPlaylistItems,
   createMeditationAudioSourceResolver,
+  resolveMeditationTrackPoolSource,
   resolveTrackPrefetchWindow,
   resolveTrackVolume
 } from './meditationAudioSource.js';
@@ -916,14 +917,21 @@ const MeditationPlayer = () => {
         // 抽签源＝**池元数据** `slot_pools`（R51-①：条目只有 `id` / `section_type` / `duration` /
         //   `label` ＋ **可交付标记 `deliverable`**，**零 URL**）。
         //   · `deliverable` 在此**真正被消费** —— 只有 `deliverable:true` 的候选可被抽中（`false` 恒不可选）；
-        //   · 带现签 URL 的旧形状池 `section_audio_pools` **不再作为抽签源**（URL 一律由 `signAudios`
-        //     在「本段将要播放（＋下一段预取）」时才现签；**不得回退到池里的 URL**）；
+        //   · 带现签 URL 的旧形状池 `section_audio_pools` **不再作为「有元数据池时」的抽签源**（URL 一律
+        //     由 `signAudios` 在「本段将要播放（＋下一段预取）」时才现签；**有元数据池时不回退池里的 URL**）；
+        //   · **回归修复（R49-③）**：**无 `slots` 的老 Track**，D6 `getTrack` **省略** `slot_pools`
+        //     ⇒ 抽签源**回退带 URL 的旧形状池 `section_audio_pools`**（老 Track 走这条，计划层的 URL 回退
+        //     判据会自行生效），否则老 Track 会变成空池、播不出来；两者均缺 ⇒ 空池可见错误态。
         //   · 过渡兼容：池条目**缺 `deliverable`**（老 / 过渡响应）时，计划层沿用既有回退判据
         //     （见 `isMeditationAudioSelectable`）——**该回退不重新把 URL 变成抽签依赖**。
+        const poolSource = resolveMeditationTrackPoolSource({
+          slotPools: data?.slot_pools,
+          sectionAudioPools: data?.section_audio_pools
+        });
         const playbackPlan = buildMeditationTrackPlaybackPlan({
           track: data?.track || null,
           chapterTemplate: data?.chapter_template || null,
-          sectionAudioPools: data?.slot_pools || null
+          sectionAudioPools: poolSource
         });
         const nextPlan = buildRuntimeTrackPlan({
           playbackPlan,

@@ -26,6 +26,7 @@ import {
   createMeditationSignAudiosClient,
   normalizeSignedAudio,
   buildPlaylistItems,
+  resolveMeditationTrackPoolSource,
   resolveTrackPrefetchWindow,
   resolveTrackVolume,
   createMeditationAudioSourceResolver
@@ -439,11 +440,128 @@ console.log('\n== ⑦ 抽签源＝元数据池 slot_pools（无 URL）＋ delive
   eq('Q15 全不可交付 ⇒ 该槽无 selection', allBadPlan.selections.map((s) => s.section_type), ['sec-nature'])
   ok('Q16 全不可交付 ⇒ 记 `NO_PLAYABLE_FORMAT`（不整场失败）', allBadPlan.warnings.some((w) => w.code === 'NO_PLAYABLE_FORMAT' && w.section_type === 'anchorGreeting'))
 
-  // 源码接线：播放器**只**把 `slot_pools` 传给计划层；**不再**传带 URL 的 `section_audio_pools`。
+  // 源码接线：播放器经统一选源 `resolveMeditationTrackPoolSource`（优先 `slot_pools`、
+  //   **无 slots 的老 Track 回退** `section_audio_pools`，R49-③）；有元数据池时 URL 不参与抽签。
   const playerCode2 = stripComments(readSource(PLAYER_PATH))
-  ok('S17 播放器抽签源＝`slot_pools`（元数据池）', playerCode2.includes('sectionAudioPools: data?.slot_pools'))
-  ok('S18 播放器**不再**把带 URL 的 `section_audio_pools` 传给计划层', !playerCode2.includes('section_audio_pools'))
+  ok('S17 播放器抽签源经 `resolveMeditationTrackPoolSource`（优先 slot_pools、老 Track 回退旧池）',
+    playerCode2.includes('resolveMeditationTrackPoolSource(') && playerCode2.includes('sectionAudioPools: poolSource'))
+  ok('S18 播放器**不再**直接把 `data?.slot_pools` 当计划池（有元数据池时不回退池里的 URL）',
+    !playerCode2.includes('sectionAudioPools: data?.slot_pools'))
   ok('S19 播放器仍由 `signAudios` 现签（URL 抽中后现取）', playerCode2.includes('meditationReadService.signAudios(audioIds)'))
+}
+
+// ── ⑧ 抽签源回退：老 Track（无 slots）走 section_audio_pools（R49-③ 回归修复）──────────────
+// 覆盖本单验收：
+//   ① 响应**只给** `section_audio_pools`（无 `slot_pools`，老 Track）⇒ 抽签源回退旧池、**能产生 segments**；
+//   ② 响应**两者都给** ⇒ **优先 `slot_pools`**（有元数据池时不看旧形状池的 URL）；
+//   ③ 响应**两者都缺** ⇒ 走现有空池**可见**错误态（不整场静默）。
+console.log('\n== ⑧ 抽签源：slot_pools 优先 / 老形状 section_audio_pools 回退（R49-③）==')
+{
+  const CH = meditationTrackTemplate.MEDITATION_TRACK_CHAPTER_TEMPLATE
+  const DEFAULT_GAP = 141
+
+  const buildChapterTemplate = () => CH.map((chapter, index) => ({
+    chapter_key: chapter.chapter_key,
+    order: chapter.order,
+    label: chapter.label,
+    enabled_by_default: true,
+    max_duration_seconds: chapter.max_duration_seconds,
+    gap_after_seconds_default: index === CH.length - 1 ? 0 : DEFAULT_GAP,
+    section_types: [...chapter.section_types]
+  }))
+
+  // 老 Track（**无 `slots`**）：D6 `getTrack` 会**省略** `slot_pools`（R49-③）。
+  const oldTrack = {
+    track_key: 'track-default',
+    version: 2,
+    background_track: { volume: 0.33, section_types: ['sec-nature'] },
+    voice_track: { volume: 1, section_types: ['anchorGreeting'] },
+    chapters: [
+      { chapter_key: 'chapter-nature', enabled: true, gap_after_seconds: DEFAULT_GAP, section_types: ['sec-nature'] },
+      { chapter_key: 'section-start', enabled: true, gap_after_seconds: DEFAULT_GAP, section_types: ['anchorGreeting'] }
+    ]
+  }
+
+  // 带 URL 的旧形状池条目（`section_audio_pools`；无 `deliverable` ⇒ 计划层回退旧判据看 URL）。
+  const urlEntry = (id, sectionType, duration = 10) => ({
+    _id: id,
+    section_type: sectionType,
+    label: id,
+    duration,
+    formats: [
+      { format: 'opus', url: `https://cdn.example/${id}.ogg`, mime_type: 'audio/ogg', is_fallback: false },
+      { format: 'mp3', url: `https://cdn.example/${id}.mp3`, mime_type: 'audio/mpeg', is_fallback: true }
+    ]
+  })
+  // 元数据-only 池条目（`slot_pools`；**零 URL**，带 `deliverable`）。
+  const metaEntry = (id, sectionType, duration = 10, deliverable = true) => ({
+    id, section_type: sectionType, duration, label: id, deliverable
+  })
+
+  // ── ① 只给 `section_audio_pools`（老 Track）⇒ 抽签源回退旧池、**能产生 segments** ──
+  const legacyPools = {
+    'sec-nature': [urlEntry('nat-legacy', 'sec-nature', 30)],
+    anchorGreeting: [urlEntry('ag-legacy', 'anchorGreeting', 12)]
+  }
+  const dataOld = { track: oldTrack, chapter_template: buildChapterTemplate(), section_audio_pools: legacyPools }
+  const poolSourceOld = resolveMeditationTrackPoolSource({
+    slotPools: dataOld.slot_pools,
+    sectionAudioPools: dataOld.section_audio_pools
+  })
+  const planOld = buildMeditationTrackPlaybackPlan({
+    track: dataOld.track,
+    chapterTemplate: dataOld.chapter_template,
+    sectionAudioPools: poolSourceOld
+  })
+  ok('B1 老 Track（无 slot_pools）⇒ 抽签源回退 `section_audio_pools`', poolSourceOld === legacyPools)
+  ok('B2 老 Track 回退旧池 ⇒ **能产生 segments**（非空场）', planOld.segments.length > 0)
+  eq('B3 老 Track 回退旧池 ⇒ 抽中旧形状条目的 audio_id', planOld.selections.map((s) => s.audio_id), ['nat-legacy', 'ag-legacy'])
+
+  // ── ② 两者都给 ⇒ 优先 `slot_pools`（有元数据池时不看旧池的 URL） ──
+  const slotPools = {
+    'sec-nature': [metaEntry('nat-meta', 'sec-nature', 30, true)],
+    anchorGreeting: [metaEntry('ag-meta', 'anchorGreeting', 12, true)]
+  }
+  const dataBoth = { track: oldTrack, chapter_template: buildChapterTemplate(), slot_pools: slotPools, section_audio_pools: legacyPools }
+  const poolSourceBoth = resolveMeditationTrackPoolSource({
+    slotPools: dataBoth.slot_pools,
+    sectionAudioPools: dataBoth.section_audio_pools
+  })
+  const planBoth = buildMeditationTrackPlaybackPlan({
+    track: dataBoth.track,
+    chapterTemplate: dataBoth.chapter_template,
+    sectionAudioPools: poolSourceBoth
+  })
+  ok('B4 两者都给 ⇒ 抽签源＝`slot_pools`（**不**用旧形状池）', poolSourceBoth === slotPools)
+  eq('B5 优先 slot_pools ⇒ 抽中元数据条目（零 URL）', planBoth.selections.map((s) => s.audio_id), ['nat-meta', 'ag-meta'])
+  ok('B6 优先 slot_pools ⇒ 计划零 URL（URL 由 signAudios 现签）', JSON.stringify(planBoth.segments).indexOf('http') === -1)
+
+  // 空对象 `slot_pools`（无任何非空候选数组）⇒ 亦回退旧池，不冒充有票源。
+  ok('B7 `slot_pools` 为空对象 ⇒ 回退 `section_audio_pools`',
+    resolveMeditationTrackPoolSource({ slotPools: {}, sectionAudioPools: legacyPools }) === legacyPools)
+
+  // ── ③ 两者都缺 ⇒ 维持现有空池**可见**错误态（不整场静默） ──
+  const poolSourceNone = resolveMeditationTrackPoolSource({ slotPools: undefined, sectionAudioPools: undefined })
+  const planNone = buildMeditationTrackPlaybackPlan({
+    track: oldTrack,
+    chapterTemplate: buildChapterTemplate(),
+    sectionAudioPools: poolSourceNone
+  })
+  eq('B8 两者都缺 ⇒ 抽签源为 null（计划层收空池）', poolSourceNone, null)
+  eq('B9 两者都缺 ⇒ **无 segments**（走现有空计划可见错误态）', planNone.segments.length, 0)
+  ok('B10 两者都缺 ⇒ 记 `EMPTY_POOL`（**不整场静默**，逐段可见）', (() => {
+    const emptyPoolTypes = planNone.warnings.filter((w) => w.code === 'EMPTY_POOL').map((w) => w.section_type)
+    return emptyPoolTypes.length > 0
+      && emptyPoolTypes.includes('sec-nature')
+      && emptyPoolTypes.includes('anchorGreeting')
+  })())
+
+  // 源码接线：播放器**经统一选源**（优先 slot_pools、回退 section_audio_pools），非直连任一池。
+  const playerCode3 = stripComments(readSource(PLAYER_PATH))
+  ok('S20 播放器选源调用＝`resolveMeditationTrackPoolSource({ slotPools, sectionAudioPools })`',
+    playerCode3.includes('resolveMeditationTrackPoolSource({')
+      && playerCode3.includes('slotPools: data?.slot_pools')
+      && playerCode3.includes('sectionAudioPools: data?.section_audio_pools'))
 }
 
 console.log(`\n结果：${pass} PASS / ${fail} FAIL`)
