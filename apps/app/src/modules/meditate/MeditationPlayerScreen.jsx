@@ -3,8 +3,7 @@ import { X, Play, Pause } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWealth } from '../../context/WealthContext';
 import { useCloudAwareness } from '../../context/CloudAwarenessContext';
-import { DEFAULT_MEDITATION_SETTINGS } from '../../services/database.js';
-import { meditationReadService, rewardSettingsService } from '../../services/cloudbase.js';
+import { meditationReadService, meditationSessionService } from '../../services/cloudbase.js';
 import {
   DEFAULT_MEDITATION_SESSION_SECONDS,
   getMeditationAudioMimeType,
@@ -19,8 +18,18 @@ import {
 } from '@liwu/shared-utils/meditation-track-playback-plan.js';
 import { writeLocalStorageJSON } from '@liwu/shared-utils/cloudbase-browser-storage.js';
 import { resolveMeditationUrlPolicyStaleness } from '@liwu/shared-utils/meditation-read-client.js';
+// R50（完成度上报与福豆发放）：幂等键 / 收听累加器 / 完播判定 / 用户可见文案。
+// 端侧只组装证据、由 `meditationSessionService.reportCompletion` 走后端发放（**客户端不再直写余额**）。
+import {
+  buildMeditationSessionKey,
+  createMeditationListenTracker,
+  createMeditationSessionId,
+  describeMeditationReportError,
+  resolveMeditationReportCompletion,
+  resolveMeditationReportSuccessMessage
+} from '@liwu/shared-utils/meditation-session-client.js';
 
-const MIN_VALID_MEDITATION_SECONDS = 180;
+// R50-①：旧「单次冥想 > 180s 记入」门槛作废（以「完播」取代）——该阈值常量已从本文件移除。
 const SESSION_LABELS = {
   morning: '早课',
   noon: '午课',
@@ -324,9 +333,6 @@ const MeditationPlayer = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
-  // 冥想奖励配置（`app_settings.meditation_rewards`）与播放数据源（D6）解耦：后者失败即报错、不走兜底，
-  // 这里只决定完成一次冥想的福豆参数，读失败时该服务自带默认值（不影响播放）。
-  const [rewardSettings, setRewardSettings] = useState(DEFAULT_MEDITATION_SETTINGS);
   const [sessionPlan, setSessionPlan] = useState(null);
   const [sessionError, setSessionError] = useState('');
   // 会话固化（R41-⑤）落本地 storage **写失败**的可见提示位：与播放错误位分开，
@@ -341,6 +347,17 @@ const MeditationPlayer = () => {
   const elapsedBeforePauseRef = useRef(0);
   const sessionPersistedRef = useRef(false);
   const listenedSecondsRef = useRef(0);
+  // ─── R50（完成度上报 + 福豆发放）状态 ─────────────────────────────────────────
+  // ① 幂等键（R50-④）/ 上报上下文：**每场会话装载计划时一次性生成**（同一场内重入 / 重试复用同一
+  //    `session_key`；不含 `Date.now()`）。
+  const reportSessionKeyRef = useRef('');
+  const reportContextRef = useRef(null);
+  // ② 收听秒数累加器（R50-②）：**只吃媒体元素 `currentTime` 增量**，不用墙钟 / 定时器 tick。
+  const mediaListenTrackerRef = useRef(createMeditationListenTracker());
+  // ③ 是否「到达计划末尾自然结束」——完播判定（R50-②(b)）的必要条件之一。
+  const naturalEndReachedRef = useRef(false);
+  // ④ 是否真正开始过播放：用户主动结束时的上报名义门（从未播放 ⇒ 不上报，避免空场记录）。
+  const playbackStartedRef = useRef(false);
   const blobUrlCacheRef = useRef(new Map());
   const trackLoadTokenRef = useRef({ background: 0, voice: 0, [MEDITATION_MIX_TRACK_KEY]: 0 });
   const isPlayingRef = useRef(false);
@@ -568,29 +585,82 @@ const MeditationPlayer = () => {
     audio.src = '';
   }, [getAudioRef]);
 
+  // R50-②：把各媒体元素实时的 `currentTime` 采样进累加器，并把 `listenedSecondsRef` 抬到当前累计值。
+  //   · 只取「有 src 的元素」（空闲元素恒 0，无需采样）；
+  //   · **不用墙钟**：暂停 / 缓冲期间 `currentTime` 不动 ⇒ 自然不计入（R50-②）。
+  const sampleMediaListened = useCallback(() => {
+    MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => {
+      const audio = getAudioRef(trackKey)?.current;
+
+      if (audio && audio.src) {
+        mediaListenTrackerRef.current.sample(trackKey, audio.currentTime);
+      }
+    });
+
+    listenedSecondsRef.current = Math.max(listenedSecondsRef.current, mediaListenTrackerRef.current.getSeconds());
+  }, [getAudioRef]);
+
+  // 结算（R50-③ / R49-④ v4.33 修订注）：**只在「完播」或「用户主动结束」时调用一次**（`sessionPersistedRef` 兜底）。
+  //   · 本地统计 / 徽章进度沿用既有路径，但 **`rewardAmount: 0`** ⇒ **不发福豆、不写余额**（R50-①③）；
+  //   · 福豆改由 `meditationSessionService.reportCompletion` **云端上报 + 发放**（客户端不再直写 `users`/`user_wallets`）；
+  //   · 上报失败**可见**（返回 `message` 供调用方 alert）且**不静默当成功**（R41-⑦ / R50-④）；
+  //     幂等键＝同一 `reportSessionKeyRef` —— 重试只会复用同一 `session_key`，**绝不重发第二次金额**。
   const persistMeditationSession = useCallback(async ({
     durationMinutes,
-    rewardAmount = 0,
-    allowRepeatReward = true,
-    rewardKey = 'default_meditation_program',
+    endedReason = 'completed',
     rewardDescription = '完成一次冥想'
   }) => {
-    if (sessionPersistedRef.current || listenedSecondsRef.current <= MIN_VALID_MEDITATION_SECONDS) {
-      return {
-        rewarded: false,
-        rewardAmount: 0
-      };
+    if (sessionPersistedRef.current) {
+      return { reported: false, completed: false, message: '' };
     }
 
     sessionPersistedRef.current = true;
-    return completeMeditationSession({
-      duration: Math.max(1, Number(durationMinutes) || 0),
-      rewardAmount,
-      allowRepeatReward,
-      rewardKey,
-      rewardDescription
+    sampleMediaListened();
+
+    // 本地统计 + 徽章进度（`rewardAmount: 0` ⇒ 无福豆、无余额写入；R50-①③）。
+    try {
+      await completeMeditationSession({
+        duration: Math.max(1, Number(durationMinutes) || 0),
+        rewardAmount: 0,
+        rewardDescription
+      });
+    } catch (statsError) {
+      console.error('记录冥想统计 / 徽章进度失败:', statsError);
+    }
+
+    const context = reportContextRef.current;
+
+    if (!context) {
+      return { reported: false, completed: false, message: '' };
+    }
+
+    const listenedSeconds = mediaListenTrackerRef.current.getSeconds();
+    const completed = resolveMeditationReportCompletion({
+      reachedNaturalEnd: endedReason === 'completed' && naturalEndReachedRef.current,
+      forwardSkipDetected: mediaListenTrackerRef.current.hasForwardSkip(),
+      listenedSeconds,
+      planTotalSeconds: context.planTotalSeconds
     });
-  }, [completeMeditationSession]);
+
+    try {
+      const result = await meditationSessionService.reportCompletion({
+        trackKey: context.trackKey,
+        trackVersion: context.trackVersion,
+        sessionKey: reportSessionKeyRef.current,
+        dateKey: context.dateKey,
+        selections: context.selections,
+        listenedSeconds,
+        completed,
+        endedReason,
+        mode: 'app'
+      });
+
+      return { reported: true, completed, message: resolveMeditationReportSuccessMessage(result.data) };
+    } catch (error) {
+      console.error('[meditation] 完成度上报失败:', error);
+      return { reported: true, completed, error, message: describeMeditationReportError(error) };
+    }
+  }, [completeMeditationSession, sampleMediaListened]);
 
   // 自递归（段内下一段）：用具名函数表达式，避免 react-hooks/immutability 的
   // 「Cannot access variable before it is declared」——递归只调自身表达式名，行为与原闭包一致。
@@ -774,32 +844,27 @@ const MeditationPlayer = () => {
     }
 
     completionHandledRef.current = true;
+    // 到达计划末尾（自然结束）⇒ 完播判定的必要条件之一（R50-②(b)）。
+    naturalEndReachedRef.current = true;
     stopTicker();
     isPlayingRef.current = false;
     setIsPlaying(false);
     setIsBuffering(false);
+    // 清空音源**前**最后一次采样（R50-②：收听秒数取媒体 currentTime 增量）。
+    sampleMediaListened();
     MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => clearTrackRuntime(trackKey));
     elapsedBeforePauseRef.current = Math.max(elapsedBeforePauseRef.current, duration || 0);
-    listenedSecondsRef.current = Math.max(listenedSecondsRef.current, elapsedBeforePauseRef.current);
 
-    const sessionMinutes = toMeditationMinutes(listenedSecondsRef.current);
-    const rewardResult = await persistMeditationSession({
-      durationMinutes: sessionMinutes,
-      rewardAmount: rewardSettings.rewardPoints,
-      allowRepeatReward: rewardSettings.allowRepeatRewards,
-      rewardKey: 'default_meditation_program',
+    // 结算：**完播上报**（R49-④ v4.33：只在完播 / 主动结束时上报一次）。福豆由云端发放。
+    const reportResult = await persistMeditationSession({
+      durationMinutes: toMeditationMinutes(listenedSecondsRef.current),
+      endedReason: 'completed',
       rewardDescription: '完成一次冥想'
     });
 
-    const completionMessage = rewardResult.error
-      ? '本次冥想已记入，云端福豆暂未到账。'
-      : rewardResult.repeatedRewardBlocked && rewardSettings.rewardPoints > 0
-        ? '本次冥想已记入，本次不重复发放福豆。'
-        : '本次冥想已记入。';
-
-    window.alert(completionMessage);
+    window.alert(reportResult.message || '本次冥想已记入。');
     navigate('/');
-  }, [clearTrackRuntime, duration, navigate, persistMeditationSession, rewardSettings, stopTicker]);
+  }, [clearTrackRuntime, duration, navigate, persistMeditationSession, sampleMediaListened, stopTicker]);
 
   const startTicker = useCallback(() => {
     if (timerRef.current || !sessionPlanRef.current) {
@@ -809,7 +874,9 @@ const MeditationPlayer = () => {
     timerRef.current = window.setInterval(() => {
       const elapsedSeconds = getElapsedSeconds();
       const sessionDuration = sessionPlanRef.current?.sessionDuration || DEFAULT_MEDITATION_SESSION_SECONDS;
-      listenedSecondsRef.current = Math.max(listenedSecondsRef.current, elapsedSeconds);
+      // R50-②：收听秒数**只吃媒体元素 `currentTime` 增量**（不再用墙钟 `elapsedSeconds`）。
+      // 墙钟 `elapsedSeconds` 仍仅用于**时间轴推进 / 段窗口匹配**（R42：不改时间轴）。
+      sampleMediaListened();
       setDuration(sessionDuration);
       setTimeLeft(Math.max(0, Math.ceil(sessionDuration - elapsedSeconds)));
       syncTrackPlayback(elapsedSeconds);
@@ -843,28 +910,7 @@ const MeditationPlayer = () => {
         void completePlayback();
       }
     }, 250);
-  }, [completePlayback, getElapsedSeconds, syncTrackPlayback]);
-
-  // 冥想奖励配置（福豆参数）：与播放数据源解耦，单独读、失败只留日志（沿用默认值），不参与播放计划。
-  useEffect(() => {
-    let active = true;
-
-    void (async () => {
-      try {
-        const settings = await rewardSettingsService.getSettings();
-
-        if (active) {
-          setRewardSettings(settings);
-        }
-      } catch (error) {
-        console.error('加载冥想奖励配置失败，本次沿用默认奖励参数:', error);
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, []);
+  }, [completePlayback, getElapsedSeconds, sampleMediaListened, syncTrackPlayback]);
 
   useEffect(() => {
     let active = true;
@@ -879,6 +925,13 @@ const MeditationPlayer = () => {
       preemptiveReissueRef.current = { attempted: false };
       trackUrlPolicyRef.current = null;
       setSessionStorageError('');
+      // R50：本场上报状态复位（幂等键 / 上下文 / 收听累加器 / 完播与播放标志）。
+      reportSessionKeyRef.current = '';
+      reportContextRef.current = null;
+      mediaListenTrackerRef.current.reset();
+      listenedSecondsRef.current = 0;
+      naturalEndReachedRef.current = false;
+      playbackStartedRef.current = false;
 
       try {
         // 唯一数据源：D6 只读云函数（`meditation-read` / action `getTrack`）→ 共享 plan（D9）。
@@ -927,6 +980,36 @@ const MeditationPlayer = () => {
         setIsBuffering(false);
         completionHandledRef.current = false;
 
+        // ── R50（完成度上报）／R49-④：本场**上报上下文 + 幂等键**在此一次性确定 ────────────────
+        // `session_key` 含 `track_key ＋ date_key ＋ 本场会话标识`、**绝不含 `Date.now()`**（R50-④）；
+        // 同一场内「完播 / 主动结束 / 重试」都复用这同一份 ⇒ 幂等成立、绝不重发第二次金额。
+        // `selections` 取**本份计划**的抽签结果（与下方固化同源、**不二次抽签**）。
+        const reportDateKey = getShanghaiDateKey(now);
+
+        try {
+          reportSessionKeyRef.current = buildMeditationSessionKey({
+            trackKey: data?.track?.track_key,
+            dateKey: reportDateKey,
+            sessionId: createMeditationSessionId()
+          });
+          reportContextRef.current = {
+            trackKey: String(data?.track?.track_key || '').trim(),
+            trackVersion: data?.track?.version,
+            dateKey: reportDateKey,
+            selections: playbackPlan?.selections || [],
+            planTotalSeconds: (playbackPlan?.selections || []).reduce(
+              (sum, selection) => sum + Math.max(0, Number(selection?.duration_seconds) || 0),
+              0
+            )
+          };
+        } catch (sessionKeyError) {
+          // 幂等键构造失败 ⇒ 本场**不可上报**（**可见提示**、不假造 key、不静默）。
+          reportSessionKeyRef.current = '';
+          reportContextRef.current = null;
+          console.error('[meditation] 构造上报 session_key 失败:', sessionKeyError);
+          setSessionStorageError('本次冥想的完成度上报未能初始化，福豆可能无法发放。');
+        }
+
         // ── R41-⑤ / D7：计划组装完成（抽签已确定）⇒ **开始播放前**固化本次会话 ──────────────
         // `selections` 取**本份计划**的抽签结果（同一批、**不二次抽签**——`playbackPlan` 只在这里组装一次，
         // 重签路径的重新组装只用于取新 playlist，不改写本份固化结果）。
@@ -934,7 +1017,7 @@ const MeditationPlayer = () => {
         solidifyMeditationSession({
           trackId: data?.track?.id || data?.track?._id || '',
           trackVersion: data?.track?.version,
-          dateKey: getShanghaiDateKey(now),
+          dateKey: reportDateKey,
           sessionKey: nextPlan.sessionKey,
           selections: playbackPlan?.selections,
           onFailure: setSessionStorageError
@@ -980,6 +1063,8 @@ const MeditationPlayer = () => {
     sessionStartMsRef.current = performance.now() - resumeElapsedSeconds * 1000;
     syncTrackPlayback(resumeElapsedSeconds);
     isPlayingRef.current = true;
+    // R50：一旦真正开始播放 ⇒ 用户主动结束时应上报本场（`ended_reason: 'user_ended'`）。
+    playbackStartedRef.current = true;
     setIsPlaying(true);
     setIsBuffering(true);
 
@@ -1032,15 +1117,27 @@ const MeditationPlayer = () => {
   };
 
   const handleClose = () => {
-    if (window.confirm('确定要结束冥想吗？单次冥想超过 3 分钟会自动记入一次。')) {
+    if (window.confirm('确定要结束本次冥想吗？')) {
       stopTicker();
+      // 清空音源**前**最后一次采样（R50-②：收听秒数取媒体 currentTime 增量）。
+      sampleMediaListened();
       MEDITATION_RUNTIME_TRACK_KEYS.forEach((trackKey) => clearTrackRuntime(trackKey));
       void (async () => {
-        await persistMeditationSession({
-          durationMinutes: toMeditationMinutes(Math.max(listenedSecondsRef.current, getElapsedSeconds())),
-          rewardAmount: 0,
-          rewardDescription: '中断后保存一次冥想'
-        });
+        // R49-④ v4.33 修订注：**用户主动结束**也上报一次（复用同一 `session_key`）。
+        // 从未开始播放（纯浏览）⇒ 不产生上报（避免空场记录）。
+        if (playbackStartedRef.current && !sessionPersistedRef.current) {
+          const reportResult = await persistMeditationSession({
+            durationMinutes: toMeditationMinutes(listenedSecondsRef.current),
+            endedReason: 'user_ended',
+            rewardDescription: '主动结束一次冥想'
+          });
+
+          // 上报结果**可见**（成功 / 失败都给用户话；失败不静默当成功）。
+          if (reportResult.message) {
+            window.alert(reportResult.message);
+          }
+        }
+
         navigate('/');
       })();
     }

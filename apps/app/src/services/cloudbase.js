@@ -102,6 +102,12 @@ import {
 } from '@liwu/shared-utils/cloudbase-wealth-snapshot.js';
 import { MEDITATION_SETTINGS_KEY } from '@liwu/shared-utils/meditation-reward-settings.js';
 import { createMeditationReadClient } from '@liwu/shared-utils/meditation-read-client.js';
+import {
+  buildMeditationReportCompletionParams,
+  createMeditationSessionClient,
+  MeditationSessionError,
+  MEDITATION_SESSION_ERROR_CODES
+} from '@liwu/shared-utils/meditation-session-client.js';
 
 const { cloudbase: { env, region, publishableKey, wechatProviderId }, collections } = DATABASE_CONFIG;
 const AWARENESS_TAG_SETTINGS_KEY = 'awareness_tag_settings';
@@ -153,6 +159,13 @@ const { app, db, auth, command: _ } = createCloudBaseSdk(cloudbase, { env, regio
 // D6 只读云函数（`meditation-read`）客户端：端侧读 `med_tracks` / `med_section_audios` 的**唯一通道**
 // （规范 §5 / R30 / R39 ①②③）。`callFunction` 的 this 绑定到 `app`（wx / CloudBase 的 callFunction 依赖 this）。
 const meditationReadClient = createMeditationReadClient({
+  callFunction: app.callFunction.bind(app)
+});
+
+// 冥想「完成度上报 + 福豆发放」写云函数（`meditation-session` / action `reportCompletion`）客户端：
+// 端侧**只上报完成度证据**、**不再直写 `users` / `user_wallets` 余额**（R50-③；C39~C42 修复落点）。
+// 与 `meditationReadClient` 同款注入（`app.callFunction.bind(app)`）——**不新造调用通道**。
+const meditationSessionClient = createMeditationSessionClient({
   callFunction: app.callFunction.bind(app)
 });
 
@@ -2011,6 +2024,53 @@ export const meditationReadService = {
   getTrack: (params = {}) => meditationReadClient.getTrack(params),
   getSectionAudios: (params = {}) => meditationReadClient.getSectionAudios(params),
   listTracks: (params = {}) => meditationReadClient.listTracks(params)
+};
+
+// ─── 冥想「完成度上报 + 福豆发放」（R50 写云函数） ────────────────────────────────────
+// 端侧**唯一**的冥想福豆发放通道（R50-③「一次到位」）：端侧只上报完成度证据、由服务端校验并发放；
+// **客户端不再直写 `users` / `user_wallets` 余额**（取代旧 `wealthService.awardCurrentUser` 直写路径，C39）。
+//
+//   · `user_id` ＝ **现有发奖路径**拿到的用户文档 id（`userProfileService.getCurrentProfile` ⇒
+//     `currentProfile.id`，与 `wealthService.awardCurrentUser` 同源）——**不假造**、不吞错；
+//   · `selections` / `sessionKey` / `dateKey` / `listenedSeconds` / `completed` 等业务字段由调用方
+//     （播放器）按 R50-② 口径给出；本服务只负责「身份解析 + 白名单组装 + 调云函数」；
+//   · 错误一律**上抛**（`MeditationSessionError`，`error.code` 即分支依据）——调用方据此给**用户可见提示**、
+//     不静默当成功（R41-⑦ / R50-④）；**上报失败绝不重发金额**（幂等键＝`sessionKey`，重试须复用同一值）。
+export const meditationSessionService = {
+  async reportCompletion({
+    trackKey = '',
+    trackVersion = null,
+    sessionKey = '',
+    dateKey = '',
+    selections = [],
+    listenedSeconds = 0,
+    completed = false,
+    endedReason = '',
+    mode = 'app'
+  } = {}) {
+    const currentProfile = await userProfileService.getCurrentProfile({ refresh: true });
+    const userId = currentProfile?.id || '';
+
+    if (!userId) {
+      throw new MeditationSessionError(
+        MEDITATION_SESSION_ERROR_CODES.userNotFound,
+        '未获取到发奖账号，本次冥想福豆未上报'
+      );
+    }
+
+    return meditationSessionClient.reportCompletion(buildMeditationReportCompletionParams({
+      trackKey,
+      trackVersion,
+      sessionKey,
+      dateKey,
+      selections,
+      listenedSeconds,
+      completed,
+      endedReason,
+      mode,
+      userId
+    }));
+  }
 };
 
 export const shareService = {
