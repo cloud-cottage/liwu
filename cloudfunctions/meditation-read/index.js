@@ -18,6 +18,14 @@
 //     其两个链接＝把库内 `ogg_file_id` / `mp3_file_id` **现签**成临时链接（与候选音频**同一次批量签发**）；
 //     **`file_id` 仍不下发**（R46-⑥ 白名单增量，原 15 项禁发与其余白名单不变）；
 //     **缺失 / 不齐 / 签发失败 ⇒ 不下发该键**（端侧据此回退双轨，端侧口径见 R45-⑥）。
+//   · **R51（v4.34，2026-10-10）新增两个 action（登记附录 C / C35 · C44；只增不改）**：
+//     ① `getPools`＝**池元数据下发**（只 `id` / `section_type` / `duration` / `label`，**无 URL / file_id**）；
+//        上限＝每个 `section_type` ≤ MAX_POOL_CANDIDATES_PER_SECTION_TYPE（20，收敛 R39 「查询 50 / 下发 10」口径）。
+//     ② `signAudios`＝**按 `audio_id` 批量现签**（`med_section_audios` 文档 id）——内部按
+//        **单次 ≤ 50 个 fileID 分批**（R51-② 硬上限）现签，逐批 ≤ MAX_TEMP_URL_BATCH_SIZE（50）；
+//        单次请求最多 MAX_SIGN_AUDIO_IDS_PER_REQUEST（200 = 4 批×50），超出报显式错误（不静默截断）；
+//        只签**交付产物**（R39-④ 判据，另按 R51-④ 排除 `meditation-audio-raw/` 前缀对象），**仍不下发 `file_id`**。
+//     既有 `getTrack` / `getSectionAudios` / `listTracks` 的入参 / 出参 / 行为**逐字不变**。
 //   · D8：音频**唯一口径**是 `med_section_audios`（绝不从 `med_section_raws` 读 `file_id` / `audio_url`）。
 //
 // 【只读（硬）】本函数**没有任何写路径**——不 `update` / 不 `add` / 不 `remove` / 不 `set` 任何集合；
@@ -42,7 +50,8 @@
 const tcb = require('@cloudbase/node-sdk')
 
 const {
-  MEDITATION_SECTION_AUDIO_COLLECTION
+  MEDITATION_SECTION_AUDIO_COLLECTION,
+  MEDITATION_SECTION_AUDIO_DELIVERED_FORMAT_KEYS
 } = require('./lib/meditation-formats.js')
 
 const {
@@ -57,6 +66,10 @@ const {
   MAX_CANDIDATES_PER_SECTION_TYPE,
   MAX_QUERY_PER_SECTION_TYPE,
   MAX_TRACKS_PER_REQUEST,
+  MAX_POOL_CANDIDATES_PER_SECTION_TYPE,
+  MAX_TEMP_URL_BATCH_SIZE,
+  MAX_SIGN_BATCH_COUNT,
+  MAX_SIGN_AUDIO_IDS_PER_REQUEST,
   TEMP_URL_MAX_AGE_SECONDS,
   getString,
   buildError,
@@ -71,7 +84,12 @@ const {
   buildTrackEntry,
   buildTrackMixAudioEntry,
   buildChapterTemplate,
-  buildUrlPolicy
+  buildUrlPolicy,
+  chunkArray,
+  resolveNewActionDeliverability,
+  buildSectionAudioPoolsMetadata,
+  readAudioIds,
+  buildSignedAudioEntry
 } = require('./lib/read-contract.js')
 
 // 与 cloudbaserc.json 的 envId、scripts/audio-transcode-worker.mjs 一致；仅作兜底，优先取运行环境变量。
@@ -222,6 +240,84 @@ const signFileUrls = async ({ app, fileIds = [], requestId = '' }) => {
     signed: signedCount,
     maxAge: TEMP_URL_MAX_AGE_SECONDS
   })
+
+  return urlMap
+}
+
+// ─── R51 新增 IO：按 id 取音频（分块查询）＋ 分批现签（单批 ≤ 50） ──────────────
+
+// 按文档 id 批量取 `med_section_audios`。查询同样**按 ≤ 50 分块**（`where in` 不宜过大），
+// 返回 `Map<id, doc>`；**缺 id 不报错**（由调用方计入 excluded.not_found，不返回部分数据当成功）。
+const fetchSectionAudiosByIds = async ({ db, ids = [] }) => {
+  const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).map(getString).filter(Boolean))]
+  const byId = new Map()
+
+  if (uniqueIds.length === 0) {
+    return byId
+  }
+
+  const command = db.command
+  const chunks = chunkArray(uniqueIds, MAX_TEMP_URL_BATCH_SIZE)
+
+  for (const chunk of chunks) {
+    const result = assertCloudBaseResult(
+      await db.collection(MEDITATION_SECTION_AUDIO_COLLECTION)
+        .where({ _id: command.in(chunk) })
+        .limit(chunk.length)
+        .get(),
+      MEDITATION_SECTION_AUDIO_COLLECTION
+    )
+
+    getDocuments(result).forEach((doc) => {
+      const id = getString(doc?._id || doc?.id).trim()
+      if (id) {
+        byId.set(id, doc)
+      }
+    })
+  }
+
+  return byId
+}
+
+// 分批现签（R51-② 硬上限：单次 getTempFileURL ≤ 50 个 fileID）——逐批调用并合并 `fileID → URL`。
+// 去重在前（调用方 / 本函数各去重一次）；部分批失败不整单报错（由调用方按条剔除并计数），
+// 但**全部签不出来 ⇒ 整单报错**（由调用方在拿回空 map 时抛，见 handleSignAudios）。
+const signFileUrlsInBatches = async ({ app, fileIds = [], requestId = '' }) => {
+  const normalizedFileIds = [...new Set((Array.isArray(fileIds) ? fileIds : []).map(getString).filter(Boolean))]
+  const urlMap = new Map()
+
+  if (normalizedFileIds.length === 0) {
+    return urlMap
+  }
+
+  const batches = chunkArray(normalizedFileIds, MAX_TEMP_URL_BATCH_SIZE)
+
+  for (let index = 0; index < batches.length; index += 1) {
+    const batch = batches[index]
+    const result = await app.getTempFileURL({
+      fileList: batch.map((fileID) => ({ fileID, maxAge: TEMP_URL_MAX_AGE_SECONDS }))
+    })
+    const fileList = result?.fileList || result?.data?.fileList || []
+
+    if (!Array.isArray(fileList)) {
+      throw new Error('TEMP_FILE_URL_INVALID_RESULT：getTempFileURL 未返回 fileList')
+    }
+
+    fileList.forEach((item) => {
+      const fileId = getString(item?.fileID || item?.fileId).trim()
+      const url = getString(item?.tempFileURL || item?.download_url || item?.downloadUrl).trim()
+      if (fileId) {
+        urlMap.set(fileId, url)
+      }
+    })
+
+    logEvent(requestId, 'temp_url_batch_signed', {
+      batch_index: index + 1,
+      batch_count: batches.length,
+      requested: batch.length,
+      max_batch_size: MAX_TEMP_URL_BATCH_SIZE
+    })
+  }
 
   return urlMap
 }
@@ -380,10 +476,233 @@ const handleListTracks = async ({ db }) => {
   }
 }
 
+// ─── R51 新增 action：getPools（池元数据，无 URL） ─────────────────────────────
+
+// 解析池的作用域 section_type：显式 `section_types` / `section_type`，或由 `track_key` / `track_id`
+// 按 Track 启用章推导；两者都给时取交集（Track 未启用 / 未找到 ⇒ 复用既有错误码）。
+const resolvePoolScope = async ({ db, event }) => {
+  const sectionTypesResult = resolveRequestedSectionTypes(event, { required: false })
+  if (!sectionTypesResult.ok) {
+    return { ok: false, error: sectionTypesResult.error }
+  }
+  const requested = sectionTypesResult.value
+
+  const trackIdResult = readOptionalIdentifier(event, 'track_id')
+  if (!trackIdResult.ok) {
+    return { ok: false, error: trackIdResult.error }
+  }
+
+  const trackKeyResult = readOptionalIdentifier(event, 'track_key')
+  if (!trackKeyResult.ok) {
+    return { ok: false, error: trackKeyResult.error }
+  }
+
+  const hasTrack = Boolean(trackIdResult.value || trackKeyResult.value)
+
+  // 既没有 section_types、也没有 track_key / track_id ⇒ 结构化报错（不猜「全部」）。
+  if (!hasTrack && requested.length === 0) {
+    return {
+      ok: false,
+      error: buildError(ERROR_CODES.invalidParams, '缺少参数：section_types（或 section_type），或提供 track_key / track_id 以按 Track 启用章推导', {
+        param: 'section_types'
+      })
+    }
+  }
+
+  if (!hasTrack) {
+    return { ok: true, value: { scope: requested, trackInfo: {} } }
+  }
+
+  const trackResult = await resolveTrackForRead({ db, event })
+
+  if (!trackResult.ok) {
+    if (trackResult.error) {
+      return { ok: false, error: trackResult.error }
+    }
+
+    return {
+      ok: false,
+      error: buildError(ERROR_CODES.trackNotFound, '未找到可用 Track（既无 is_default 也无 track-default）', {
+        track_key: trackKeyResult.value,
+        track_id: trackIdResult.value
+      })
+    }
+  }
+
+  const track = trackResult.track
+
+  if (track.enabled === false) {
+    return {
+      ok: false,
+      error: buildError(ERROR_CODES.trackDisabled, `Track 未启用，不下发：${track.track_key}`, {
+        track_key: track.track_key,
+        track_id: track._id
+      })
+    }
+  }
+
+  const trackSectionTypes = resolveTrackSectionTypes(track)
+  const scope = requested.length > 0
+    ? requested.filter((sectionType) => trackSectionTypes.includes(sectionType))
+    : trackSectionTypes
+
+  return {
+    ok: true,
+    value: {
+      scope,
+      trackInfo: { track_key: track.track_key, track_id: track._id, track_version: track.version }
+    }
+  }
+}
+
+// `getPools`（R51-① / C35）：只下发**池元数据**（`id` / `section_type` / `duration` / `label`），
+//   **绝不签发、绝不下发任何 URL / file_id**——URL 一律由 `signAudios` 在抽中后按需现签。
+//   上限＝每个 `section_type` ≤ MAX_POOL_CANDIDATES_PER_SECTION_TYPE（20），截断如实回报。
+const handleGetPools = async ({ db, event, requestId }) => {
+  const scopeResult = await resolvePoolScope({ db, event })
+  if (!scopeResult.ok) {
+    return scopeResult.error
+  }
+
+  const { scope, trackInfo } = scopeResult.value
+  const candidates = await fetchSectionAudioCandidates({ db, sectionTypes: scope })
+  const { pools, stats } = buildSectionAudioPoolsMetadata({
+    requestedSectionTypes: scope,
+    candidates,
+    limit: MAX_POOL_CANDIDATES_PER_SECTION_TYPE
+  })
+
+  logEvent(requestId, 'get_pools', {
+    requestedSectionTypes: scope,
+    queried: candidates.length,
+    totalEntryCount: stats.total_pool_entry_count,
+    truncated: stats.truncated_section_types
+  })
+
+  return {
+    ok: true,
+    data: { pools },
+    // 「计数 / 截断标记」（任务要求「给 meta」）：合并进响应顶层 meta；
+    //   既有三个 action 不返回 meta ⇒ 其 meta 形状逐字不变。
+    meta: {
+      requested_section_types: [...scope],
+      queried_section_audio_count: candidates.length,
+      pool_candidate_limit_per_section_type: MAX_POOL_CANDIDATES_PER_SECTION_TYPE,
+      ...trackInfo,
+      ...stats
+    }
+  }
+}
+
+// ─── R51 新增 action：signAudios（按 audio_id 批量现签；单批 ≤ 50、超限内部分批） ──
+
+// `signAudios`（R51-①② / C44）：入参 `audio_ids`（`med_section_audios` 文档 id）。
+// 内部按 ≤ 50 个 fileID 分批现签；只签**交付产物**（R39-④ 判据，且按 R51-④ 排除 raw 前缀对象）；
+// 出参沿用 R39 形状 `{ok,data,meta}` ＋ `url_policy`，**仍然不得下发 file_id**。
+const handleSignAudios = async ({ app, db, event, requestId }) => {
+  const idsResult = readAudioIds(event)
+  if (!idsResult.ok) {
+    return idsResult.error
+  }
+
+  const requestedIds = idsResult.value
+  const docById = await fetchSectionAudiosByIds({ db, ids: requestedIds })
+
+  const excluded = {
+    not_found: 0,
+    incomplete_transcode: 0,
+    transcode_failed: 0,
+    transcode_in_progress: 0,
+    missing_file_id: 0,
+    raw_prefix_not_signable: 0,
+    signing_failed: 0
+  }
+  const deliverable = []
+
+  requestedIds.forEach((id) => {
+    const doc = docById.get(id)
+
+    if (!doc) {
+      excluded.not_found += 1
+      return
+    }
+
+    const assessment = resolveNewActionDeliverability(doc)
+    if (!assessment.deliverable) {
+      excluded[assessment.reason] = (excluded[assessment.reason] || 0) + 1
+      return
+    }
+
+    deliverable.push({ id, doc })
+  })
+
+  // 待签 file_id：只含可交付音频的双格式 file_id；先整体去重（signFileUrlsInBatches 内再去重一次）。
+  const signableFileIds = []
+  deliverable.forEach(({ doc }) => {
+    const assessment = resolveNewActionDeliverability(doc)
+    MEDITATION_SECTION_AUDIO_DELIVERED_FORMAT_KEYS.forEach((format) => {
+      const fileId = assessment.file_ids[format]
+      if (fileId && !signableFileIds.includes(fileId)) {
+        signableFileIds.push(fileId)
+      }
+    })
+  })
+
+  const batchCount = signableFileIds.length === 0 ? 0 : Math.ceil(signableFileIds.length / MAX_TEMP_URL_BATCH_SIZE)
+  const urlMap = await signFileUrlsInBatches({ app, fileIds: signableFileIds, requestId })
+
+  // R39-⑤：有待签项但**一条都没签出来** ⇒ 整单报错（不得返回空当成功）。
+  if (signableFileIds.length > 0 && urlMap.size === 0) {
+    logEvent(requestId, 'sign_audios_all_failed', { requestedFileIds: signableFileIds.length })
+    throw new Error('TEMP_FILE_URL_SIGN_FAILED：全部临时链接签发失败')
+  }
+
+  const audios = []
+  deliverable.forEach(({ doc }) => {
+    const entry = buildSignedAudioEntry({ audio: doc, urls: urlMap })
+    if (!entry) {
+      excluded.signing_failed += 1
+      return
+    }
+    audios.push(entry)
+  })
+
+  const excludedCount = Object.values(excluded).reduce((sum, count) => sum + count, 0)
+
+  logEvent(requestId, 'sign_audios', {
+    requestedIds: requestedIds.length,
+    signed: audios.length,
+    signableFileIds: signableFileIds.length,
+    batchCount,
+    excludedCount
+  })
+
+  return {
+    ok: true,
+    data: {
+      audios,
+      url_policy: buildUrlPolicy({ issuedAtMs: Date.now() })
+    },
+    meta: {
+      request_audio_id_count: requestedIds.length,
+      signed_audio_count: audios.length,
+      excluded_audio_id_count: excludedCount,
+      excluded,
+      signable_file_id_count: signableFileIds.length,
+      batch_count: batchCount,
+      batch_size_limit: MAX_TEMP_URL_BATCH_SIZE,
+      max_batch_count: MAX_SIGN_BATCH_COUNT,
+      max_audio_ids_per_request: MAX_SIGN_AUDIO_IDS_PER_REQUEST
+    }
+  }
+}
+
 const ACTION_HANDLERS = Object.freeze({
   [ACTIONS.getTrack]: handleGetTrack,
   [ACTIONS.getSectionAudios]: handleGetSectionAudios,
-  [ACTIONS.listTracks]: handleListTracks
+  [ACTIONS.listTracks]: handleListTracks,
+  [ACTIONS.getPools]: handleGetPools,
+  [ACTIONS.signAudios]: handleSignAudios
 })
 
 exports.main = async (event = {}) => {
@@ -427,9 +746,18 @@ exports.main = async (event = {}) => {
       error: result.ok ? '' : result.error
     })
 
+    // handler 可选返回 meta（getPools / signAudios 用于携带计数 / 截断标记）；
+    // 合并进响应顶层 meta——**框架键（request_id 等）优先**，不会被子级覆盖。
+    // 既有三个 action 不返回 meta ⇒ 合并结果为空对象 ⇒ 其 meta 形状逐字不变。
+    const handlerMeta = (
+      result && typeof result === 'object' && result.meta
+      && typeof result.meta === 'object' && !Array.isArray(result.meta)
+    ) ? result.meta : {}
+
     return {
       ...result,
       meta: {
+        ...handlerMeta,
         request_id: requestId,
         action,
         generated_at: new Date().toISOString(),
@@ -458,12 +786,17 @@ exports.__test__ = {
   handleGetTrack,
   handleGetSectionAudios,
   handleListTracks,
+  handleGetPools,
+  handleSignAudios,
   resolveTrackForRead,
+  resolvePoolScope,
   loadDeliverableAudioPools,
   fetchTracks,
   fetchSectionAudioCandidates,
+  fetchSectionAudiosByIds,
   readTrackByPlanStep,
   signFileUrls,
+  signFileUrlsInBatches,
   assertCloudBaseResult,
   buildTrackMixAudioEntry,
   collectTrackMixAudioFileIds,

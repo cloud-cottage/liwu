@@ -26,10 +26,15 @@ R30 已把它从「优化项」升为**第二批硬前置**）：据 R28-①「`
 | `getTrack`（**缺省值**） | 无（可选 `track_key` / `track_id`） | 返回一个 Track（六章模板归一化后）＋ 六章模板 ＋ **按 `section_type` 分组的可交付音频池** |
 | `listTracks` | 无 | 只返回**启用** Track 的配置（不含任何音频、不签发链接） |
 | `getSectionAudios` | `section_types`（数组）或 `section_type`（单个字符串） | 只返回指定 `section_type` 的可交付音频池（用于定向取/重签） |
+| `getPools`（R51） | `section_types`（数组）或 `section_type`；或 `track_key` / `track_id` | **池元数据**（只 `id` / `section_type` / `duration` / `label`，**无 URL / file_id**）＋ 每 `section_type` ≤ 20 条（`MAX_POOL_CANDIDATES_PER_SECTION_TYPE`）＋ 截断标记 |
+| `signAudios`（R51） | `audio_ids`（`med_section_audios` 文档 id 的非空**字符串**数组） | 按 id **批量现签**（内部单批 ≤ 50 个 fileID 分批；单次 ≤ 200 id）⇒ `{ ok, data:{ audios, url_policy }, meta }`，**不下发 `file_id`** |
 
 - `getTrack` 的 Track 解析顺序：显式 `track_id` → 显式 `track_key` → `is_default: true` → 业务键 `track-default`。
 - `getTrack` 只取该 Track **启用章**覆盖的 `section_type` 音频（禁用章的音频不下发）；
   `action` 省略即等价 `getTrack`；未知 `action` / 非字符串 `action` ⇒ `INVALID_ACTION`。
+- `getPools`：`section_types` 与 `track_key` / `track_id` 二选一（都给 ⇒ 取交集）；都没有 ⇒ `INVALID_PARAMS`；
+  Track 未找到 / 未启用 ⇒ 复用 `TRACK_NOT_FOUND` / `TRACK_DISABLED`。池**不按可交付过滤**（可交付过滤发生在 `signAudios`）。
+- `signAudios`：非数组 / 非字符串元素 / 空数组 ⇒ `INVALID_PARAMS`；> 200 个 id ⇒ `INVALID_PARAMS`（**不静默截断**）。
 - 其它参数（例如 `limit`）一律忽略，不做隐式转换。
 
 成功返回骨架：
@@ -83,6 +88,30 @@ R30 已把它从「优化项」升为**第二批硬前置**）：据 R28-①「`
   `stale` 也不下发给端侧（数据最小化，重录提示属后台视角）。
 - 每个 `section_type` 最多下发 `MAX_CANDIDATES_PER_SECTION_TYPE = 10` 条（端侧只抽一条）；
   被截断的 `section_type` 如实列进 `stats.truncated_section_types`（不假装全量）。
+
+## 2.1 R51 新增：池元数据（`getPools`）与批量现签（`signAudios`）
+
+> 规范依据＝**R51**（v4.34，D6 音频交付与签名口径）＋ 挂账 **C35**（池上限）· **C44**（批量现签 action）。
+> 只增不改：既有 `getTrack` / `getSectionAudios` / `listTracks` 的入参 / 出参 / 行为**逐字不变**。
+
+- **`getPools`（池元数据，无 URL）**：入参 `section_types`（或 `section_type`）**或** `track_key` / `track_id`
+  （按 Track 启用章推导；两者都给 ⇒ 取交集）。出参 `data.pools = { <section_type>: [ { id, section_type, duration, label } ] }`
+  ——**只元数据，绝不含任何 URL / file_id**。计数 / 截断标记落响应**顶层 `meta`**
+  （`total_pool_entry_count` / `pool_entry_count_by_section_type` / `pool_limit_per_section_type` /
+  `truncated_section_types` / `truncated` 等）。
+  - **池上限 `MAX_POOL_CANDIDATES_PER_SECTION_TYPE = 20`**（每 `section_type`）：取值理由＝收敛 R39-⑨ 的
+    「查询 50 / 下发 10」现有口径（池比 `getSectionAudios` 的 10 条宽、又远小于查询窗口 50，防响应体爆炸）⇒ 登记 **C35**。
+  - 池**不按可交付过滤**（依据 R43-⑤「池空 / 池非空但无可用格式」两分）——**可交付过滤发生在 `signAudios`**。
+- **`signAudios`（按 `audio_id` 批量现签）**：入参 `audio_ids`（`med_section_audios` 文档 id 的**字符串数组**）。
+  出参 `data = { audios:[…R39-⑥ 音频条目白名单…], url_policy }` ＋ 顶层 `meta`（计数 / 剔除明细 / 分批数）；
+  **仍然不下发 `file_id`**。
+  - **单次现签 ≤ 50 个 fileID（R51-② 硬上限）**：内部按 `MAX_TEMP_URL_BATCH_SIZE = 50` **分批**（逐批调用
+    `getTempFileURL`）；单次请求最多 `MAX_SIGN_AUDIO_IDS_PER_REQUEST = 200`（`MAX_SIGN_BATCH_COUNT = 4` 批 × 50）
+    ——**超出报 `INVALID_PARAMS`，不静默截断**。去重在前（入参去重 ＋ 现签前再整体去重）。
+  - **只签交付产物**：按 R39-④ 判据过滤，并额外按 **R51-④** 排除原始上载前缀 `meditation-audio-raw/` 对象；
+    剔除项逐类计数落 `meta.excluded`（`not_found` / `incomplete_transcode` / `transcode_failed` /
+    `transcode_in_progress` / `missing_file_id` / `raw_prefix_not_signable` / `signing_failed`）。
+  - 有待签项但**一条都没签出来** ⇒ 整单 `READ_FAILED`（对齐 R39-⑤，不返回空当成功）。
 
 ## 3. 临时链接（有效期 2 小时）与端侧缓存建议
 

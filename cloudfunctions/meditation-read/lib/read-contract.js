@@ -46,7 +46,11 @@ const ERROR_CODES = Object.freeze({
 const ACTIONS = Object.freeze({
   getTrack: 'getTrack',
   getSectionAudios: 'getSectionAudios',
-  listTracks: 'listTracks'
+  listTracks: 'listTracks',
+  // ── R51（v4.34）新增能力：池元数据下发 ＋ 按 audio_id 批量现签（登记附录 C / C35 · C44） ──
+  // 只增不改：既有三个 action 的入参 / 出参 / 行为一律不变。
+  getPools: 'getPools',
+  signAudios: 'signAudios'
 })
 
 // 默认 action：端侧主路径（读默认 Track 及其可交付音频池）。
@@ -60,6 +64,23 @@ const MAX_QUERY_PER_SECTION_TYPE = 50
 const MAX_SECTION_TYPES_PER_REQUEST = MEDITATION_SECTION_TYPE_ORDER.length
 // listTracks 最多返回多少个 Track。
 const MAX_TRACKS_PER_REQUEST = 20
+
+// ─── R51（v4.34）新增能力的上限常量（登记附录 C / C35 · C44；改这些数 = 改口径，先读 R51） ──
+//
+// ① 池元数据（getPools）单次**每个 section_type** 最多下发多少条**元数据条目**。
+//    取值理由 = 收敛 R39-⑨「查询 50 / 下发 10」的现有口径：池要覆盖「同类型更多段落」
+//    （组合化后同 section_type 会有多段），故比 getSectionAudios 的 10 条宽；但又必须远小于
+//    查询窗口 50（否则响应体随库规模爆炸）。取 20 = 10 的 2 倍、仍 < 50 ⇒ 登记到 C35。
+const MAX_POOL_CANDIDATES_PER_SECTION_TYPE = 20
+// ② 单次 getTempFileURL 现签的 fileID 硬上限（R51-②；实测 51 即报
+//    INVALID_PARAM Cannot operate more than 50 files one time ⇒ 超过必须分批、逐批 ≤ 50）。
+const MAX_TEMP_URL_BATCH_SIZE = 50
+// ③ signAudios 单次请求允许的最大分批数（4 批 × 单批 50 = 单次最多 200 个 audio_id）。
+//    超出**报显式错误**（INVALID_PARAMS），**不得静默截断**（对齐 R39-③ 不返回部分数据当成功）。
+const MAX_SIGN_BATCH_COUNT = 4
+const MAX_SIGN_AUDIO_IDS_PER_REQUEST = MAX_TEMP_URL_BATCH_SIZE * MAX_SIGN_BATCH_COUNT
+// ④ 原始上载前缀（R51-④）：端侧可签性地图实测 0/32 不可签 ⇒ 新动作一律不签该前缀对象。
+const MEDITATION_SECTION_AUDIO_RAW_PREFIX = 'meditation-audio-raw/'
 
 // 临时链接有效期（秒）：**必须与规范 C11 的 `maxAge = 7200` 一致**（2 小时）。
 const TEMP_URL_MAX_AGE_SECONDS = 7200
@@ -528,6 +549,180 @@ const buildUrlPolicy = ({ issuedAtMs = Date.now(), maxAgeSeconds = TEMP_URL_MAX_
   reissue: 'call_again'
 })
 
+// ─── R51 新增能力：池元数据下发（getPools）＋ 批量现签出参（signAudios）的**纯函数** ──────
+//     （无 IO；查询与现签在 index.js。既有 resolveSectionAudioDeliverability 一字不动。）
+
+// 通用分块（signAudios 的 DB 查询与现签都以 MAX_TEMP_URL_BATCH_SIZE 为块大小）。
+const chunkArray = (items = [], size = 1) => {
+  const chunkSize = Math.max(1, Math.floor(Number(size) || 1))
+  const source = Array.isArray(items) ? items : []
+  const chunks = []
+
+  for (let index = 0; index < source.length; index += chunkSize) {
+    chunks.push(source.slice(index, index + chunkSize))
+  }
+
+  return chunks
+}
+
+const isRawUploadFileId = (fileId = '') => getString(fileId).includes(MEDITATION_SECTION_AUDIO_RAW_PREFIX)
+
+// **新增动作共用**的「可交付」判定：先过 R39-④ 判据，再按 R51-④ 排除原始上载前缀对象。
+// ⚠ 刻意**不复用 / 不修改** resolveSectionAudioDeliverability，以保证现网 getTrack / getSectionAudios
+//   行为逐字不变（硬纪律「只增不改」）。
+const resolveNewActionDeliverability = (audio = {}) => {
+  const assessment = resolveSectionAudioDeliverability(audio)
+
+  if (!assessment.deliverable) {
+    return assessment
+  }
+
+  const fileIds = assessment.file_ids || {}
+  const rawFormats = MEDITATION_SECTION_AUDIO_DELIVERED_FORMAT_KEYS.filter((format) => isRawUploadFileId(fileIds[format]))
+
+  if (rawFormats.length > 0) {
+    return { deliverable: false, reason: 'raw_prefix_not_signable', raw_formats: rawFormats }
+  }
+
+  return assessment
+}
+
+// 池元数据条目（R51-①：**只** id / section_type / duration / 标签；**绝不含任何 URL / file_id**）。
+const buildPoolMetadataEntry = ({ audio = {}, sectionType = '' } = {}) => ({
+  id: getString(audio._id || audio.id).trim(),
+  section_type: sectionType || normalizeMeditationSectionCode(getString(audio.section_type)),
+  duration: Number(audio.duration) > 0 ? Number(audio.duration) : 0,
+  label: getString(audio.label)
+})
+
+// 按 section_type 分组的池**元数据**（R51-①）。池 = 候选集（**不按可交付过滤**——可交付过滤发生在
+// signAudios；依据 R43-⑤ 的「池空 / 池非空但无可用格式」两分：池本身可含不可用候选）。
+// 每个 section_type 截断到 limit（默认 20）并如实回报截断标记（不假装全量，对齐 R39-⑨）。
+const buildSectionAudioPoolsMetadata = ({ requestedSectionTypes = [], candidates = [], limit = MAX_POOL_CANDIDATES_PER_SECTION_TYPE } = {}) => {
+  const pools = {}
+  const countBySectionType = {}
+  const truncatedSectionTypes = []
+  const source = Array.isArray(candidates) ? candidates : []
+  let totalEntryCount = 0
+
+  requestedSectionTypes.forEach((sectionType) => {
+    // 读侧归一：库中 `sec-*` 旧码也要能落进新代号池。
+    const sectionCandidates = source.filter((audio) => (
+      normalizeMeditationSectionCode(getString(audio?.section_type)) === sectionType
+    ))
+    const entries = []
+
+    sectionCandidates.forEach((audio) => {
+      if (entries.length >= limit) {
+        if (!truncatedSectionTypes.includes(sectionType)) {
+          truncatedSectionTypes.push(sectionType)
+        }
+        return
+      }
+
+      entries.push(buildPoolMetadataEntry({ audio, sectionType }))
+    })
+
+    pools[sectionType] = entries
+    countBySectionType[sectionType] = entries.length
+    totalEntryCount += entries.length
+  })
+
+  return {
+    pools,
+    stats: {
+      total_pool_entry_count: totalEntryCount,
+      pool_entry_count_by_section_type: countBySectionType,
+      pool_limit_per_section_type: limit,
+      truncated_section_types: truncatedSectionTypes,
+      truncated: truncatedSectionTypes.length > 0
+    }
+  }
+}
+
+// 入参 `audio_ids`：非空**字符串**数组，去重后返回（**不做隐式转换**，对齐 R39-②；非字符串一律报错）。
+// 超上限（> MAX_SIGN_AUDIO_IDS_PER_REQUEST）**报显式错误**，不静默截断。
+const readAudioIds = (event = {}) => {
+  const raw = event?.audio_ids
+
+  if (!Array.isArray(raw)) {
+    return {
+      ok: false,
+      error: buildError(ERROR_CODES.invalidParams, 'audio_ids 必须是字符串数组', {
+        param: 'audio_ids',
+        received_type: typeof raw
+      })
+    }
+  }
+
+  const nonString = raw.find((value) => typeof value !== 'string')
+  if (nonString !== undefined) {
+    return {
+      ok: false,
+      error: buildError(ERROR_CODES.invalidParams, 'audio_ids 元素必须是字符串', {
+        param: 'audio_ids',
+        received_type: typeof nonString
+      })
+    }
+  }
+
+  const ids = [...new Set(raw.map((value) => value.trim()).filter(Boolean))]
+
+  if (ids.length === 0) {
+    return {
+      ok: false,
+      error: buildError(ERROR_CODES.invalidParams, '缺少参数：audio_ids（非空字符串数组）', { param: 'audio_ids' })
+    }
+  }
+
+  if (ids.length > MAX_SIGN_AUDIO_IDS_PER_REQUEST) {
+    return {
+      ok: false,
+      error: buildError(
+        ERROR_CODES.invalidParams,
+        `audio_ids 数量超限（${ids.length} > ${MAX_SIGN_AUDIO_IDS_PER_REQUEST}）——不静默截断，请分批调用`,
+        {
+          param: 'audio_ids',
+          max: MAX_SIGN_AUDIO_IDS_PER_REQUEST,
+          received: ids.length,
+          max_batch_count: MAX_SIGN_BATCH_COUNT,
+          max_batch_size: MAX_TEMP_URL_BATCH_SIZE
+        }
+      )
+    }
+  }
+
+  return { ok: true, value: ids }
+}
+
+// signAudios 单条出参（复用 R39-⑥ 音频条目白名单：`_id` / `section_type` / `section_raw_id` /
+//   `label` / `duration` / `transcoded_formats` / `formats[]`；**`file_id` 仍不下发**）。
+// 不可交付 / 现签结果缺任一条 ⇒ 返回 null（由调用方剔除并计数，**不得下发半条音频**）。
+const buildSignedAudioEntry = ({ audio = {}, sectionType = '', urls = new Map() } = {}) => {
+  const assessment = resolveNewActionDeliverability(audio)
+
+  if (!assessment.deliverable) {
+    return null
+  }
+
+  const urlMap = urls instanceof Map ? urls : new Map()
+  const opusUrl = getString(urlMap.get(assessment.file_ids[MEDITATION_SECTION_AUDIO_FORMATS.opus])).trim()
+  const mp3Url = getString(urlMap.get(assessment.file_ids[MEDITATION_SECTION_AUDIO_FORMATS.mp3])).trim()
+
+  if (!opusUrl || !mp3Url) {
+    return null
+  }
+
+  return buildSectionAudioEntry({
+    audio,
+    sectionType,
+    urls: {
+      [MEDITATION_SECTION_AUDIO_FORMATS.opus]: opusUrl,
+      [MEDITATION_SECTION_AUDIO_FORMATS.mp3]: mp3Url
+    }
+  })
+}
+
 module.exports = {
   ERROR_CODES,
   ACTIONS,
@@ -536,6 +731,11 @@ module.exports = {
   MAX_QUERY_PER_SECTION_TYPE,
   MAX_SECTION_TYPES_PER_REQUEST,
   MAX_TRACKS_PER_REQUEST,
+  MAX_POOL_CANDIDATES_PER_SECTION_TYPE,
+  MAX_TEMP_URL_BATCH_SIZE,
+  MAX_SIGN_BATCH_COUNT,
+  MAX_SIGN_AUDIO_IDS_PER_REQUEST,
+  MEDITATION_SECTION_AUDIO_RAW_PREFIX,
   TEMP_URL_MAX_AGE_SECONDS,
   getString,
   buildError,
@@ -556,5 +756,13 @@ module.exports = {
   resolveTrackQueryPlan,
   buildSectionAudioPools,
   collectSignableFileIds,
-  buildUrlPolicy
+  buildUrlPolicy,
+  // ── R51 新增（getPools / signAudios） ──
+  chunkArray,
+  isRawUploadFileId,
+  resolveNewActionDeliverability,
+  buildPoolMetadataEntry,
+  buildSectionAudioPoolsMetadata,
+  readAudioIds,
+  buildSignedAudioEntry
 }
